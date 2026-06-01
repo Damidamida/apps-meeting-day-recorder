@@ -1,6 +1,8 @@
 import json
 from datetime import date, datetime
 
+import pytest
+
 from app.services.storage import StorageService, safe_folder_name
 
 
@@ -42,4 +44,80 @@ def test_placeholder_summary_file_generation(tmp_path) -> None:
 
     assert summary_path == meeting_folder / "summary_draft.md"
     assert "not implemented yet" in summary_path.read_text(encoding="utf-8")
+
+
+def test_start_workday_creates_day_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+
+    metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata == {
+        "date": "2026-06-01",
+        "started_at": "2026-06-01T08:30:00",
+        "status": "active",
+        "meetings": [],
+    }
+    assert storage.workday_active
+
+
+def test_start_workday_does_not_overwrite_existing_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    metadata_path = day_folder / "day_metadata.json"
+    metadata_path.write_text('{"status": "ended"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already exists"):
+        storage.start_workday(datetime(2026, 6, 1, 8, 30))
+
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == {"status": "ended"}
+
+
+def test_start_meeting_creates_active_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+
+    meeting_folder = storage.start_meeting("Product / sync", datetime(2026, 6, 1, 9, 15))
+
+    metadata = json.loads((meeting_folder / "meeting_metadata.json").read_text(encoding="utf-8"))
+    assert meeting_folder.name == "09-15_Product_sync"
+    assert metadata == {
+        "title": "Product / sync",
+        "started_at": "2026-06-01T09:15:00",
+        "status": "active",
+    }
+    assert storage.meeting_active
+
+
+def test_end_meeting_creates_placeholder_files_and_updates_day(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Planning", datetime(2026, 6, 1, 9, 15))
+
+    storage.end_meeting(datetime(2026, 6, 1, 9, 45, 10))
+
+    metadata = json.loads((meeting_folder / "meeting_metadata.json").read_text(encoding="utf-8"))
+    day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["ended_at"] == "2026-06-01T09:45:10"
+    assert metadata["duration_seconds"] == 1810
+    assert metadata["status"] == "ended"
+    assert (meeting_folder / "transcript.md").is_file()
+    assert (meeting_folder / "transcript.json").is_file()
+    assert (meeting_folder / "summary_draft.md").is_file()
+    assert day_metadata["meetings"] == [{"folder": "09-15_Planning", **metadata}]
+    assert not storage.meeting_active
+
+
+def test_end_workday_creates_day_drafts(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+
+    storage.end_workday(datetime(2026, 6, 1, 18, 0))
+
+    metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["ended_at"] == "2026-06-01T18:00:00"
+    assert metadata["status"] == "ended"
+    assert (day_folder / "00_day_summary_draft.md").is_file()
+    assert (day_folder / "00_tasks_draft.md").is_file()
+    assert not storage.workday_active
 
