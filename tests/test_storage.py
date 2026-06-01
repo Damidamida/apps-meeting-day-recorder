@@ -119,17 +119,21 @@ def test_reopen_legacy_ended_workday_adds_events(tmp_path) -> None:
     day_folder = storage.create_day_folder(date(2026, 6, 1))
     metadata_path = day_folder / "day_metadata.json"
     metadata_path.write_text(
-        '{"date": "2026-06-01", "status": "ended", "meetings": []}\n',
+        '{"date": "2026-06-01", "status": "ended", '
+        '"ended_at": "2026-06-01T18:00:00", "meetings": []}\n',
         encoding="utf-8",
     )
 
-    reopened_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    reopened_folder = storage.start_workday(datetime(2026, 6, 1, 18, 15))
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert reopened_folder == day_folder
     assert metadata["status"] == "active"
     assert metadata["ended_at"] is None
-    assert metadata["events"] == [{"type": "reopened", "at": "2026-06-01T08:30:00"}]
+    assert metadata["events"] == [
+        {"type": "ended", "at": "2026-06-01T18:00:00"},
+        {"type": "reopened", "at": "2026-06-01T18:15:00"},
+    ]
 
 
 def test_start_meeting_creates_active_metadata(tmp_path) -> None:

@@ -83,7 +83,12 @@ class StorageService:
         if metadata_path.exists():
             metadata = self._read_json(metadata_path)
             if metadata.get("status") == "ended":
-                metadata.setdefault("events", []).append(
+                events = metadata.setdefault("events", [])
+                ended_at = metadata.get("ended_at")
+                ended_event = {"type": "ended", "at": ended_at}
+                if ended_at and ended_event not in events:
+                    events.append(ended_event)
+                events.append(
                     {"type": "reopened", "at": started_at.isoformat()}
                 )
                 metadata.update({"ended_at": None, "status": "active"})
