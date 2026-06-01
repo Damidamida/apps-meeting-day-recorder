@@ -43,7 +43,7 @@ def test_placeholder_summary_file_generation(tmp_path) -> None:
     summary_path = storage.write_placeholder_summary(meeting_folder)
 
     assert summary_path == meeting_folder / "summary_draft.md"
-    assert "not implemented yet" in summary_path.read_text(encoding="utf-8")
+    assert "Черновик итогов встречи" in summary_path.read_text(encoding="utf-8")
 
 
 def test_start_workday_creates_day_metadata(tmp_path) -> None:
@@ -67,7 +67,7 @@ def test_start_workday_does_not_overwrite_existing_metadata(tmp_path) -> None:
     metadata_path = day_folder / "day_metadata.json"
     metadata_path.write_text('{"status": "ended"}\n', encoding="utf-8")
 
-    with pytest.raises(ValueError, match="already ended"):
+    with pytest.raises(ValueError, match="уже завершен"):
         storage.start_workday(datetime(2026, 6, 1, 8, 30))
 
     assert json.loads(metadata_path.read_text(encoding="utf-8")) == {"status": "ended"}
@@ -176,4 +176,92 @@ def test_full_happy_path_still_works(tmp_path) -> None:
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
     assert not storage.meeting_active
+
+
+def test_list_today_meeting_folders(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    first_meeting = storage.start_meeting("Первая встреча", datetime(2026, 6, 1, 9, 0))
+    storage.end_meeting(datetime(2026, 6, 1, 9, 30))
+    second_meeting = storage.start_meeting("Вторая встреча", datetime(2026, 6, 1, 10, 0))
+
+    assert storage.list_today_meeting_folders(datetime(2026, 6, 1, 12, 0)) == [
+        first_meeting,
+        second_meeting,
+    ]
+
+
+def test_list_today_meeting_folders_without_day_returns_empty_list(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+
+    assert storage.list_today_meeting_folders(datetime(2026, 6, 1, 12, 0)) == []
+
+
+def test_read_and_save_meeting_summary_draft(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    meeting_folder = tmp_path / "meeting"
+    meeting_folder.mkdir()
+
+    placeholder = storage.read_meeting_summary_draft(meeting_folder)
+    saved_path = storage.save_meeting_summary_draft(meeting_folder, "# Обновленные итоги\n")
+
+    assert "Черновик итогов встречи" in placeholder
+    assert saved_path == meeting_folder / "summary_draft.md"
+    assert storage.read_meeting_summary_draft(meeting_folder) == "# Обновленные итоги\n"
+
+
+def test_read_and_save_day_summary_and_tasks_drafts(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+
+    day_placeholder = storage.read_day_summary_draft(day_folder)
+    tasks_placeholder = storage.read_tasks_draft(day_folder)
+    storage.save_day_summary_draft(day_folder, "# Итоги дня\n")
+    storage.save_tasks_draft(day_folder, "# Задачи\n")
+
+    assert "Черновик итогов дня" in day_placeholder
+    assert "Черновик задач" in tasks_placeholder
+    assert storage.read_day_summary_draft(day_folder) == "# Итоги дня\n"
+    assert storage.read_tasks_draft(day_folder) == "# Задачи\n"
+
+
+def test_save_final_files_preserves_drafts(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    meeting_folder = day_folder / "09-00_review"
+    meeting_folder.mkdir()
+    storage.save_meeting_summary_draft(meeting_folder, "# Черновик встречи\n")
+    storage.save_day_summary_draft(day_folder, "# Черновик дня\n")
+    storage.save_tasks_draft(day_folder, "# Черновик задач\n")
+
+    final_paths = storage.save_final_files(
+        meeting_folder,
+        "# Финальные итоги встречи\n",
+        "# Финальные итоги дня\n",
+        "# Финальные задачи\n",
+    )
+
+    assert final_paths == (
+        meeting_folder / "summary_final.md",
+        day_folder / "00_day_summary_final.md",
+        day_folder / "00_tasks_final.md",
+    )
+    assert (meeting_folder / "summary_final.md").read_text(encoding="utf-8") == (
+        "# Финальные итоги встречи\n"
+    )
+    assert (day_folder / "00_day_summary_final.md").read_text(encoding="utf-8") == (
+        "# Финальные итоги дня\n"
+    )
+    assert (day_folder / "00_tasks_final.md").read_text(encoding="utf-8") == (
+        "# Финальные задачи\n"
+    )
+    assert (meeting_folder / "summary_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик встречи\n"
+    )
+    assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик дня\n"
+    )
+    assert (day_folder / "00_tasks_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик задач\n"
+    )
 
