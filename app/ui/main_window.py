@@ -197,7 +197,13 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.status_label.setText(str(error))
             return
-        self.status_label.setText(f"Рабочий день начат. Папка: {day_folder}")
+        if self.storage.last_workday_action == "reopened":
+            self.status_label.setText(
+                "Рабочий день переоткрыт. "
+                f"Используется существующая папка дня: {day_folder}"
+            )
+        else:
+            self.status_label.setText(f"Рабочий день начат. Папка: {day_folder}")
         self._refresh_after_lifecycle_change()
 
     def start_meeting(self) -> None:

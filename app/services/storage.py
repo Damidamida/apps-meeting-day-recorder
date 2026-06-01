@@ -32,6 +32,7 @@ class StorageService:
         self.root = Path(root)
         self.active_day_folder: Path | None = None
         self.active_meeting_folder: Path | None = None
+        self.last_workday_action: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -51,6 +52,7 @@ class StorageService:
         now = now or datetime.now()
         self.active_day_folder = None
         self.active_meeting_folder = None
+        self.last_workday_action = None
 
         day_folder = self.root / now.date().isoformat()
         metadata_path = day_folder / "day_metadata.json"
@@ -81,7 +83,14 @@ class StorageService:
         if metadata_path.exists():
             metadata = self._read_json(metadata_path)
             if metadata.get("status") == "ended":
-                raise ValueError("Сегодняшний рабочий день уже завершен.")
+                metadata.setdefault("events", []).append(
+                    {"type": "reopened", "at": started_at.isoformat()}
+                )
+                metadata.update({"ended_at": None, "status": "active"})
+                self._write_json(metadata_path, metadata)
+                self.active_day_folder = day_folder
+                self.last_workday_action = "reopened"
+                return day_folder
             raise ValueError(f"Метаданные рабочего дня уже существуют: {metadata_path}")
         self._write_json(
             metadata_path,
@@ -90,9 +99,11 @@ class StorageService:
                 "started_at": started_at.isoformat(),
                 "status": "active",
                 "meetings": [],
+                "events": [{"type": "started", "at": started_at.isoformat()}],
             },
         )
         self.active_day_folder = day_folder
+        self.last_workday_action = "started"
         return day_folder
 
     def start_meeting(self, title: str, started_at: datetime | None = None) -> Path:
@@ -163,6 +174,9 @@ class StorageService:
                 "ended_at": ended_at.isoformat(),
                 "status": "ended",
             }
+        )
+        metadata.setdefault("events", []).append(
+            {"type": "ended", "at": ended_at.isoformat()}
         )
         self._write_json(metadata_path, metadata)
         self._read_or_create_text(
