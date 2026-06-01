@@ -1,0 +1,16 @@
+.env
+config.yaml
+*.mp4
+*.mkv
+*.wav
+*.mp3
+logs/
+recordings/
+MeetingSummaries/
+__pycache__/
+.venv/
+dist/
+build/
+*.spec
+*.egg-info/
+.pytest_cache/
