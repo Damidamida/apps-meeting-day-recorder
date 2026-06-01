@@ -1,8 +1,6 @@
 import json
 from datetime import date, datetime
 
-import pytest
-
 from app.services.storage import StorageService, safe_folder_name
 
 
@@ -57,20 +55,85 @@ def test_start_workday_creates_day_metadata(tmp_path) -> None:
         "started_at": "2026-06-01T08:30:00",
         "status": "active",
         "meetings": [],
+        "events": [{"type": "started", "at": "2026-06-01T08:30:00"}],
     }
     assert storage.workday_active
 
 
-def test_start_workday_does_not_overwrite_existing_metadata(tmp_path) -> None:
+def test_reopen_ended_workday_preserves_files_and_allows_new_meeting(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    first_meeting = storage.start_meeting("Первый созвон", datetime(2026, 6, 1, 9, 0))
+    storage.end_meeting(datetime(2026, 6, 1, 9, 30))
+    storage.save_meeting_summary_draft(first_meeting, "# Черновик встречи\n")
+    storage.save_day_summary_draft(day_folder, "# Черновик дня\n")
+    storage.save_tasks_draft(day_folder, "# Черновик задач\n")
+    storage.save_final_files(
+        first_meeting,
+        "# Финальные итоги встречи\n",
+        "# Финальные итоги дня\n",
+        "# Финальные задачи\n",
+    )
+    storage.end_workday(datetime(2026, 6, 1, 18, 0))
+
+    reopened_folder = storage.start_workday(datetime(2026, 6, 1, 18, 15))
+    second_meeting = storage.start_meeting("Второй созвон", datetime(2026, 6, 1, 18, 30))
+
+    metadata_path = day_folder / "day_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert reopened_folder == day_folder
+    assert storage.active_day_folder == day_folder
+    assert storage.last_workday_action == "reopened"
+    assert metadata["status"] == "active"
+    assert metadata["ended_at"] is None
+    assert metadata["events"] == [
+        {"type": "started", "at": "2026-06-01T08:30:00"},
+        {"type": "ended", "at": "2026-06-01T18:00:00"},
+        {"type": "reopened", "at": "2026-06-01T18:15:00"},
+    ]
+    assert first_meeting.is_dir()
+    assert second_meeting.parent == day_folder
+    assert (first_meeting / "summary_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик встречи\n"
+    )
+    assert (first_meeting / "summary_final.md").is_file()
+    assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик дня\n"
+    )
+    assert (day_folder / "00_tasks_draft.md").read_text(encoding="utf-8") == (
+        "# Черновик задач\n"
+    )
+    assert (day_folder / "00_day_summary_final.md").is_file()
+    assert (day_folder / "00_tasks_final.md").is_file()
+
+    storage.end_meeting(datetime(2026, 6, 1, 19, 0))
+    storage.end_workday(datetime(2026, 6, 1, 20, 0))
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["ended_at"] == "2026-06-01T20:00:00"
+    assert metadata["events"][-1] == {"type": "ended", "at": "2026-06-01T20:00:00"}
+
+
+def test_reopen_legacy_ended_workday_adds_events(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 1))
     metadata_path = day_folder / "day_metadata.json"
-    metadata_path.write_text('{"status": "ended"}\n', encoding="utf-8")
+    metadata_path.write_text(
+        '{"date": "2026-06-01", "status": "ended", '
+        '"ended_at": "2026-06-01T18:00:00", "meetings": []}\n',
+        encoding="utf-8",
+    )
 
-    with pytest.raises(ValueError, match="уже завершен"):
-        storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    reopened_folder = storage.start_workday(datetime(2026, 6, 1, 18, 15))
 
-    assert json.loads(metadata_path.read_text(encoding="utf-8")) == {"status": "ended"}
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert reopened_folder == day_folder
+    assert metadata["status"] == "active"
+    assert metadata["ended_at"] is None
+    assert metadata["events"] == [
+        {"type": "ended", "at": "2026-06-01T18:00:00"},
+        {"type": "reopened", "at": "2026-06-01T18:15:00"},
+    ]
 
 
 def test_start_meeting_creates_active_metadata(tmp_path) -> None:
@@ -117,6 +180,10 @@ def test_end_workday_creates_day_drafts(tmp_path) -> None:
     metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
     assert metadata["ended_at"] == "2026-06-01T18:00:00"
     assert metadata["status"] == "ended"
+    assert metadata["events"] == [
+        {"type": "started", "at": "2026-06-01T08:30:00"},
+        {"type": "ended", "at": "2026-06-01T18:00:00"},
+    ]
     assert (day_folder / "00_day_summary_draft.md").is_file()
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
