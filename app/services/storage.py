@@ -73,7 +73,7 @@ class StorageService:
 
     def start_workday(self, started_at: datetime | None = None) -> Path:
         if self.workday_active:
-            raise ValueError("A workday is already active.")
+            raise ValueError("Рабочий день уже активен.")
 
         started_at = started_at or datetime.now()
         day_folder = self.create_day_folder(started_at.date())
@@ -81,8 +81,8 @@ class StorageService:
         if metadata_path.exists():
             metadata = self._read_json(metadata_path)
             if metadata.get("status") == "ended":
-                raise ValueError("Today's workday is already ended.")
-            raise ValueError(f"Workday metadata already exists: {metadata_path}")
+                raise ValueError("Сегодняшний рабочий день уже завершен.")
+            raise ValueError(f"Метаданные рабочего дня уже существуют: {metadata_path}")
         self._write_json(
             metadata_path,
             {
@@ -97,11 +97,11 @@ class StorageService:
 
     def start_meeting(self, title: str, started_at: datetime | None = None) -> Path:
         if not self.workday_active:
-            raise ValueError("Start a workday before starting a meeting.")
+            raise ValueError("Сначала начните рабочий день.")
         if self.meeting_active:
-            raise ValueError("A meeting is already active.")
+            raise ValueError("Встреча уже активна.")
         if not title.strip():
-            raise ValueError("Meeting title cannot be empty.")
+            raise ValueError("Название встречи не может быть пустым.")
 
         started_at = started_at or datetime.now()
         meeting_folder = self._create_unique_meeting_folder(title, started_at)
@@ -118,7 +118,7 @@ class StorageService:
 
     def end_meeting(self, ended_at: datetime | None = None) -> Path:
         if not self.meeting_active:
-            raise ValueError("There is no active meeting to end.")
+            raise ValueError("Нет активной встречи для завершения.")
 
         ended_at = ended_at or datetime.now()
         meeting_folder = self.active_meeting_folder
@@ -150,9 +150,9 @@ class StorageService:
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:
-            raise ValueError("There is no active workday to end.")
+            raise ValueError("Нет активного рабочего дня для завершения.")
         if self.meeting_active:
-            raise ValueError("End the active meeting before ending the workday.")
+            raise ValueError("Завершите активную встречу перед завершением рабочего дня.")
 
         ended_at = ended_at or datetime.now()
         day_folder = self.active_day_folder
@@ -165,13 +165,13 @@ class StorageService:
             }
         )
         self._write_json(metadata_path, metadata)
-        (day_folder / "00_day_summary_draft.md").write_text(
-            "# Day summary draft\n\n_Summary generation is not implemented yet._\n",
-            encoding="utf-8",
+        self._read_or_create_text(
+            day_folder / "00_day_summary_draft.md",
+            self._day_summary_placeholder(),
         )
-        (day_folder / "00_tasks_draft.md").write_text(
-            "# Tasks draft\n\n_Task extraction is not implemented yet._\n",
-            encoding="utf-8",
+        self._read_or_create_text(
+            day_folder / "00_tasks_draft.md",
+            self._tasks_placeholder(),
         )
         self.active_day_folder = None
         return day_folder
@@ -205,7 +205,7 @@ class StorageService:
 
     def write_placeholder_transcript(self, meeting_folder: Path) -> Path:
         path = meeting_folder / "transcript.md"
-        path.write_text("# Transcript\n\n_Transcription is not implemented yet._\n", encoding="utf-8")
+        self._read_or_create_text(path, "# Транскрипт\n\n_Транскрипция пока не реализована._\n")
         return path
 
     def write_placeholder_transcript_json(self, meeting_folder: Path) -> Path:
@@ -215,8 +215,68 @@ class StorageService:
 
     def write_placeholder_summary(self, meeting_folder: Path) -> Path:
         path = meeting_folder / "summary_draft.md"
-        path.write_text("# Summary draft\n\n_Summarization is not implemented yet._\n", encoding="utf-8")
+        self._read_or_create_text(path, self._meeting_summary_placeholder())
         return path
+
+    def get_today_day_folder(self, now: datetime | None = None) -> Path | None:
+        now = now or datetime.now()
+        day_folder = self.root / now.date().isoformat()
+        return day_folder if day_folder.is_dir() else None
+
+    def list_today_meeting_folders(self, now: datetime | None = None) -> list[Path]:
+        day_folder = self.get_today_day_folder(now)
+        if day_folder is None:
+            return []
+        return sorted(
+            folder
+            for folder in day_folder.iterdir()
+            if folder.is_dir() and (folder / "meeting_metadata.json").is_file()
+        )
+
+    def read_meeting_metadata(self, meeting_folder: Path) -> dict[str, Any]:
+        path = meeting_folder / "meeting_metadata.json"
+        return self._read_json(path) if path.exists() else {}
+
+    def read_meeting_summary_draft(self, meeting_folder: Path) -> str:
+        return self._read_or_create_text(
+            meeting_folder / "summary_draft.md",
+            self._meeting_summary_placeholder(),
+        )
+
+    def save_meeting_summary_draft(self, meeting_folder: Path, content: str) -> Path:
+        return self._write_text(meeting_folder / "summary_draft.md", content)
+
+    def read_day_summary_draft(self, day_folder: Path) -> str:
+        return self._read_or_create_text(
+            day_folder / "00_day_summary_draft.md",
+            self._day_summary_placeholder(),
+        )
+
+    def save_day_summary_draft(self, day_folder: Path, content: str) -> Path:
+        return self._write_text(day_folder / "00_day_summary_draft.md", content)
+
+    def read_tasks_draft(self, day_folder: Path) -> str:
+        return self._read_or_create_text(
+            day_folder / "00_tasks_draft.md",
+            self._tasks_placeholder(),
+        )
+
+    def save_tasks_draft(self, day_folder: Path, content: str) -> Path:
+        return self._write_text(day_folder / "00_tasks_draft.md", content)
+
+    def save_final_files(
+        self,
+        meeting_folder: Path,
+        meeting_summary: str,
+        day_summary: str,
+        tasks: str,
+    ) -> tuple[Path, Path, Path]:
+        day_folder = meeting_folder.parent
+        return (
+            self._write_text(meeting_folder / "summary_final.md", meeting_summary),
+            self._write_text(day_folder / "00_day_summary_final.md", day_summary),
+            self._write_text(day_folder / "00_tasks_final.md", tasks),
+        )
 
     def _create_unique_meeting_folder(self, title: str, started_at: datetime) -> Path:
         meeting_name = f"{started_at:%H-%M}_{safe_folder_name(title)}"
@@ -234,6 +294,29 @@ class StorageService:
         if not metadata_path.exists():
             return False
         return cls._read_json(metadata_path).get("status") == status
+
+    @staticmethod
+    def _meeting_summary_placeholder() -> str:
+        return "# Черновик итогов встречи\n\n_Итоги встречи пока не заполнены._\n"
+
+    @staticmethod
+    def _day_summary_placeholder() -> str:
+        return "# Черновик итогов дня\n\n_Итоги дня пока не заполнены._\n"
+
+    @staticmethod
+    def _tasks_placeholder() -> str:
+        return "# Черновик задач\n\n_Задачи пока не заполнены._\n"
+
+    @staticmethod
+    def _read_or_create_text(path: Path, placeholder: str) -> str:
+        if not path.exists():
+            path.write_text(placeholder, encoding="utf-8")
+        return path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _write_text(path: Path, content: str) -> Path:
+        path.write_text(content, encoding="utf-8")
+        return path
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
