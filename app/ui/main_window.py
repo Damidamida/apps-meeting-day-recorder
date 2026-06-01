@@ -304,7 +304,7 @@ class MainWindow(QMainWindow):
             self.day_summary_editor.toPlainText(),
             self.tasks_editor.toPlainText(),
         )
-        self.review_status_label.setText("Финальные файлы сохранены локально. Черновики сохранены.")
+        self.review_status_label.setText("Финальные файлы сохранены локально. Черновики не удалены.")
 
     def save_final_summaries(self) -> None:
         self.save_final_files()
