@@ -47,6 +47,30 @@ class StorageService:
     def meeting_active(self) -> bool:
         return self.active_meeting_folder is not None
 
+    def load_today_state(self, now: datetime | None = None) -> None:
+        now = now or datetime.now()
+        self.active_day_folder = None
+        self.active_meeting_folder = None
+
+        day_folder = self.root / now.date().isoformat()
+        metadata_path = day_folder / "day_metadata.json"
+        if not metadata_path.exists():
+            return
+
+        metadata = self._read_json(metadata_path)
+        if metadata.get("status") != "active":
+            return
+
+        self.active_day_folder = day_folder
+        active_meetings = sorted(
+            meeting_folder
+            for meeting_folder in day_folder.iterdir()
+            if meeting_folder.is_dir()
+            and self._meeting_has_status(meeting_folder, "active")
+        )
+        if active_meetings:
+            self.active_meeting_folder = active_meetings[-1]
+
     def start_workday(self, started_at: datetime | None = None) -> Path:
         if self.workday_active:
             raise ValueError("A workday is already active.")
@@ -55,6 +79,9 @@ class StorageService:
         day_folder = self.create_day_folder(started_at.date())
         metadata_path = day_folder / "day_metadata.json"
         if metadata_path.exists():
+            metadata = self._read_json(metadata_path)
+            if metadata.get("status") == "ended":
+                raise ValueError("Today's workday is already ended.")
             raise ValueError(f"Workday metadata already exists: {metadata_path}")
         self._write_json(
             metadata_path,
@@ -200,6 +227,13 @@ class StorageService:
             suffix += 1
         meeting_folder.mkdir(parents=True)
         return meeting_folder
+
+    @classmethod
+    def _meeting_has_status(cls, meeting_folder: Path, status: str) -> bool:
+        metadata_path = meeting_folder / "meeting_metadata.json"
+        if not metadata_path.exists():
+            return False
+        return cls._read_json(metadata_path).get("status") == status
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:

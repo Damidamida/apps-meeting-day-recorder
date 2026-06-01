@@ -20,8 +20,9 @@ class MainWindow(QMainWindow):
         self.resize(480, 420)
         config = load_config()
         self.storage = storage or StorageService(Path(config["storage"]["root"]))
+        self.storage.load_today_state()
 
-        self.status_label = QLabel("Ready. Start a workday when needed.")
+        self.status_label = QLabel(self._startup_status())
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
 
@@ -89,6 +90,13 @@ class MainWindow(QMainWindow):
 
     def save_final_summaries(self) -> None:
         self.status_label.setText("Final summary editing is not implemented yet. Draft files remain local.")
+
+    def _startup_status(self) -> str:
+        if self.storage.meeting_active:
+            return f"Active meeting restored: {self.storage.active_meeting_folder.name}"
+        if self.storage.workday_active:
+            return "Active workday restored. Start a meeting when needed."
+        return "Ready. Start a workday when needed."
 
     def refresh_buttons(self) -> None:
         self.start_workday_button.setEnabled(not self.storage.workday_active)

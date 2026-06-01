@@ -32,6 +32,7 @@ Implemented:
 
 - PySide6 desktop window with manual workday, meeting, review, and summary controls.
 - Local placeholder flow: start workday, start meeting, end meeting, and end workday.
+- Startup recovery for today's active workday and active meeting.
 - Button states that prevent invalid workday and meeting actions.
 - Local storage helpers for dated workday folders and safe meeting folder names.
 - JSON day and meeting metadata, including meeting duration.

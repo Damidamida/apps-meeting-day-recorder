@@ -67,7 +67,7 @@ def test_start_workday_does_not_overwrite_existing_metadata(tmp_path) -> None:
     metadata_path = day_folder / "day_metadata.json"
     metadata_path.write_text('{"status": "ended"}\n', encoding="utf-8")
 
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError, match="already ended"):
         storage.start_workday(datetime(2026, 6, 1, 8, 30))
 
     assert json.loads(metadata_path.read_text(encoding="utf-8")) == {"status": "ended"}
@@ -120,4 +120,60 @@ def test_end_workday_creates_day_drafts(tmp_path) -> None:
     assert (day_folder / "00_day_summary_draft.md").is_file()
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
+
+
+def test_active_day_is_restored_after_restart(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+
+    restored_storage = StorageService(tmp_path)
+    restored_storage.load_today_state(datetime(2026, 6, 1, 10, 0))
+
+    assert restored_storage.active_day_folder == day_folder
+    assert restored_storage.workday_active
+    assert not restored_storage.meeting_active
+
+
+def test_ended_day_is_not_restored_as_active(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    storage.end_workday(datetime(2026, 6, 1, 18, 0))
+
+    restored_storage = StorageService(tmp_path)
+    restored_storage.load_today_state(datetime(2026, 6, 1, 19, 0))
+
+    assert not restored_storage.workday_active
+    assert not restored_storage.meeting_active
+
+
+def test_active_meeting_is_restored_after_restart(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Restart sync", datetime(2026, 6, 1, 9, 15))
+
+    restored_storage = StorageService(tmp_path)
+    restored_storage.load_today_state(datetime(2026, 6, 1, 9, 30))
+
+    assert restored_storage.active_day_folder == day_folder
+    assert restored_storage.active_meeting_folder == meeting_folder
+    assert restored_storage.workday_active
+    assert restored_storage.meeting_active
+
+
+def test_full_happy_path_still_works(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Happy path", datetime(2026, 6, 1, 9, 15))
+
+    storage.end_meeting(datetime(2026, 6, 1, 9, 45))
+    storage.end_workday(datetime(2026, 6, 1, 18, 0))
+
+    assert (meeting_folder / "meeting_metadata.json").is_file()
+    assert (meeting_folder / "transcript.md").is_file()
+    assert (meeting_folder / "transcript.json").is_file()
+    assert (meeting_folder / "summary_draft.md").is_file()
+    assert (day_folder / "00_day_summary_draft.md").is_file()
+    assert (day_folder / "00_tasks_draft.md").is_file()
+    assert not storage.workday_active
+    assert not storage.meeting_active
 
