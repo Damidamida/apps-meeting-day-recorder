@@ -4,6 +4,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from app.services.recorder import NoopRecorder, Recorder, RecorderError
+
 
 UNSAFE_FOLDER_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WHITESPACE = re.compile(r"\s+")
@@ -28,11 +30,13 @@ def safe_folder_name(title: str, fallback: str = "meeting") -> str:
 
 
 class StorageService:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, recorder: Recorder | None = None) -> None:
         self.root = Path(root)
+        self.recorder = recorder or NoopRecorder()
         self.active_day_folder: Path | None = None
         self.active_meeting_folder: Path | None = None
         self.last_workday_action: str | None = None
+        self.last_recorder_message: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -130,6 +134,7 @@ class StorageService:
             },
         )
         self.active_meeting_folder = meeting_folder
+        self._start_recording(meeting_folder)
         return meeting_folder
 
     def end_meeting(self, ended_at: datetime | None = None) -> Path:
@@ -139,6 +144,8 @@ class StorageService:
         ended_at = ended_at or datetime.now()
         meeting_folder = self.active_meeting_folder
         metadata = self._read_json(meeting_folder / "meeting_metadata.json")
+        if metadata.get("recording_status") == "recording":
+            metadata.update(self._stop_recording())
         started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
@@ -163,6 +170,35 @@ class StorageService:
         self._write_json(day_metadata_path, day_metadata)
         self.active_meeting_folder = None
         return meeting_folder
+
+    def _start_recording(self, meeting_folder: Path) -> None:
+        metadata = self._read_json(meeting_folder / "meeting_metadata.json")
+        try:
+            result = self.recorder.start_recording(meeting_folder)
+            metadata.update(result.metadata)
+            self.last_recorder_message = result.message
+        except RecorderError as error:
+            metadata.update(
+                {
+                    "recorder": "obs",
+                    "recording_status": "start_failed",
+                    "recording_note": str(error),
+                }
+            )
+            self.last_recorder_message = str(error)
+        self.write_metadata(meeting_folder, metadata)
+
+    def _stop_recording(self) -> dict[str, Any]:
+        try:
+            result = self.recorder.stop_recording()
+            self.last_recorder_message = result.message
+            return result.metadata
+        except RecorderError as error:
+            self.last_recorder_message = str(error)
+            return {
+                "recording_status": "stop_failed",
+                "recording_note": str(error),
+            }
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:

@@ -21,16 +21,22 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import load_config
+from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, storage: StorageService | None = None) -> None:
+    def __init__(
+        self,
+        storage: StorageService | None = None,
+        recorder: Recorder | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("Meeting Day Recorder")
         self.resize(1100, 720)
         config = load_config()
-        self.storage = storage or StorageService(Path(config["storage"]["root"]))
+        self.recorder = recorder or (storage.recorder if storage else create_recorder(config["obs"]))
+        self.storage = storage or StorageService(Path(config["storage"]["root"]), self.recorder)
         self.storage.load_today_state()
 
         self.pages = QStackedWidget()
@@ -77,10 +83,12 @@ class MainWindow(QMainWindow):
         self.meeting_status_value = QLabel()
         self.day_folder_value = QLabel()
         self.active_meeting_value = QLabel()
+        self.obs_status_value = QLabel(self.recorder.status_text)
         status_layout.addRow("Статус рабочего дня:", self.workday_status_value)
         status_layout.addRow("Статус встречи:", self.meeting_status_value)
         status_layout.addRow("Папка дня:", self.day_folder_value)
         status_layout.addRow("Активная встреча:", self.active_meeting_value)
+        status_layout.addRow("Статус OBS:", self.obs_status_value)
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
 
@@ -101,6 +109,7 @@ class MainWindow(QMainWindow):
         self.open_day_folder_button = self._add_button(
             actions_layout, "Открыть папку дня", self.open_day_folder
         )
+        self._add_button(actions_layout, "Проверить OBS", self.check_obs)
         actions_group.setLayout(actions_layout)
         layout.addWidget(actions_group)
 
@@ -174,7 +183,8 @@ class MainWindow(QMainWindow):
             "4. Завершить рабочий день.\n"
             "5. Открыть ревью.\n"
             "6. Проверить черновики и сохранить финальные файлы.\n\n"
-            "Интеграции с OBS, ffmpeg, транскрипция и AI-суммаризация "
+            "OBS можно включить в локальном config.yaml. По умолчанию запись выключена.\n"
+            "Интеграции с ffmpeg, транскрипция и AI-суммаризация "
             "запланированы на последующие этапы."
         )
         help_text.setWordWrap(True)
@@ -216,7 +226,10 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.status_label.setText(str(error))
             return
-        self.status_label.setText(f"Встреча начата: {meeting_folder.name}")
+        message = f"Встреча начата: {meeting_folder.name}"
+        if self.storage.last_recorder_message:
+            message = f"{message} {self.storage.last_recorder_message}"
+        self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 
     def end_meeting(self) -> None:
@@ -225,8 +238,19 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.status_label.setText(str(error))
             return
-        self.status_label.setText(f"Встреча завершена: {meeting_folder.name}")
+        message = f"Встреча завершена: {meeting_folder.name}"
+        if self.storage.last_recorder_message:
+            message = f"{message} {self.storage.last_recorder_message}"
+        self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
+
+    def check_obs(self) -> None:
+        try:
+            message = self.recorder.check_connection()
+        except RecorderError as error:
+            message = str(error)
+        self.obs_status_value.setText(self.recorder.status_text)
+        self.status_label.setText(message)
 
     def end_workday(self) -> None:
         try:
@@ -366,6 +390,7 @@ class MainWindow(QMainWindow):
         self.active_meeting_value.setText(
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
+        self.obs_status_value.setText(self.recorder.status_text)
 
     def _refresh_review_buttons(self) -> None:
         has_day_folder = self.storage.get_today_day_folder() is not None

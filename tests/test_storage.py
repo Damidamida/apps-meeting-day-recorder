@@ -148,6 +148,7 @@ def test_start_meeting_creates_active_metadata(tmp_path) -> None:
         "title": "Product / sync",
         "started_at": "2026-06-01T09:15:00",
         "status": "active",
+        "recording_status": "disabled",
     }
     assert storage.meeting_active
 
