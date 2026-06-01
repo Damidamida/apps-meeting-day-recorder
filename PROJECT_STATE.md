@@ -176,5 +176,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #1: создан skeleton / foundation.
 - PR #2: добавлен локальный жизненный цикл рабочего дня и встреч с восстановлением после перезапуска.
 - PR #4: `main` синхронизирован с прежней default branch.
-- Ветка `codex/add-project-state-memory`, PR пока не назначен: добавлены единый файл памяти проекта, обязательный workflow Codex и ссылка из README.
-
+- PR #5, ветка `codex/add-project-state-memory`: добавлены единый файл памяти проекта, обязательный workflow Codex и ссылка из README. Проверки: `python -m pytest` — `13 passed`; `python -m compileall -q app` — успешно.
