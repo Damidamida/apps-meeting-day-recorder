@@ -1,10 +1,12 @@
 # Meeting Day Recorder
 
-A local-first Windows desktop app skeleton for manually tracking ad hoc workday meetings. This first version creates a safe foundation without recording or AI integrations.
+Локальное Windows-приложение для ручного учета ad hoc-встреч в течение рабочего дня. Текущая версия формирует безопасный local-first каркас без записи аудио и AI-интеграций.
 
-## Windows setup
+Актуальное состояние проекта, ограничения и план следующих этапов описаны в [`PROJECT_STATE.md`](PROJECT_STATE.md). Этот файл является единым источником истины для текущего контекста проекта.
 
-Install Python 3.11 or newer. From PowerShell in the repository folder:
+## Установка в Windows
+
+Установите Python 3.11 или новее. В PowerShell из папки репозитория выполните:
 
 ```powershell
 python -m venv .venv
@@ -14,37 +16,35 @@ pip install -e ".[dev]"
 Copy-Item config.yaml.example config.yaml
 ```
 
-## Run the app
+## Запуск приложения
 
 ```powershell
 python -m app.main
 ```
 
-## Run tests
+## Запуск тестов
 
 ```powershell
 pytest
 ```
 
-## MVP skeleton
+## Реализовано
 
-Implemented:
+- Окно PySide6 с ручным управлением рабочим днем и встречами.
+- Локальный сценарий: начать рабочий день, начать встречу, завершить встречу, завершить рабочий день.
+- Восстановление активного рабочего дня и активной встречи после перезапуска.
+- Блокировка недопустимых действий через состояние кнопок.
+- Локальные папки по датам и безопасные имена папок встреч.
+- JSON-метаданные рабочего дня и встреч, включая длительность встречи.
+- Markdown- и JSON-заглушки транскриптов, черновиков итогов дня и задач.
+- Загрузка YAML-конфигурации со значениями по умолчанию.
 
-- PySide6 desktop window with manual workday, meeting, review, and summary controls.
-- Local placeholder flow: start workday, start meeting, end meeting, and end workday.
-- Startup recovery for today's active workday and active meeting.
-- Button states that prevent invalid workday and meeting actions.
-- Local storage helpers for dated workday folders and safe meeting folder names.
-- JSON day and meeting metadata, including meeting duration.
-- Placeholder transcript, draft meeting summary, day summary, and task files.
-- YAML configuration loading with sensible defaults.
+## Намеренно не реализовано
 
-Intentionally not implemented yet:
-
-- OBS recording integration.
-- ffmpeg audio extraction.
-- Real transcription or diarization.
-- Real OpenAI API calls or AI summarization.
+- Интеграция с OBS для записи.
+- Извлечение аудио через ffmpeg.
+- Реальная транскрипция и диаризация.
+- Вызовы OpenAI API и AI-суммаризация.
 - OCR.
-- Email, calendar, or messenger integrations.
+- Интеграции с почтой, календарями и мессенджерами.
 
