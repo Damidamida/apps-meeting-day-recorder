@@ -50,6 +50,8 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
         [
             "whisper",
             str(audio_path),
+            "--model",
+            "base",
             "--language",
             "Russian",
             "--output_format",
