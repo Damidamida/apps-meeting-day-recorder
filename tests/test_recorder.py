@@ -60,10 +60,35 @@ class StopFailingRecorder(FakeRecorder):
 class FakeAudioExtractor:
     def extract_audio(self, recording_path: str, meeting_folder: Path) -> dict[str, str]:
         assert recording_path == "C:/recordings/meeting.mkv"
+        (meeting_folder / "audio.wav").touch()
         return {
             "audio_status": "extracted",
             "audio_path": str(meeting_folder / "audio.wav"),
             "audio_extracted_at": "2026-06-01T09:45:02",
+        }
+
+
+class FakeTranscriber:
+    def __init__(self) -> None:
+        self.called = False
+
+    def transcribe(self, audio_path: str, meeting_folder: Path) -> dict[str, str]:
+        self.called = True
+        assert audio_path == str(meeting_folder / "audio.wav")
+        (meeting_folder / "transcript.md").write_text(
+            "# Транскрипт\n\nТекст встречи\n",
+            encoding="utf-8",
+        )
+        (meeting_folder / "transcript.json").write_text(
+            '{"status": "completed", "provider": "test", "text": "Текст встречи", "segments": []}\n',
+            encoding="utf-8",
+        )
+        return {
+            "transcription_status": "completed",
+            "transcription_provider": "local_whisper_cli",
+            "transcript_path": str(meeting_folder / "transcript.md"),
+            "transcript_json_path": str(meeting_folder / "transcript.json"),
+            "transcribed_at": "2026-06-01T09:45:03",
         }
 
 
@@ -90,7 +115,8 @@ def test_storage_lifecycle_works_with_obs_disabled(tmp_path) -> None:
 
 
 def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:
-    storage = StorageService(tmp_path, FakeRecorder(), FakeAudioExtractor())
+    transcriber = FakeTranscriber()
+    storage = StorageService(tmp_path, FakeRecorder(), FakeAudioExtractor(), transcriber)
     storage.start_workday(datetime(2026, 6, 1, 8, 30))
     meeting_folder = storage.start_meeting("Записываемая встреча", datetime(2026, 6, 1, 9, 15))
 
@@ -108,6 +134,13 @@ def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:
     assert ended_metadata["audio_status"] == "extracted"
     assert ended_metadata["audio_path"] == str(meeting_folder / "audio.wav")
     assert ended_metadata["audio_extracted_at"] == "2026-06-01T09:45:02"
+    assert transcriber.called
+    assert ended_metadata["transcription_status"] == "completed"
+    assert ended_metadata["transcription_provider"] == "local_whisper_cli"
+    assert ended_metadata["transcript_path"] == str(meeting_folder / "transcript.md")
+    assert ended_metadata["transcript_json_path"] == str(meeting_folder / "transcript.json")
+    assert ended_metadata["transcribed_at"] == "2026-06-01T09:45:03"
+    assert storage.last_transcription_message == "Транскрипция завершена."
 
 
 def test_recorder_failure_keeps_local_meeting_and_readable_error(tmp_path) -> None:
@@ -137,6 +170,7 @@ def test_stop_recording_failure_keeps_metadata_and_placeholder_files(tmp_path) -
     assert metadata["recording_status"] == "stop_failed"
     assert metadata["recording_note"] == "Не удалось остановить запись OBS."
     assert metadata["audio_status"] == "skipped"
+    assert metadata["transcription_status"] == "skipped"
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
     assert (meeting_folder / "summary_draft.md").is_file()

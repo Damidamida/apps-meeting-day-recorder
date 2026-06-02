@@ -6,6 +6,12 @@ from typing import Any
 
 from app.services.audio import AudioExtractor, skipped_audio_metadata
 from app.services.recorder import NoopRecorder, Recorder, RecorderError
+from app.services.transcription import (
+    LocalWhisperTranscriber,
+    Transcriber,
+    skipped_transcription_metadata,
+    transcription_message,
+)
 
 
 UNSAFE_FOLDER_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -36,15 +42,18 @@ class StorageService:
         root: Path,
         recorder: Recorder | None = None,
         audio_extractor: AudioExtractor | None = None,
+        transcriber: Transcriber | None = None,
     ) -> None:
         self.root = Path(root)
         self.recorder = recorder or NoopRecorder()
         self.audio_extractor = audio_extractor or AudioExtractor()
+        self.transcriber = transcriber or LocalWhisperTranscriber()
         self.active_day_folder: Path | None = None
         self.active_meeting_folder: Path | None = None
         self.last_workday_action: str | None = None
         self.last_recorder_message: str | None = None
         self.last_audio_message: str | None = None
+        self.last_transcription_message: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -155,6 +164,10 @@ class StorageService:
         if metadata.get("recording_status") == "recording":
             metadata.update(self._stop_recording())
         metadata.update(self._extract_audio(metadata, meeting_folder))
+        self.write_placeholder_transcript(meeting_folder)
+        self.write_placeholder_transcript_json(meeting_folder)
+        self.write_placeholder_summary(meeting_folder)
+        metadata.update(self._transcribe_audio(metadata, meeting_folder))
         started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
@@ -164,9 +177,6 @@ class StorageService:
             }
         )
         self.write_metadata(meeting_folder, metadata)
-        self.write_placeholder_transcript(meeting_folder)
-        self.write_placeholder_transcript_json(meeting_folder)
-        self.write_placeholder_summary(meeting_folder)
 
         day_metadata_path = self.active_day_folder / "day_metadata.json"
         day_metadata = self._read_json(day_metadata_path)
@@ -225,6 +235,17 @@ class StorageService:
         if metadata["audio_status"] == "extracted":
             return "Аудио извлечено."
         return f"Аудио не извлечено: {metadata['audio_error']}"
+
+    def _transcribe_audio(self, metadata: dict[str, Any], meeting_folder: Path) -> dict[str, Any]:
+        if metadata.get("audio_status") != "extracted" or not metadata.get("audio_path"):
+            transcription_metadata = skipped_transcription_metadata()
+        else:
+            transcription_metadata = self.transcriber.transcribe(
+                metadata["audio_path"],
+                meeting_folder,
+            )
+        self.last_transcription_message = transcription_message(transcription_metadata)
+        return transcription_metadata
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:

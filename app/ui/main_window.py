@@ -185,7 +185,8 @@ class MainWindow(QMainWindow):
             "6. Проверить черновики и сохранить финальные файлы.\n\n"
             "OBS можно включить в локальном config.yaml. По умолчанию запись выключена.\n"
             "FFmpeg используется локально для извлечения audio.wav из OBS-записи.\n"
-            "Транскрипция и AI-суммаризация запланированы на последующие этапы."
+            "Транскрипция может выполняться локально через Whisper CLI, если он доступен в PATH.\n"
+            "OpenAI API и AI-суммаризация не используются."
         )
         help_text.setWordWrap(True)
         layout.addWidget(title)
@@ -243,6 +244,8 @@ class MainWindow(QMainWindow):
             message = f"{message} {self.storage.last_recorder_message}"
         if self.storage.last_audio_message:
             message = f"{message} {self.storage.last_audio_message}"
+        if self.storage.last_transcription_message:
+            message = f"{message} {self.storage.last_transcription_message}"
         self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 
