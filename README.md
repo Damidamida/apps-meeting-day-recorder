@@ -22,6 +22,18 @@ Copy-Item config.yaml.example config.yaml
 python -m app.main
 ```
 
+## Запуск двойным кликом в Windows
+
+После установки зависимостей приложение можно запускать без ручного PowerShell через файл:
+
+`start_meeting_day_recorder.cmd`
+
+Файл использует локальное окружение `.venv` и запускает:
+
+`.venv\Scripts\python.exe -m app.main`
+
+Если `.venv` еще не создано, выполните установку из раздела "Установка в Windows". Консольное окно остается видимым при ошибке, чтобы можно было прочитать сообщение.
+
 ## Запуск тестов
 
 ```powershell
