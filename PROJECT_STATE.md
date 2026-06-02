@@ -117,7 +117,8 @@ Codex не имеет права самостоятельно переводит
 - безопасное завершение встречи, если транскрипция пропущена, Whisper недоступен или CLI завершился с ошибкой;
 - слой summary generation с общей архитектурой `Summarizer`;
 - OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового транскрипта;
-- безопасная загрузка OpenAI API key из `OPENAI_API_KEY` или внешнего `.env.local` без записи ключа в git, logs, metadata или README;
+- безопасная загрузка API key из переменной окружения или внешнего `.env.local` без записи ключа в git, logs, metadata или README;
+- настройка `summary.base_url` для работы через OpenAI-совместимые endpoints, включая ProxyAPI `https://api.proxyapi.ru/openai/v1`;
 - отправка в OpenAI только текста `transcript.md` / `transcript.json`, без аудио и видео;
 - безопасные статусы summary `disabled`, `skipped`, `openai_unavailable`, `failed`, `draft_created`;
 - разбиение длинного transcript на chunks для обработки одной длинной встречи;
@@ -129,7 +130,7 @@ Codex не имеет права самостоятельно переводит
 
 Этап 7 `Summary generation` реализован в ветке/PR и ожидает ручной проверки. Этап 8 остается в статусе `Сделать` и не начинался.
 
-Ручная сервисная проверка с реальным OpenAI API в текущем окружении не завершилась из-за ответа OpenAI `insufficient_quota`; ключ был найден, но доступная квота API исчерпана. Unit-тесты и lifecycle-тесты используют mock OpenAI и не выполняют реальные API-запросы.
+Ручная сервисная проверка с прямым OpenAI API в текущем окружении не завершилась из-за отсутствия доступной оплаты/валидного ключа. Для обхода этого ограничения в PR #16 добавлена поддержка ProxyAPI через `summary.base_url`. Реальная проверка ProxyAPI требует локального ProxyAPI-ключа в `config.yaml` / внешнем `.env.local`. Unit-тесты и lifecycle-тесты используют mock OpenAI и не выполняют реальные API-запросы.
 
 Последняя проверка:
 
@@ -205,7 +206,7 @@ MeetingSummaries/YYYY-MM-DD/
 - Большие записи могут потребовать политику очистки.
 - Длинное аудио может потребовать разбиение на части.
 - Качество prompt для итогов нужно будет улучшать итерационно.
-- OpenAI API key должен храниться только во внешнем окружении или локальном `.env.local`, который не добавляется в git.
+- OpenAI/ProxyAPI key должен храниться только во внешнем окружении или локальном `.env.local`, который не добавляется в git.
 - Генерация итогов не должна отправлять в OpenAI аудио или видео; только текстовый transcript.
 - Нельзя смешивать этапы и добавлять AI или OBS раньше плана.
 - Пользовательские тексты UI и генерируемых Markdown-заглушек переведены на русский язык на этапе Review UI.
@@ -226,4 +227,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #12, ветка `codex/windows-launcher`: промежуточный этап 5.1 Windows launcher принят. `start_meeting_day_recorder.cmd` позволяет запускать приложение двойным кликом через локальную `.venv`; проверены успешный запуск и понятная русская ошибка при отсутствии `.venv`. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно.
 - PR #13, ветка `codex/transcription-service`: этап 6 Transcription service принят. Добавлен слой транскрипции с контрактом `Transcriber`, локальная реализация через optional Whisper CLI и безопасные статусы `skipped`, `missing_audio`, `whisper_unavailable`, `failed`, `completed`. `transcript.md` и `transcript.json` формируются из `audio.wav`; metadata встречи получает поля транскрипции. Модель `base` выбрана как стартовая для текущей конфигурации ПК. OpenAI API не добавлялся, аудио не отправляется во внешние сервисы. Этап 7 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `35 passed`; `python -m compileall -q app` — успешно.
 - PR #14, ветка `codex/fix-russian-encoding`: технический fix кодировки принят. Подтверждено, что tracked-файлы, metadata и transcript-файлы пишутся в UTF-8; проблема проявлялась в консольном отображении PowerShell. Launcher усилен UTF-8 режимом консоли и Python. OBS, FFmpeg, Whisper pipeline, OpenAI API, summary generation и этап 7 не менялись. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `39 passed`; `python -m compileall -q app` — успешно; launcher без `.venv` показал читаемую русскую подсказку и завершился с кодом `1`.
-- PR #16, ветка `codex/openai-summary-generation`: этап 7 Summary generation реализован и переведен в статус `На проверке`. Добавлен слой summary generation, OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового transcript, безопасная загрузка API key из `OPENAI_API_KEY` или внешнего `.env.local`, статусы ошибок без сбоя lifecycle и chunking для длинного transcript. В OpenAI отправляется только текст transcript, не аудио и не видео. Summary по умолчанию выключен и включается через локальный `config.yaml`. Этап 8 не начинался. Ручная сервисная проверка с реальным OpenAI API не завершилась из-за `insufficient_quota`; unit/lifecycle проверки выполнены с mock OpenAI без реальных API-запросов. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.
+- PR #16, ветка `codex/openai-summary-generation`: этап 7 Summary generation реализован и переведен в статус `На проверке`. Добавлен слой summary generation, OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового transcript, безопасная загрузка API key из переменной окружения или внешнего `.env.local`, статусы ошибок без сбоя lifecycle и chunking для длинного transcript. Добавлена настройка `summary.base_url`, чтобы использовать OpenAI-совместимый ProxyAPI endpoint `https://api.proxyapi.ru/openai/v1` через официальный OpenAI SDK. В OpenAI/ProxyAPI отправляется только текст transcript, не аудио и не видео. Summary по умолчанию выключен и включается через локальный `config.yaml`. Этап 8 не начинался. Ручная сервисная проверка с прямым OpenAI API не завершилась из-за отсутствия доступной оплаты/валидного ключа; реальная проверка ProxyAPI требует локального ProxyAPI-ключа. Unit/lifecycle проверки выполнены с mock OpenAI без реальных API-запросов. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.
