@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from app.services.audio import AudioExtractor, skipped_audio_metadata
 from app.services.recorder import NoopRecorder, Recorder, RecorderError
 
 
@@ -30,13 +31,20 @@ def safe_folder_name(title: str, fallback: str = "meeting") -> str:
 
 
 class StorageService:
-    def __init__(self, root: Path, recorder: Recorder | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        recorder: Recorder | None = None,
+        audio_extractor: AudioExtractor | None = None,
+    ) -> None:
         self.root = Path(root)
         self.recorder = recorder or NoopRecorder()
+        self.audio_extractor = audio_extractor or AudioExtractor()
         self.active_day_folder: Path | None = None
         self.active_meeting_folder: Path | None = None
         self.last_workday_action: str | None = None
         self.last_recorder_message: str | None = None
+        self.last_audio_message: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -146,6 +154,7 @@ class StorageService:
         metadata = self._read_json(meeting_folder / "meeting_metadata.json")
         if metadata.get("recording_status") == "recording":
             metadata.update(self._stop_recording())
+        metadata.update(self._extract_audio(metadata, meeting_folder))
         started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
@@ -199,6 +208,23 @@ class StorageService:
                 "recording_status": "stop_failed",
                 "recording_note": str(error),
             }
+
+    def _extract_audio(self, metadata: dict[str, Any], meeting_folder: Path) -> dict[str, Any]:
+        if metadata.get("recording_status") != "stopped" or not metadata.get("recording_path"):
+            audio_metadata = skipped_audio_metadata()
+        else:
+            audio_metadata = self.audio_extractor.extract_audio(
+                metadata["recording_path"],
+                meeting_folder,
+            )
+        self.last_audio_message = self._audio_message(audio_metadata)
+        return audio_metadata
+
+    @staticmethod
+    def _audio_message(metadata: dict[str, Any]) -> str:
+        if metadata["audio_status"] == "extracted":
+            return "Аудио извлечено."
+        return f"Аудио не извлечено: {metadata['audio_error']}"
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:

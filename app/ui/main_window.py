@@ -184,8 +184,8 @@ class MainWindow(QMainWindow):
             "5. Открыть ревью.\n"
             "6. Проверить черновики и сохранить финальные файлы.\n\n"
             "OBS можно включить в локальном config.yaml. По умолчанию запись выключена.\n"
-            "Интеграции с ffmpeg, транскрипция и AI-суммаризация "
-            "запланированы на последующие этапы."
+            "FFmpeg используется локально для извлечения audio.wav из OBS-записи.\n"
+            "Транскрипция и AI-суммаризация запланированы на последующие этапы."
         )
         help_text.setWordWrap(True)
         layout.addWidget(title)
@@ -241,6 +241,8 @@ class MainWindow(QMainWindow):
         message = f"Встреча завершена: {meeting_folder.name}"
         if self.storage.last_recorder_message:
             message = f"{message} {self.storage.last_recorder_message}"
+        if self.storage.last_audio_message:
+            message = f"{message} {self.storage.last_audio_message}"
         self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 
