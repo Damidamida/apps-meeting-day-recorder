@@ -12,6 +12,11 @@ from app.services.transcription import (
     skipped_transcription_metadata,
     transcription_message,
 )
+from app.services.summarization import (
+    NoopSummarizer,
+    Summarizer,
+    summary_message,
+)
 
 
 UNSAFE_FOLDER_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -43,17 +48,20 @@ class StorageService:
         recorder: Recorder | None = None,
         audio_extractor: AudioExtractor | None = None,
         transcriber: Transcriber | None = None,
+        summarizer: Summarizer | None = None,
     ) -> None:
         self.root = Path(root)
         self.recorder = recorder or NoopRecorder()
         self.audio_extractor = audio_extractor or AudioExtractor()
         self.transcriber = transcriber or LocalWhisperTranscriber()
+        self.summarizer = summarizer or NoopSummarizer()
         self.active_day_folder: Path | None = None
         self.active_meeting_folder: Path | None = None
         self.last_workday_action: str | None = None
         self.last_recorder_message: str | None = None
         self.last_audio_message: str | None = None
         self.last_transcription_message: str | None = None
+        self.last_summary_message: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -168,6 +176,7 @@ class StorageService:
         self.write_placeholder_transcript_json(meeting_folder)
         self.write_placeholder_summary(meeting_folder)
         metadata.update(self._transcribe_audio(metadata, meeting_folder))
+        metadata.update(self._summarize_meeting(metadata, meeting_folder))
         started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
@@ -246,6 +255,11 @@ class StorageService:
             )
         self.last_transcription_message = transcription_message(transcription_metadata)
         return transcription_metadata
+
+    def _summarize_meeting(self, metadata: dict[str, Any], meeting_folder: Path) -> dict[str, Any]:
+        summary_metadata = self.summarizer.summarize_meeting(meeting_folder, metadata)
+        self.last_summary_message = summary_message(summary_metadata)
+        return summary_metadata
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:

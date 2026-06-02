@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from app.config import load_config
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
+from app.services.summarization import create_summarizer
 
 
 class MainWindow(QMainWindow):
@@ -36,7 +37,11 @@ class MainWindow(QMainWindow):
         self.resize(1100, 720)
         config = load_config()
         self.recorder = recorder or (storage.recorder if storage else create_recorder(config["obs"]))
-        self.storage = storage or StorageService(Path(config["storage"]["root"]), self.recorder)
+        self.storage = storage or StorageService(
+            Path(config["storage"]["root"]),
+            self.recorder,
+            summarizer=create_summarizer(config["summary"]),
+        )
         self.storage.load_today_state()
 
         self.pages = QStackedWidget()
@@ -186,7 +191,7 @@ class MainWindow(QMainWindow):
             "OBS можно включить в локальном config.yaml. По умолчанию запись выключена.\n"
             "FFmpeg используется локально для извлечения audio.wav из OBS-записи.\n"
             "Транскрипция может выполняться локально через Whisper CLI, если он доступен в PATH.\n"
-            "OpenAI API и AI-суммаризация не используются."
+            "Генерация итогов через OpenAI по умолчанию выключена и использует только текстовый транскрипт."
         )
         help_text.setWordWrap(True)
         layout.addWidget(title)
@@ -246,6 +251,8 @@ class MainWindow(QMainWindow):
             message = f"{message} {self.storage.last_audio_message}"
         if self.storage.last_transcription_message:
             message = f"{message} {self.storage.last_transcription_message}"
+        if self.storage.last_summary_message:
+            message = f"{message} {self.storage.last_summary_message}"
         self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 

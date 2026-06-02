@@ -14,6 +14,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "websocket_port": 4455,
         "websocket_password": "",
     },
+    "summary": {
+        "enabled": False,
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "env_file": "",
+        "timeout_seconds": 120,
+        "max_chars_per_chunk": 20000,
+    },
 }
 
 
@@ -26,5 +35,6 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
 
     storage = {**DEFAULT_CONFIG["storage"], **loaded.get("storage", {})}
     obs = {**DEFAULT_CONFIG["obs"], **loaded.get("obs", {})}
-    return {**DEFAULT_CONFIG, **loaded, "storage": storage, "obs": obs}
+    summary = {**DEFAULT_CONFIG["summary"], **loaded.get("summary", {})}
+    return {**DEFAULT_CONFIG, **loaded, "storage": storage, "obs": obs, "summary": summary}
 
