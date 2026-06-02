@@ -13,7 +13,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "websocket_host": "localhost",
         "websocket_port": 4455,
         "websocket_password": "",
-        "recording_output_dir": "",
     },
 }
 
