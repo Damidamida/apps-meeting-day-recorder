@@ -62,9 +62,9 @@ Codex не имеет права самостоятельно переводит
 | 2. Local workday/meeting flow без OBS | Реализовать локальный жизненный цикл | Метаданные дня и встреч, черновики, восстановление после перезапуска | Готово |
 | 3. Review UI | Добавить локальное ревью черновиков | Просмотр, редактирование и сохранение итогов и задач | Готово |
 | 4. OBS integration | Подключить запись | Управление локальной записью через OBS | Готово |
-| 5. FFmpeg audio extraction | Извлекать аудио | Локальное получение аудиофайлов из записи | На проверке |
-| 5.1. Windows launcher | Упростить локальный запуск | Запуск приложения двойным кликом через `.cmd` | На проверке |
-| 6. Transcription service | Добавить транскрипцию | Локальный сервис подготовки транскрипта | На проверке |
+| 5. FFmpeg audio extraction | Извлекать аудио | Локальное получение аудиофайлов из записи | Готово |
+| 5.1. Windows launcher | Упростить локальный запуск | Запуск приложения двойным кликом через `.cmd` | Готово |
+| 6. Transcription service | Добавить транскрипцию | Локальный сервис подготовки транскрипта | Готово |
 | 7. Summary generation | Добавить генерацию итогов | Черновики итогов встреч и дня | Сделать |
 | 8. UX/safety polish | Усилить удобство и защиту данных | Проверки, понятные ошибки, безопасные сценарии | Сделать |
 | 9. Manual smoke test | Проверить рабочий маршрут | Подтвержденный ручной сценарий | Сделать |
@@ -119,25 +119,17 @@ Codex не имеет права самостоятельно переводит
 
 ## 9. Текущий статус
 
-Этапы 1–4 завершены и приняты пользователем. Этап 5 — FFmpeg audio extraction остается в статусе `На проверке`. Промежуточный этап 5.1 — Windows launcher реализован в PR #12 и остается в статусе `На проверке`. Этап 6 — Transcription service реализован в ветке `codex/transcription-service`, PR #13, и находится в статусе `На проверке`.
+Этапы 1–6 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
 
-Добавлен архитектурный слой транскрипции и первая локальная реализация через optional Whisper CLI. По умолчанию используется модель `base`, выбранная как стартовый локальный вариант для слабых CPU/GPU-конфигураций. Если после завершения встречи есть `audio.wav`, приложение пытается подготовить `transcript.md` и `transcript.json`. Если аудио не извлечено, Whisper недоступен или CLI завершился с ошибкой, встреча все равно завершается, placeholder-файлы остаются безопасными, а причина фиксируется в `meeting_metadata.json`. OpenAI API не добавлялся, аудио не отправляется во внешние сервисы. Этап 7 — Summary generation остается в статусе `Сделать` и еще не начат.
+Следующий функциональный этап — этап 7 `Summary generation`. Этап 7 остается в статусе `Сделать` и еще не начат.
 
 Последняя проверка:
 
-- `start_meeting_day_recorder.cmd` запустил приложение через локальную `.venv`;
-- в отдельной временной папке без `.venv` launcher показал понятную русскую инструкцию и завершился с кодом `1`.
-- `python -m pip install -e ".[dev]"`: успешно;
-- `python -m pytest`: `35 passed`;
 - `python -m compileall -q app`: успешно.
-- `python -m pip install -e ".[dev]"`: успешно при наличии локальной папки `MeetingSummaries`;
-- `python -m pytest`: `31 passed`;
-- `python -m compileall -q app`: успешно.
-- FFmpeg найден в локальном Windows `PATH`; ручная проверка выполнена на реальном OBS-видео во временную папку: создан `audio.wav`, `ffprobe` подтвердил `pcm_s16le`, `16000 Hz`, mono.
 
 ## 10. Следующий шаг
 
-Проверить PR этапа 6 вручную: записать короткую встречу через OBS, завершить встречу, убедиться, что появился `audio.wav`; при наличии локального `whisper` проверить обновленные `transcript.md`, `transcript.json` и `transcription_status: completed` в `meeting_metadata.json`; при отсутствии `whisper` проверить безопасный статус `whisper_unavailable`.
+Подготовить отдельный PR для этапа 7 — Summary generation.
 
 ## 11. Текущая структура файлов
 
@@ -217,7 +209,7 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #8, ветка `codex/mark-stage-3-done`: этап 3 Review UI принят после ручной проверки пользователем. Исправление lifecycle из PR #7 также принято. Этап 3 переведен в статус `Готово`; этап 4 — OBS integration остается в статусе `Сделать`.
 - PR #9, ветка `codex/obs-integration`, статус этапа: `На проверке`: добавлены безопасная OBS-интеграция, Noop-режим по умолчанию, запись OBS-статусов в metadata встречи, индикатор и ручная проверка OBS в UI. Проверки: `.venv\Scripts\python.exe -m pytest` — `27 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #10, ветка `codex/accept-stage-4-package-discovery`: этап 4 OBS integration принят после ручной локальной проверки. Подтверждены подключение OBS WebSocket, запуск и остановка записи, metadata с путем видео, наличие картинки и звука. Добавлено явное ограничение package discovery пакетом `app`; неиспользуемое поле `obs.recording_output_dir` удалено. Этап 5 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e .` — успешно; `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `27 passed`; `python -m compileall -q app` — успешно.
-- PR #11, ветка `codex/ffmpeg-audio-extraction`, статус этапа: `На проверке`: добавлено локальное извлечение `audio.wav` из OBS-записи через FFmpeg, сохранение audio-metadata и безопасная обработка ошибок без сбоя завершения встречи. Этап 6 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно. Ручная проверка выполнена на реальном OBS-видео во временную папку: `audio.wav` создан, `ffprobe` подтвердил `pcm_s16le`, `16000 Hz`, mono. Локальный рабочий `config.yaml` проверен с OBS и остается вне git; безопасный `config.yaml.example` сохранен в репозитории.
-- PR #12, ветка `codex/windows-launcher`, статус этапа 5.1: `На проверке`: добавлен `start_meeting_day_recorder.cmd` для запуска приложения двойным кликом через локальную `.venv`. Проверены успешный запуск и понятная русская ошибка при отсутствии `.venv`. Этап 5 остается в статусе `На проверке`; этап 6 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно.
-- PR #13, ветка `codex/transcription-service`, статус этапа 6: `На проверке`: добавлен слой транскрипции с контрактом `Transcriber`, локальная реализация через optional Whisper CLI и безопасные статусы `skipped`, `missing_audio`, `whisper_unavailable`, `failed`, `completed`. `transcript.md` и `transcript.json` формируются из `audio.wav`, metadata встречи получает поля транскрипции, ошибки не ломают завершение встречи. После локального анализа ПК для Whisper CLI явно выбрана модель `base` по умолчанию. OpenAI API не добавлялся, аудио не отправляется во внешние сервисы, этап 7 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `35 passed`; `python -m compileall -q app` — успешно.
-- PR #14, ветка `codex/fix-russian-encoding`: техническая проверка кодировки русских пользовательских строк. Подтверждено, что tracked-файлы, metadata и transcript-файлы пишутся в UTF-8; проблема проявлялась в консольном отображении PowerShell. Launcher усилен UTF-8 режимом консоли и Python. Добавлены тесты на русские названия встреч, metadata, placeholder-тексты, ошибки audio/transcription и отсутствие типичных mojibake-маркеров в пользовательских строках. Это не новый функциональный этап; OBS, FFmpeg, Whisper pipeline, OpenAI API, summary generation и этап 7 не менялись. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `39 passed`; `python -m compileall -q app` — успешно; launcher без `.venv` показал читаемую русскую подсказку и завершился с кодом `1`.
+- PR #11, ветка `codex/ffmpeg-audio-extraction`: этап 5 FFmpeg audio extraction принят. Локальное извлечение `audio.wav` из OBS-записи через FFmpeg работает, audio-metadata сохраняется, ошибки обрабатываются без сбоя завершения встречи. Ручная проверка FFmpeg выполнена на реальном OBS-видео во временную папку: `audio.wav` создан, `ffprobe` подтвердил `pcm_s16le`, `16000 Hz`, mono. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно.
+- PR #12, ветка `codex/windows-launcher`: промежуточный этап 5.1 Windows launcher принят. `start_meeting_day_recorder.cmd` позволяет запускать приложение двойным кликом через локальную `.venv`; проверены успешный запуск и понятная русская ошибка при отсутствии `.venv`. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно.
+- PR #13, ветка `codex/transcription-service`: этап 6 Transcription service принят. Добавлен слой транскрипции с контрактом `Transcriber`, локальная реализация через optional Whisper CLI и безопасные статусы `skipped`, `missing_audio`, `whisper_unavailable`, `failed`, `completed`. `transcript.md` и `transcript.json` формируются из `audio.wav`; metadata встречи получает поля транскрипции. Модель `base` выбрана как стартовая для текущей конфигурации ПК. OpenAI API не добавлялся, аудио не отправляется во внешние сервисы. Этап 7 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `35 passed`; `python -m compileall -q app` — успешно.
+- PR #14, ветка `codex/fix-russian-encoding`: технический fix кодировки принят. Подтверждено, что tracked-файлы, metadata и transcript-файлы пишутся в UTF-8; проблема проявлялась в консольном отображении PowerShell. Launcher усилен UTF-8 режимом консоли и Python. OBS, FFmpeg, Whisper pipeline, OpenAI API, summary generation и этап 7 не менялись. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `39 passed`; `python -m compileall -q app` — успешно; launcher без `.venv` показал читаемую русскую подсказку и завершился с кодом `1`.
