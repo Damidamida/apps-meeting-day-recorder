@@ -57,6 +57,16 @@ class StopFailingRecorder(FakeRecorder):
         raise RecorderError("Не удалось остановить запись OBS.")
 
 
+class FakeAudioExtractor:
+    def extract_audio(self, recording_path: str, meeting_folder: Path) -> dict[str, str]:
+        assert recording_path == "C:/recordings/meeting.mkv"
+        return {
+            "audio_status": "extracted",
+            "audio_path": str(meeting_folder / "audio.wav"),
+            "audio_extracted_at": "2026-06-01T09:45:02",
+        }
+
+
 def test_noop_recorder_does_not_require_obs(tmp_path) -> None:
     recorder = NoopRecorder()
 
@@ -74,11 +84,13 @@ def test_storage_lifecycle_works_with_obs_disabled(tmp_path) -> None:
     metadata = json.loads((meeting_folder / "meeting_metadata.json").read_text(encoding="utf-8"))
     assert metadata["status"] == "ended"
     assert metadata["recording_status"] == "disabled"
+    assert metadata["audio_status"] == "skipped"
+    assert metadata["audio_error"] == "Путь к записи отсутствует."
     assert (meeting_folder / "transcript.md").is_file()
 
 
 def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:
-    storage = StorageService(tmp_path, FakeRecorder())
+    storage = StorageService(tmp_path, FakeRecorder(), FakeAudioExtractor())
     storage.start_workday(datetime(2026, 6, 1, 8, 30))
     meeting_folder = storage.start_meeting("Записываемая встреча", datetime(2026, 6, 1, 9, 15))
 
@@ -93,6 +105,9 @@ def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:
     assert ended_metadata["recording_status"] == "stopped"
     assert ended_metadata["recording_stopped_at"] == "2026-06-01T09:45:01"
     assert ended_metadata["recording_path"] == "C:/recordings/meeting.mkv"
+    assert ended_metadata["audio_status"] == "extracted"
+    assert ended_metadata["audio_path"] == str(meeting_folder / "audio.wav")
+    assert ended_metadata["audio_extracted_at"] == "2026-06-01T09:45:02"
 
 
 def test_recorder_failure_keeps_local_meeting_and_readable_error(tmp_path) -> None:
@@ -121,6 +136,7 @@ def test_stop_recording_failure_keeps_metadata_and_placeholder_files(tmp_path) -
     assert metadata["status"] == "ended"
     assert metadata["recording_status"] == "stop_failed"
     assert metadata["recording_note"] == "Не удалось остановить запись OBS."
+    assert metadata["audio_status"] == "skipped"
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
     assert (meeting_folder / "summary_draft.md").is_file()
