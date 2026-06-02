@@ -112,7 +112,7 @@ Codex не имеет права самостоятельно переводит
 
 ## 9. Текущий статус
 
-Этапы 1–4 завершены и приняты пользователем. Этап 5 — FFmpeg audio extraction реализован в ветке `codex/ffmpeg-audio-extraction`, PR пока не назначен, и находится в статусе `На проверке`.
+Этапы 1–4 завершены и приняты пользователем. Этап 5 — FFmpeg audio extraction реализован в ветке `codex/ffmpeg-audio-extraction` и PR #11, находится в статусе `На проверке`.
 
 После завершения встречи приложение локально извлекает `audio.wav` из OBS-записи, если metadata содержит `recording_status: stopped` и `recording_path`. Ошибки FFmpeg фиксируются в metadata и не ломают завершение встречи. Этап 6 — Transcription service остается в статусе `Сделать` и еще не начат.
 
@@ -203,4 +203,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #8, ветка `codex/mark-stage-3-done`: этап 3 Review UI принят после ручной проверки пользователем. Исправление lifecycle из PR #7 также принято. Этап 3 переведен в статус `Готово`; этап 4 — OBS integration остается в статусе `Сделать`.
 - PR #9, ветка `codex/obs-integration`, статус этапа: `На проверке`: добавлены безопасная OBS-интеграция, Noop-режим по умолчанию, запись OBS-статусов в metadata встречи, индикатор и ручная проверка OBS в UI. Проверки: `.venv\Scripts\python.exe -m pytest` — `27 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #10, ветка `codex/accept-stage-4-package-discovery`: этап 4 OBS integration принят после ручной локальной проверки. Подтверждены подключение OBS WebSocket, запуск и остановка записи, metadata с путем видео, наличие картинки и звука. Добавлено явное ограничение package discovery пакетом `app`; неиспользуемое поле `obs.recording_output_dir` удалено. Этап 5 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e .` — успешно; `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `27 passed`; `python -m compileall -q app` — успешно.
-- Ветка `codex/ffmpeg-audio-extraction`, PR пока не назначен, статус этапа: `На проверке`: добавлено локальное извлечение `audio.wav` из OBS-записи через FFmpeg, сохранение audio-metadata и безопасная обработка ошибок без сбоя завершения встречи. Этап 6 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно. Ручная проверка с реальным OBS-видео не выполнялась.
+- PR #11, ветка `codex/ffmpeg-audio-extraction`, статус этапа: `На проверке`: добавлено локальное извлечение `audio.wav` из OBS-записи через FFmpeg, сохранение audio-metadata и безопасная обработка ошибок без сбоя завершения встречи. Этап 6 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно. Ручная проверка с реальным OBS-видео не выполнялась.
