@@ -18,6 +18,7 @@ def _summary_config(**overrides):
         "provider": "openai",
         "model": "gpt-5.4-mini",
         "api_key_env": "OPENAI_API_KEY",
+        "base_url": "",
         "env_file": "",
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
@@ -98,10 +99,11 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
         usage=SimpleNamespace(input_tokens=100, output_tokens=50),
     )
     client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kwargs: response))
+    client_kwargs = {}
 
     summarizer = OpenAISummarizer(
-        _summary_config(),
-        client_factory=lambda **kwargs: client,
+        _summary_config(base_url="https://api.proxyapi.ru/openai/v1"),
+        client_factory=lambda **kwargs: client_kwargs.update(kwargs) or client,
         now=lambda: datetime(2026, 6, 3, 12, 0),
     )
 
@@ -114,6 +116,8 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
     assert metadata["summary_path"] == str(tmp_path / "summary_draft.md")
     assert metadata["summary_generated_at"] == "2026-06-03T12:00:00"
     assert metadata["summary_usage"] == {"input_tokens": 100, "output_tokens": 50}
+    assert client_kwargs["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert client_kwargs["api_key"] == "test-secret"
     assert "# Итоги встречи" in summary_text
     assert "## Задачи" in summary_text
     assert "test-secret" not in str(metadata)

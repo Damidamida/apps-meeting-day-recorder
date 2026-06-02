@@ -10,6 +10,7 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["summary"]["enabled"] is False
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["api_key_env"] == "OPENAI_API_KEY"
+    assert config["summary"]["base_url"] == ""
 
 
 def test_partial_obs_config_uses_safe_defaults(tmp_path) -> None:
@@ -32,4 +33,5 @@ def test_partial_summary_config_uses_safe_defaults(tmp_path) -> None:
     assert config["summary"]["enabled"] is True
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["model"] == "gpt-5.4-mini"
+    assert config["summary"]["base_url"] == ""
     assert config["summary"]["env_file"] == ""
