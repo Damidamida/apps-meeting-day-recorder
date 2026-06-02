@@ -1,6 +1,7 @@
 import json
 from datetime import date, datetime
 
+from app.services.recorder import RecorderResult
 from app.services.storage import StorageService, safe_folder_name
 
 
@@ -165,6 +166,7 @@ def test_end_meeting_creates_placeholder_files_and_updates_day(tmp_path) -> None
     assert metadata["ended_at"] == "2026-06-01T09:45:10"
     assert metadata["duration_seconds"] == 1810
     assert metadata["status"] == "ended"
+    assert metadata["summary_status"] == "disabled"
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
     assert (meeting_folder / "summary_draft.md").is_file()
@@ -244,6 +246,95 @@ def test_full_happy_path_still_works(tmp_path) -> None:
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
     assert not storage.meeting_active
+
+
+def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) -> None:
+    class FakeRecorder:
+        enabled = True
+        status_text = "OBS: подключен"
+
+        def check_connection(self) -> str:
+            return self.status_text
+
+        def start_recording(self, meeting_folder):
+            del meeting_folder
+            return RecorderResult(
+                metadata={"recording_status": "recording"},
+                message="Запись начата.",
+            )
+
+        def stop_recording(self):
+            recording_path = tmp_path / "recording.mkv"
+            recording_path.touch()
+            return RecorderResult(
+                metadata={"recording_status": "stopped", "recording_path": str(recording_path)},
+                message="Запись остановлена.",
+            )
+
+    class FakeAudioExtractor:
+        def extract_audio(self, recording_path, meeting_folder):
+            del recording_path
+            audio_path = meeting_folder / "audio.wav"
+            audio_path.touch()
+            return {"audio_status": "extracted", "audio_path": str(audio_path)}
+
+    class FakeTranscriber:
+        def transcribe(self, audio_path, meeting_folder):
+            del audio_path
+            (meeting_folder / "transcript.json").write_text(
+                json.dumps(
+                    {"status": "completed", "text": "Обсудили план.", "segments": []},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (meeting_folder / "transcript.md").write_text("Обсудили план.\n", encoding="utf-8")
+            return {
+                "transcription_status": "completed",
+                "transcription_provider": "fake",
+                "transcript_path": str(meeting_folder / "transcript.md"),
+                "transcript_json_path": str(meeting_folder / "transcript.json"),
+                "transcribed_at": "2026-06-01T09:40:00",
+            }
+
+    class FakeSummarizer:
+        def __init__(self) -> None:
+            self.called = False
+
+        def summarize_meeting(self, meeting_folder, metadata):
+            self.called = True
+            assert metadata["transcription_status"] == "completed"
+            (meeting_folder / "summary_draft.md").write_text(
+                "# Итоги встречи\n\n## Кратко\n\nОбсудили план.\n",
+                encoding="utf-8",
+            )
+            return {
+                "summary_status": "draft_created",
+                "summary_provider": "openai",
+                "summary_model": "gpt-5.4-mini",
+                "summary_path": str(meeting_folder / "summary_draft.md"),
+                "summary_generated_at": "2026-06-01T09:41:00",
+            }
+
+    summarizer = FakeSummarizer()
+    storage = StorageService(
+        tmp_path,
+        recorder=FakeRecorder(),
+        audio_extractor=FakeAudioExtractor(),
+        transcriber=FakeTranscriber(),
+        summarizer=summarizer,
+    )
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Summary", datetime(2026, 6, 1, 9, 0))
+
+    storage.end_meeting(datetime(2026, 6, 1, 9, 30))
+
+    metadata = json.loads((meeting_folder / "meeting_metadata.json").read_text(encoding="utf-8"))
+    assert summarizer.called
+    assert metadata["summary_status"] == "draft_created"
+    assert metadata["summary_provider"] == "openai"
+    assert storage.last_summary_message == "Черновик итогов подготовлен."
+    assert "Обсудили план" in (meeting_folder / "summary_draft.md").read_text(encoding="utf-8")
 
 
 def test_list_today_meeting_folders(tmp_path) -> None:

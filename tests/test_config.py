@@ -7,6 +7,9 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["obs"]["enabled"] is False
     assert config["obs"]["websocket_host"] == "localhost"
     assert config["obs"]["websocket_port"] == 4455
+    assert config["summary"]["enabled"] is False
+    assert config["summary"]["provider"] == "openai"
+    assert config["summary"]["api_key_env"] == "OPENAI_API_KEY"
 
 
 def test_partial_obs_config_uses_safe_defaults(tmp_path) -> None:
@@ -18,3 +21,15 @@ def test_partial_obs_config_uses_safe_defaults(tmp_path) -> None:
     assert config["obs"]["enabled"] is True
     assert config["obs"]["websocket_host"] == "localhost"
     assert config["obs"]["websocket_password"] == ""
+
+
+def test_partial_summary_config_uses_safe_defaults(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("summary:\n  enabled: true\n", encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config["summary"]["enabled"] is True
+    assert config["summary"]["provider"] == "openai"
+    assert config["summary"]["model"] == "gpt-5.4-mini"
+    assert config["summary"]["env_file"] == ""

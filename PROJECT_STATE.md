@@ -65,7 +65,7 @@ Codex не имеет права самостоятельно переводит
 | 5. FFmpeg audio extraction | Извлекать аудио | Локальное получение аудиофайлов из записи | Готово |
 | 5.1. Windows launcher | Упростить локальный запуск | Запуск приложения двойным кликом через `.cmd` | Готово |
 | 6. Transcription service | Добавить транскрипцию | Локальный сервис подготовки транскрипта | Готово |
-| 7. Summary generation | Добавить генерацию итогов | Черновики итогов встреч и дня | Сделать |
+| 7. Summary generation | Добавить генерацию итогов | Черновик итогов одной встречи из готового transcript | На проверке |
 | 8. UX/safety polish | Усилить удобство и защиту данных | Проверки, понятные ошибки, безопасные сценарии | Сделать |
 | 9. Manual smoke test | Проверить рабочий маршрут | Подтвержденный ручной сценарий | Сделать |
 | 10. Windows packaging | Собрать приложение | Устанавливаемая Windows-сборка | Сделать |
@@ -115,21 +115,31 @@ Codex не имеет права самостоятельно переводит
 - формирование `transcript.md` и `transcript.json` из `audio.wav`;
 - сохранение `transcription_status`, `transcription_provider`, `transcript_path`, `transcript_json_path`, `transcribed_at` или `transcription_error` в metadata встречи;
 - безопасное завершение встречи, если транскрипция пропущена, Whisper недоступен или CLI завершился с ошибкой;
+- слой summary generation с общей архитектурой `Summarizer`;
+- OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового транскрипта;
+- безопасная загрузка OpenAI API key из `OPENAI_API_KEY` или внешнего `.env.local` без записи ключа в git, logs, metadata или README;
+- отправка в OpenAI только текста `transcript.md` / `transcript.json`, без аудио и видео;
+- безопасные статусы summary `disabled`, `skipped`, `openai_unavailable`, `failed`, `draft_created`;
+- разбиение длинного transcript на chunks для обработки одной длинной встречи;
 - тесты.
 
 ## 9. Текущий статус
 
 Этапы 1–6 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
 
-Следующий функциональный этап — этап 7 `Summary generation`. Этап 7 остается в статусе `Сделать` и еще не начат.
+Этап 7 `Summary generation` реализован в ветке/PR и ожидает ручной проверки. Этап 8 остается в статусе `Сделать` и не начинался.
+
+Ручная сервисная проверка с реальным OpenAI API в текущем окружении не завершилась из-за ответа OpenAI `insufficient_quota`; ключ был найден, но доступная квота API исчерпана. Unit-тесты и lifecycle-тесты используют mock OpenAI и не выполняют реальные API-запросы.
 
 Последняя проверка:
 
+- `python -m pip install -e ".[dev]"`: успешно.
+- `python -m pytest`: `50 passed`.
 - `python -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Подготовить отдельный PR для этапа 7 — Summary generation.
+Ручная проверка этапа 7 на короткой встрече.
 
 ## 11. Текущая структура файлов
 
@@ -146,7 +156,7 @@ Codex не имеет права самостоятельно переводит
 - `app/services/recorder.py` — безопасная OBS-интеграция и Noop-режим.
 - `app/services/audio.py` — локальное извлечение `audio.wav` через FFmpeg.
 - `app/services/transcription.py` — локальный слой транскрипции через optional Whisper CLI.
-- `app/services/summarization.py` — заглушка будущей генерации итогов.
+- `app/services/summarization.py` — слой генерации итогов встречи через безопасный `Summarizer` и OpenAI backend.
 - `tests/test_storage.py` — тесты локального хранения.
 
 ## 12. Структура локальных данных
@@ -179,7 +189,8 @@ MeetingSummaries/YYYY-MM-DD/
 - Markdown для итогов.
 - OBS WebSocket для локального управления записью встреч.
 - FFmpeg для локального извлечения `audio.wav` из OBS-записи.
-- Транскрипция выполняется локально через optional Whisper CLI; OpenAI API и AI-суммаризация позже, но не сейчас.
+- Транскрипция выполняется локально через optional Whisper CLI.
+- OpenAI API используется только для генерации `summary_draft.md` одной встречи из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
 - Сначала ручной сценарий, автоматизация позже.
 
 ## 14. Известные риски и решения на пересмотр
@@ -194,6 +205,8 @@ MeetingSummaries/YYYY-MM-DD/
 - Большие записи могут потребовать политику очистки.
 - Длинное аудио может потребовать разбиение на части.
 - Качество prompt для итогов нужно будет улучшать итерационно.
+- OpenAI API key должен храниться только во внешнем окружении или локальном `.env.local`, который не добавляется в git.
+- Генерация итогов не должна отправлять в OpenAI аудио или видео; только текстовый transcript.
 - Нельзя смешивать этапы и добавлять AI или OBS раньше плана.
 - Пользовательские тексты UI и генерируемых Markdown-заглушек переведены на русский язык на этапе Review UI.
 
@@ -213,3 +226,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #12, ветка `codex/windows-launcher`: промежуточный этап 5.1 Windows launcher принят. `start_meeting_day_recorder.cmd` позволяет запускать приложение двойным кликом через локальную `.venv`; проверены успешный запуск и понятная русская ошибка при отсутствии `.venv`. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `31 passed`; `python -m compileall -q app` — успешно.
 - PR #13, ветка `codex/transcription-service`: этап 6 Transcription service принят. Добавлен слой транскрипции с контрактом `Transcriber`, локальная реализация через optional Whisper CLI и безопасные статусы `skipped`, `missing_audio`, `whisper_unavailable`, `failed`, `completed`. `transcript.md` и `transcript.json` формируются из `audio.wav`; metadata встречи получает поля транскрипции. Модель `base` выбрана как стартовая для текущей конфигурации ПК. OpenAI API не добавлялся, аудио не отправляется во внешние сервисы. Этап 7 остается в статусе `Сделать` и еще не начат. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `35 passed`; `python -m compileall -q app` — успешно.
 - PR #14, ветка `codex/fix-russian-encoding`: технический fix кодировки принят. Подтверждено, что tracked-файлы, metadata и transcript-файлы пишутся в UTF-8; проблема проявлялась в консольном отображении PowerShell. Launcher усилен UTF-8 режимом консоли и Python. OBS, FFmpeg, Whisper pipeline, OpenAI API, summary generation и этап 7 не менялись. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `39 passed`; `python -m compileall -q app` — успешно; launcher без `.venv` показал читаемую русскую подсказку и завершился с кодом `1`.
+- PR #16, ветка `codex/openai-summary-generation`: этап 7 Summary generation реализован и переведен в статус `На проверке`. Добавлен слой summary generation, OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового transcript, безопасная загрузка API key из `OPENAI_API_KEY` или внешнего `.env.local`, статусы ошибок без сбоя lifecycle и chunking для длинного transcript. В OpenAI отправляется только текст transcript, не аудио и не видео. Summary по умолчанию выключен и включается через локальный `config.yaml`. Этап 8 не начинался. Ручная сервисная проверка с реальным OpenAI API не завершилась из-за `insufficient_quota`; unit/lifecycle проверки выполнены с mock OpenAI без реальных API-запросов. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.

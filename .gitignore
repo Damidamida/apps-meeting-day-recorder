@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*
 config.yaml
 *.mp4
 *.mkv
