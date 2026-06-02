@@ -100,9 +100,15 @@ class OpenAISummarizer:
             }
 
         try:
+            client_kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "timeout": int(self.config.get("timeout_seconds") or 120),
+            }
+            base_url = str(self.config.get("base_url") or "").strip()
+            if base_url:
+                client_kwargs["base_url"] = base_url
             client = self.client_factory(
-                api_key=api_key,
-                timeout=int(self.config.get("timeout_seconds") or 120),
+                **client_kwargs,
             )
             summary_text, usage = self._summarize_text(client, transcript)
         except Exception:

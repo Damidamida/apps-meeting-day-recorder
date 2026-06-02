@@ -105,6 +105,7 @@ summary:
   provider: "openai"
   model: "gpt-5.4-mini"
   api_key_env: "OPENAI_API_KEY"
+  base_url: ""
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000
@@ -113,6 +114,22 @@ summary:
 API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `OPENAI_API_KEY`.
 
 Для локального использования можно указать путь к внешнему `.env.local` в `summary.env_file`, но сам `.env.local` нельзя добавлять в git.
+
+Если используется ProxyAPI, укажите ключ ProxyAPI и базовый URL ProxyAPI в локальном `config.yaml`:
+
+```yaml
+summary:
+  enabled: true
+  provider: "openai"
+  model: "gpt-5.4-mini"
+  api_key_env: "PROXYAPI_KEY"
+  base_url: "https://api.proxyapi.ru/openai/v1"
+  env_file: ""
+  timeout_seconds: 120
+  max_chars_per_chunk: 20000
+```
+
+В этом режиме приложение продолжает использовать официальный OpenAI SDK, но отправляет текстовые запросы через ProxyAPI. Видео и аудио по-прежнему не отправляются.
 
 ## Намеренно не реализовано
 

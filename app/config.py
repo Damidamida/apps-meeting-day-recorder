@@ -19,6 +19,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "provider": "openai",
         "model": "gpt-5.4-mini",
         "api_key_env": "OPENAI_API_KEY",
+        "base_url": "",
         "env_file": "",
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
