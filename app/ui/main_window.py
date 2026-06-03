@@ -361,9 +361,11 @@ class MainWindow(QMainWindow):
         status_label.setObjectName("pipelineStatus")
         status_label.setWordWrap(True)
         status_label.setMinimumHeight(28)
+        status_label.setMaximumWidth(900)
 
         row_layout.addWidget(title_label)
-        row_layout.addWidget(status_label, 1)
+        row_layout.addWidget(status_label)
+        row_layout.addStretch()
         row.setLayout(row_layout)
 
         self.pipeline_labels[key] = status_label
