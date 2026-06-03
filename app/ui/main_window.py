@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
+        self.pipeline_step_titles: dict[str, QLabel] = {}
         self._apply_app_style()
 
         self.pages = QStackedWidget()
@@ -280,6 +281,10 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
+            QLabel#pipelineStepTitle {
+                color: #3a1408;
+                font-weight: 800;
+            }
             QPushButton {
                 background: #fffdf8;
                 color: #3a1408;
@@ -341,6 +346,20 @@ class MainWindow(QMainWindow):
 
         card.setLayout(layout)
         return card
+
+    def _create_pipeline_step_labels(self, key: str, title: str) -> tuple[QLabel, QLabel]:
+        title_label = QLabel(title)
+        title_label.setObjectName("pipelineStepTitle")
+        status_label = QLabel()
+        status_label.setObjectName("pipelineStatus")
+        status_label.setWordWrap(False)
+        status_label.setMinimumHeight(28)
+        status_label.setMinimumWidth(420)
+        status_label.setMaximumWidth(900)
+
+        self.pipeline_step_titles[key] = title_label
+        self.pipeline_labels[key] = status_label
+        return title_label, status_label
 
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
@@ -425,6 +444,12 @@ class MainWindow(QMainWindow):
         pipeline_layout = QFormLayout()
         pipeline_layout.setHorizontalSpacing(18)
         pipeline_layout.setVerticalSpacing(8)
+        pipeline_hint = QLabel(
+            "Показывает локальную обработку последней завершенной встречи: запись, аудио, transcript и итоги."
+        )
+        pipeline_hint.setObjectName("sectionHint")
+        pipeline_hint.setWordWrap(True)
+        pipeline_layout.addRow(pipeline_hint)
         for key, title in [
             ("meeting", "Созвон"),
             ("recording", "OBS запись"),
@@ -433,10 +458,8 @@ class MainWindow(QMainWindow):
             ("summary", "Генерация итогов"),
             ("done", "Готово"),
         ]:
-            label = QLabel()
-            label.setWordWrap(True)
-            self.pipeline_labels[key] = label
-            pipeline_layout.addRow(f"{title}:", label)
+            title_label, status_label = self._create_pipeline_step_labels(key, title)
+            pipeline_layout.addRow(title_label, status_label)
         layout.addWidget(self._create_card("Pipeline встречи", pipeline_layout))
 
         actions_layout = QHBoxLayout()
@@ -826,6 +849,11 @@ class MainWindow(QMainWindow):
             "error": ("#fee2e2", "#991b1b"),
         }
         background, color = colors.get(state, colors["wait"])
+        if label.objectName() == "pipelineStatus":
+            label.setStyleSheet(
+                f"padding: 0; background: transparent; color: {color};"
+            )
+            return
         label.setStyleSheet(
             f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
         )
