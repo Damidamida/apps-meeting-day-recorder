@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         )
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
+        self.readiness_badges: dict[str, QLabel] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
         self._apply_app_style()
@@ -281,6 +282,21 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
+            QWidget#readinessTile {
+                background: #fffaf3;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+            }
+            QLabel#readinessTitle {
+                color: #3a1408;
+                font-weight: 800;
+            }
+            QLabel#statusBadge {
+                border-radius: 10px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 800;
+            }
             QLabel#pipelineStepTitle {
                 color: #3a1408;
                 font-weight: 800;
@@ -302,6 +318,26 @@ class MainWindow(QMainWindow):
                 background: #f3e8dc;
                 color: #b49a89;
                 border-color: #ead8c6;
+            }
+            QPushButton#primaryButton {
+                background: #ff6f1a;
+                color: #ffffff;
+                border: 1px solid #ff6f1a;
+            }
+            QPushButton#primaryButton:hover {
+                background: #f45a00;
+                color: #ffffff;
+                border-color: #f45a00;
+            }
+            QPushButton#dangerButton {
+                background: #d9280f;
+                color: #ffffff;
+                border: 1px solid #d9280f;
+            }
+            QPushButton#dangerButton:hover {
+                background: #b91c1c;
+                color: #ffffff;
+                border-color: #b91c1c;
             }
             QListWidget,
             QPlainTextEdit {
@@ -361,6 +397,35 @@ class MainWindow(QMainWindow):
         self.pipeline_labels[key] = status_label
         return title_label, status_label
 
+    def _create_readiness_tile(self, component: str) -> QWidget:
+        tile = QWidget()
+        tile.setObjectName("readinessTile")
+        tile_layout = QVBoxLayout()
+        tile_layout.setContentsMargins(12, 10, 12, 10)
+        tile_layout.setSpacing(8)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        title_label = QLabel(component)
+        title_label.setObjectName("readinessTitle")
+        badge_label = QLabel("Не проверено")
+        badge_label.setObjectName("statusBadge")
+        self._apply_badge_style(badge_label, "wait")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(badge_label)
+
+        message_label = QLabel("Нажмите «Проверить готовность».")
+        message_label.setObjectName("sectionHint")
+        message_label.setWordWrap(True)
+
+        self.readiness_badges[component] = badge_label
+        self.readiness_labels[component] = message_label
+        tile_layout.addLayout(header_layout)
+        tile_layout.addWidget(message_label)
+        tile.setLayout(tile_layout)
+        return tile
+
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
             event.ignore()
@@ -383,10 +448,9 @@ class MainWindow(QMainWindow):
             )
         )
 
-        readiness_layout = QFormLayout()
-        readiness_layout.setHorizontalSpacing(18)
-        readiness_layout.setVerticalSpacing(8)
-        for component in [
+        readiness_layout = QVBoxLayout()
+        readiness_layout.setSpacing(10)
+        readiness_rows = [
             "OBS",
             "FFmpeg",
             "Whisper",
@@ -394,12 +458,14 @@ class MainWindow(QMainWindow):
             "API key",
             "Summary endpoint",
             "Папка данных",
-        ]:
-            label = QLabel("Не проверено")
-            label.setWordWrap(True)
-            self._apply_status_style(label, "wait")
-            self.readiness_labels[component] = label
-            readiness_layout.addRow(f"{component}:", label)
+        ]
+        for row_components in [readiness_rows[:3], readiness_rows[3:6], readiness_rows[6:]]:
+            row_layout = QHBoxLayout()
+            row_layout.setSpacing(10)
+            for component in row_components:
+                row_layout.addWidget(self._create_readiness_tile(component), 1)
+            row_layout.addStretch()
+            readiness_layout.addLayout(row_layout)
         layout.addWidget(self._create_card("Готовность системы", readiness_layout))
 
         status_layout = QFormLayout()
@@ -468,16 +534,16 @@ class MainWindow(QMainWindow):
             actions_layout, "Проверить готовность", self.check_readiness
         )
         self.start_workday_button = self._add_button(
-            actions_layout, "Начать рабочий день", self.start_workday
+            actions_layout, "Начать рабочий день", self.start_workday, "primaryButton"
         )
         self.start_meeting_button = self._add_button(
-            actions_layout, "Начать встречу", self.start_meeting
+            actions_layout, "Начать встречу", self.start_meeting, "primaryButton"
         )
         self.end_meeting_button = self._add_button(
-            actions_layout, "Завершить встречу", self.end_meeting
+            actions_layout, "Завершить встречу", self.end_meeting, "dangerButton"
         )
         self.end_workday_button = self._add_button(
-            actions_layout, "Завершить рабочий день", self.end_workday
+            actions_layout, "Завершить рабочий день", self.end_workday, "dangerButton"
         )
         self.open_day_folder_button = self._add_button(
             actions_layout, "Открыть папку дня", self.open_day_folder
@@ -573,8 +639,15 @@ class MainWindow(QMainWindow):
         return page
 
     @staticmethod
-    def _add_button(layout, label: str, callback: Callable[[], None]) -> QPushButton:
+    def _add_button(
+        layout,
+        label: str,
+        callback: Callable[[], None],
+        object_name: str | None = None,
+    ) -> QPushButton:
         button = QPushButton(label)
+        if object_name:
+            button.setObjectName(object_name)
         button.clicked.connect(callback)
         layout.addWidget(button)
         return button
@@ -697,6 +770,10 @@ class MainWindow(QMainWindow):
             state = status["state"]
             label.setText(self._readiness_state_text(state, status["message"]))
             self._apply_status_style(label, state)
+            badge = self.readiness_badges.get(component)
+            if badge is not None:
+                badge.setText(self._badge_state_text(state))
+                self._apply_badge_style(badge, state)
             messages.append(status["message"])
         self.obs_status_value.setText(self.recorder.status_text)
         self.status_label.setText("Проверка готовности завершена. " + " ".join(messages))
@@ -838,6 +915,17 @@ class MainWindow(QMainWindow):
         return f"{prefix}: {message}"
 
     @staticmethod
+    def _badge_state_text(state: str) -> str:
+        return {
+            "ok": "OK",
+            "active": "Идет",
+            "wait": "Ждет",
+            "skip": "Пропущено",
+            "skipped": "Пропущено",
+            "error": "Ошибка",
+        }.get(state, "Статус")
+
+    @staticmethod
     def _apply_status_style(label: QLabel, state: str) -> None:
         label.setMinimumHeight(28)
         colors = {
@@ -856,6 +944,22 @@ class MainWindow(QMainWindow):
             return
         label.setStyleSheet(
             f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
+        )
+
+    @staticmethod
+    def _apply_badge_style(label: QLabel, state: str) -> None:
+        colors = {
+            "ok": ("#dcfce7", "#166534"),
+            "active": ("#dbeafe", "#1d4ed8"),
+            "wait": ("#f3e8dc", "#7b4b35"),
+            "skip": ("#fef3c7", "#92400e"),
+            "skipped": ("#fef3c7", "#92400e"),
+            "error": ("#fee2e2", "#991b1b"),
+        }
+        background, color = colors.get(state, colors["wait"])
+        label.setStyleSheet(
+            f"border-radius: 10px; padding: 3px 8px; font-size: 11px; "
+            f"font-weight: 800; background: {background}; color: {color};"
         )
 
     def check_obs(self) -> None:

@@ -82,6 +82,31 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
     app.processEvents()
 
 
+def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert set(window.readiness_badges) == {
+        "OBS",
+        "FFmpeg",
+        "Whisper",
+        "Summary",
+        "API key",
+        "Summary endpoint",
+        "Папка данных",
+    }
+    assert window.readiness_badges["OBS"].text() == "Не проверено"
+    assert window.start_workday_button.objectName() == "primaryButton"
+    assert window.start_meeting_button.objectName() == "primaryButton"
+    assert window.end_meeting_button.objectName() == "dangerButton"
+    assert window.end_workday_button.objectName() == "dangerButton"
+
+    window.close()
+    app.processEvents()
+
+
 def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
