@@ -39,6 +39,28 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
     app.processEvents()
 
 
+def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.nav_buttons[0].text() == "Рабочий день"
+    assert window.nav_buttons[1].text() == "Ревью"
+    assert window.nav_buttons[2].text() == "Архив"
+    assert window.nav_buttons[3].text() == "Настройки"
+    assert window.nav_buttons[4].text() == "Справка"
+    assert window.nav_buttons[0].isChecked()
+
+    window.nav_buttons[3].click()
+
+    assert window.pages.currentIndex() == 3
+    assert window.nav_buttons[3].isChecked()
+
+    window.close()
+    app.processEvents()
+
+
 def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     tmp_path: Path,
 ) -> None:

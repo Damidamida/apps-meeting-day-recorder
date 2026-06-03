@@ -140,7 +140,7 @@ Codex не имеет права самостоятельно переводит
 
 Этап 8 `UX/safety polish` реализован в ветке/PR и находится на проверке. PR #23 с неблокирующей обработкой встреч был смержен и вручную проверен: после остановки записи следующую встречу можно начать сразу, а FFmpeg/Whisper/Summary по предыдущей встрече выполняются в фоновой очереди.
 
-На ручной проверке также выявлено, что локальный Whisper CLI может работать примерно столько же времени, сколько длилась запись. В ветке `codex/faster-whisper-transcription` готовится ускорение локальной транскрипции через optional backend `faster-whisper`. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
+На ручной проверке также выявлено, что локальный Whisper CLI может работать примерно столько же времени, сколько длилась запись. PR #24 с optional backend `faster-whisper` был смержен и проверен вручную на коротких встречах: локальная транскрипция через `faster-whisper` работает, аудио остается локальным и не отправляется во внешние сервисы.
 
 Ручная проверка полного сценария прошла успешно: приложение запущено через Windows launcher, рабочий день начат, встреча начата и записана через OBS, после завершения встречи FFmpeg создал `audio.wav`, локальный Whisper создал `transcript.md` и `transcript.json`, OpenAI-compatible endpoint / ProxyAPI создал `summary_draft.md`, metadata встречи обновилась корректно.
 
@@ -148,17 +148,16 @@ Codex не имеет права самостоятельно переводит
 
 Для этапа 8 добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых шагов обработки встречи, неблокирующее начало следующего созвона после остановки записи, optional faster-whisper backend для локального ускорения транскрипции, безопасная config validation, защита секретов и README-инструкция ручного полного сценария.
 
+В ветке `codex/ui-shell-redesign` готовится отдельная UI-доработка этапа 8: светлый каркас главного окна в теплой Burger King-палитре, левая навигация `Рабочий день / Ревью / Архив / Настройки / Справка`, заголовки страниц и placeholder-страницы для будущих разделов без изменения OBS/FFmpeg/Whisper/Summary lifecycle. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
+
 Последняя проверка:
 
-- `.venv\Scripts\python.exe -m pip install -e ".[dev]"`: успешно.
-- `.venv\Scripts\python.exe -m pip install -e ".[faster-whisper]"`: успешно.
-- `.venv\Scripts\python.exe -c "import faster_whisper; print(faster_whisper.__version__)"`: `1.2.1`.
-- `.venv\Scripts\python.exe -m pytest`: `71 passed`.
+- `.venv\Scripts\python.exe -m pytest`: `72 passed`.
 - `.venv\Scripts\python.exe -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Проверить PR с optional faster-whisper backend: установить optional-зависимость, включить `transcription.backend: faster_whisper` в локальном `config.yaml`, провести короткую встречу и сравнить время транскрипции с прежним Whisper CLI. Этап 9 не начинать до принятия доработок этапа 8.
+Проверить PR с новым UI-каркасом этапа 8: открыть приложение, убедиться, что светлая навигация и новые страницы не мешают рабочему сценарию `Начать рабочий день -> Начать встречу -> Завершить встречу -> Ревью`. Этап 9 не начинать до принятия доработок этапа 8.
 
 ## 11. Текущая структура файлов
 
@@ -258,3 +257,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #22, ветка `codex/ux-safety-polish`: этап 8 UX/safety polish реализован и переведен в статус `На проверке`. Добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых операций FFmpeg/Whisper/Summary, безопасная config validation, защита секретов и README-инструкция ручного полного сценария. Устранен потенциальный race condition в UI progress: поздние pipeline-сигналы читают metadata по сохраненной папке встречи, а не через уже сброшенный active meeting. Этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pip install -e ".[dev]"` — успешно; `.venv\Scripts\python.exe -m pytest` — `62 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #23, ветка `codex/non-blocking-meeting-processing`: доработка этапа 8 после ручной проверки. Завершение встречи разделено на быструю остановку записи и фоновую обработку. После остановки записи `active_meeting` сбрасывается, кнопка `Начать встречу` снова доступна, а FFmpeg/Whisper/Summary по завершенным встречам выполняются в очереди. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `64 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #24, ветка `codex/faster-whisper-transcription`: доработка этапа 8 для ускорения локальной транскрипции. Добавлен optional backend `faster_whisper`, настройка `transcription.backend`, readiness-проверка выбранного backend, fallback на прежний `whisper_cli` по умолчанию, README-инструкция и тесты. Аудио остается локальным и не отправляется во внешние сервисы. Этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pip install -e .` — успешно после повторного последовательного запуска; `.venv\Scripts\python.exe -m pip install -e ".[dev]"` — успешно; `.venv\Scripts\python.exe -m pip install -e ".[faster-whisper]"` — успешно; `import faster_whisper` — `1.2.1`; `.venv\Scripts\python.exe -m pytest` — `71 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- PR TBD, ветка `codex/ui-shell-redesign`: доработка этапа 8 с новым светлым UI-каркасом главного окна. Добавлены левая навигация `Рабочий день / Ревью / Архив / Настройки / Справка`, теплая Burger King-палитра, заголовки страниц и placeholder-разделы для будущих экранов без изменения OBS/FFmpeg/Whisper/Summary lifecycle. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `72 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
