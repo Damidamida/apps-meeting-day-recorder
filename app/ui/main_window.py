@@ -1,11 +1,11 @@
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Meeting Day Recorder")
         self.resize(1100, 720)
         self.config = load_config()
+        self.nav_buttons: dict[int, QPushButton] = {}
         self.pipeline_running = False
         self.pipeline_completed = False
         self.pipeline_meeting_folder: Path | None = None
@@ -79,35 +80,259 @@ class MainWindow(QMainWindow):
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
+        self._apply_app_style()
 
         self.pages = QStackedWidget()
+        self.pages.setObjectName("pages")
         self.pages.addWidget(self._create_workday_page())
         self.pages.addWidget(self._create_review_page())
+        self.pages.addWidget(self._create_placeholder_page(
+            "Архив",
+            "Здесь позже появится read-only просмотр прошлых рабочих дней и встреч.",
+        ))
+        self.pages.addWidget(self._create_placeholder_page(
+            "Настройки",
+            "Здесь позже будут собраны безопасные локальные настройки и диагностика.",
+        ))
         self.pages.addWidget(self._create_help_page())
+        self.pages.currentChanged.connect(self._refresh_navigation_state)
 
         root_layout = QHBoxLayout()
-        root_layout.setContentsMargins(16, 16, 16, 16)
-        root_layout.setSpacing(16)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
         root_layout.addWidget(self._create_navigation())
-        root_layout.addWidget(self.pages, 1)
+
+        content = QWidget()
+        content.setObjectName("content")
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(24, 20, 20, 20)
+        content_layout.setSpacing(14)
+        content_layout.addWidget(self.pages, 1)
+        content.setLayout(content_layout)
+        root_layout.addWidget(content, 1)
 
         container = QWidget()
+        container.setObjectName("appRoot")
         container.setLayout(root_layout)
         self.setCentralWidget(container)
+        self._refresh_navigation_state(self.pages.currentIndex())
         self.refresh_buttons()
         self.refresh_status()
 
     def _create_navigation(self) -> QWidget:
-        navigation = QGroupBox("Навигация")
-        navigation.setFixedWidth(190)
+        navigation = QWidget()
+        navigation.setObjectName("sidebar")
+        navigation.setFixedWidth(230)
         layout = QVBoxLayout()
-        layout.setSpacing(10)
-        self._add_button(layout, "Рабочий день", lambda: self.pages.setCurrentIndex(0))
-        self._add_button(layout, "Ревью", self.open_review)
-        self._add_button(layout, "Справка", lambda: self.pages.setCurrentIndex(2))
+        layout.setContentsMargins(0, 18, 0, 18)
+        layout.setSpacing(0)
+
+        brand = QLabel("●  Meeting Day\n    Recorder")
+        brand.setObjectName("brand")
+        layout.addWidget(brand)
+
+        self._add_nav_button(layout, 0, "Рабочий день", lambda: self.pages.setCurrentIndex(0))
+        self._add_nav_button(layout, 1, "Ревью", self.open_review)
+        self._add_nav_button(layout, 2, "Архив", lambda: self.pages.setCurrentIndex(2))
+        self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
+        self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
         layout.addStretch()
         navigation.setLayout(layout)
         return navigation
+
+    def _add_nav_button(
+        self,
+        layout: QVBoxLayout,
+        index: int,
+        label: str,
+        callback: Callable[[], None],
+    ) -> QPushButton:
+        button = QPushButton(label)
+        button.setObjectName("navButton")
+        button.setCheckable(True)
+        button.clicked.connect(callback)
+        self.nav_buttons[index] = button
+        layout.addWidget(button)
+        return button
+
+    def _refresh_navigation_state(self, current_index: int) -> None:
+        for index, button in self.nav_buttons.items():
+            button.setChecked(index == current_index)
+
+    def _create_page_header(self, title: str, subtitle: str) -> QWidget:
+        header = QWidget()
+        header.setObjectName("pageHeader")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        title_block = QWidget()
+        title_layout = QVBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(4)
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setObjectName("pageSubtitle")
+        subtitle_label.setWordWrap(True)
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(subtitle_label)
+        title_block.setLayout(title_layout)
+
+        layout.addWidget(title_block, 1)
+        header.setLayout(layout)
+        return header
+
+    @staticmethod
+    def _create_placeholder_page(title: str, message: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(14)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("pageTitle")
+        message_label = QLabel(message)
+        message_label.setObjectName("emptyState")
+        message_label.setWordWrap(True)
+
+        layout.addWidget(title_label)
+        layout.addWidget(message_label)
+        layout.addStretch()
+        page.setLayout(layout)
+        return page
+
+    def _apply_app_style(self) -> None:
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background: #f6efe6;
+                color: #3a1408;
+                font-family: "Segoe UI";
+                font-size: 13px;
+            }
+            QWidget#appRoot,
+            QWidget#content,
+            QStackedWidget#pages {
+                background: #f6efe6;
+            }
+            QWidget#sidebar {
+                background: #fffdf8;
+                border-right: 1px solid #ead8c6;
+            }
+            QLabel#brand {
+                color: #ff6f1a;
+                font-size: 18px;
+                font-weight: 800;
+                padding: 2px 14px 18px 14px;
+                border-bottom: 1px solid #f1e5d8;
+            }
+            QPushButton#navButton {
+                background: transparent;
+                color: #7b4b35;
+                border: 0;
+                border-bottom: 1px solid #f1e5d8;
+                border-radius: 0;
+                padding: 14px 18px;
+                text-align: left;
+                font-weight: 700;
+            }
+            QPushButton#navButton:hover {
+                background: #fff8ef;
+                color: #ff6f1a;
+            }
+            QPushButton#navButton:checked {
+                background: #fff3e6;
+                color: #ff6f1a;
+                border-left: 3px solid #ff6f1a;
+                padding-left: 15px;
+            }
+            QLabel#pageTitle {
+                color: #3a1408;
+                font-size: 26px;
+                font-weight: 800;
+            }
+            QLabel#pageSubtitle {
+                color: #8a6a58;
+            }
+            QLabel#emptyState {
+                background: #fffdf8;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                padding: 18px;
+            }
+            QWidget#card {
+                background: #fffdf8;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+            }
+            QLabel#cardTitle {
+                color: #3a1408;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            QPushButton {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #ead8c6;
+                border-radius: 6px;
+                padding: 8px 12px;
+                min-height: 28px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                border-color: #ff6f1a;
+                color: #ff6f1a;
+            }
+            QPushButton:disabled {
+                background: #f3e8dc;
+                color: #b49a89;
+                border-color: #ead8c6;
+            }
+            QListWidget,
+            QPlainTextEdit {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                padding: 8px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                background: #fffdf8;
+            }
+            QTabBar::tab {
+                background: #f3e8dc;
+                color: #8a6a58;
+                padding: 8px 12px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QTabBar::tab:selected {
+                background: #fffdf8;
+                color: #3a1408;
+                font-weight: 700;
+            }
+            """
+        )
+
+    @staticmethod
+    def _create_card(title: str, body_layout) -> QWidget:
+        card = QWidget()
+        card.setObjectName("card")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(12)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        layout.addWidget(title_label)
+        layout.addLayout(body_layout)
+
+        card.setLayout(layout)
+        return card
 
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
@@ -121,14 +346,19 @@ class MainWindow(QMainWindow):
     def _create_workday_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
-        title = QLabel("Meeting Day Recorder")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
-        layout.addWidget(title)
+        layout.addWidget(
+            self._create_page_header(
+                "Рабочий день",
+                f"Выбранная дата: сегодня, {date.today().strftime('%d.%m.%Y')}",
+            )
+        )
 
-        status_group = QGroupBox("Текущее состояние")
         status_layout = QFormLayout()
+        status_layout.setHorizontalSpacing(18)
+        status_layout.setVerticalSpacing(8)
         self.workday_status_value = QLabel()
         self.meeting_status_value = QLabel()
         self.day_folder_value = QLabel()
@@ -139,11 +369,11 @@ class MainWindow(QMainWindow):
         status_layout.addRow("Папка дня:", self.day_folder_value)
         status_layout.addRow("Активная встреча:", self.active_meeting_value)
         status_layout.addRow("Статус OBS:", self.obs_status_value)
-        status_group.setLayout(status_layout)
-        layout.addWidget(status_group)
+        layout.addWidget(self._create_card("Состояние дня", status_layout))
 
-        readiness_group = QGroupBox("Готовность системы")
         readiness_layout = QFormLayout()
+        readiness_layout.setHorizontalSpacing(18)
+        readiness_layout.setVerticalSpacing(8)
         for component in [
             "OBS",
             "FFmpeg",
@@ -158,11 +388,11 @@ class MainWindow(QMainWindow):
             self._apply_status_style(label, "wait")
             self.readiness_labels[component] = label
             readiness_layout.addRow(f"{component}:", label)
-        readiness_group.setLayout(readiness_layout)
-        layout.addWidget(readiness_group)
+        layout.addWidget(self._create_card("Готовность системы", readiness_layout))
 
-        pipeline_group = QGroupBox("Pipeline встречи")
         pipeline_layout = QFormLayout()
+        pipeline_layout.setHorizontalSpacing(18)
+        pipeline_layout.setVerticalSpacing(8)
         for key, title in [
             ("meeting", "Созвон"),
             ("recording", "OBS запись"),
@@ -175,11 +405,10 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             self.pipeline_labels[key] = label
             pipeline_layout.addRow(f"{title}:", label)
-        pipeline_group.setLayout(pipeline_layout)
-        layout.addWidget(pipeline_group)
+        layout.addWidget(self._create_card("Pipeline встречи", pipeline_layout))
 
-        actions_group = QGroupBox("Действия")
-        actions_layout = QVBoxLayout()
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(8)
         self.check_readiness_button = self._add_button(
             actions_layout, "Проверить готовность", self.check_readiness
         )
@@ -199,8 +428,8 @@ class MainWindow(QMainWindow):
             actions_layout, "Открыть папку дня", self.open_day_folder
         )
         self._add_button(actions_layout, "Проверить OBS", self.check_obs)
-        actions_group.setLayout(actions_layout)
-        layout.addWidget(actions_group)
+        actions_layout.addStretch()
+        layout.addWidget(self._create_card("Действия", actions_layout))
 
         self.status_label = QLabel(self._startup_status())
         self.status_label.setWordWrap(True)
@@ -213,19 +442,22 @@ class MainWindow(QMainWindow):
     def _create_review_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        title = QLabel("Ревью локальных итогов")
-        title.setStyleSheet("font-size: 20px; font-weight: 600;")
-        layout.addWidget(title)
+        layout.addWidget(
+            self._create_page_header(
+                "Ревью",
+                "Проверьте черновики итогов встреч, итогов дня и задач перед сохранением финальных файлов.",
+            )
+        )
 
         content_layout = QHBoxLayout()
-        meetings_group = QGroupBox("Встречи за сегодня")
         meetings_layout = QVBoxLayout()
         self.meeting_list = QListWidget()
         self.meeting_list.currentItemChanged.connect(self.load_selected_meeting)
         meetings_layout.addWidget(self.meeting_list)
-        meetings_group.setLayout(meetings_layout)
+        meetings_group = self._create_card("Встречи за сегодня", meetings_layout)
         meetings_group.setMinimumWidth(260)
         content_layout.addWidget(meetings_group)
 
@@ -262,8 +494,9 @@ class MainWindow(QMainWindow):
     def _create_help_page() -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
         title = QLabel("Справка")
-        title.setStyleSheet("font-size: 20px; font-weight: 600;")
+        title.setObjectName("pageTitle")
         help_text = QLabel(
             "Текущий сценарий MVP:\n\n"
             "1. Начать рабочий день.\n"
@@ -551,6 +784,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _apply_status_style(label: QLabel, state: str) -> None:
+        label.setMinimumHeight(28)
         colors = {
             "ok": ("#dcfce7", "#166534"),
             "active": ("#dbeafe", "#1d4ed8"),
