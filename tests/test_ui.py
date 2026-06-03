@@ -61,6 +61,27 @@ def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.active_call_title_value.text() == "Нет активного созвона"
+    assert "пока нет" in window.today_meetings_value.text()
+
+    window.start_workday()
+
+    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Планерка", True)):
+        window.start_meeting()
+
+    assert "Планерка" in window.active_call_title_value.text()
+    assert "Создано встреч за день: 1" in window.today_meetings_value.text()
+
+    window.close()
+    app.processEvents()
+
+
 def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     tmp_path: Path,
 ) -> None:
