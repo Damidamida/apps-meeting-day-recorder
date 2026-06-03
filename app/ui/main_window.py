@@ -268,14 +268,17 @@ class MainWindow(QMainWindow):
                 color: #3a1408;
                 border: 1px solid #ead8c6;
                 border-radius: 8px;
-                margin-top: 12px;
-                padding: 16px 12px 12px 12px;
+                margin-top: 20px;
+                padding: 24px 14px 14px 14px;
                 font-weight: 800;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
+                subcontrol-position: top left;
                 left: 12px;
+                top: 5px;
                 padding: 0 6px;
+                background: #f6efe6;
             }
             QPushButton {
                 background: #fffdf8;
@@ -283,6 +286,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ead8c6;
                 border-radius: 6px;
                 padding: 8px 12px;
+                min-height: 28px;
                 font-weight: 600;
             }
             QPushButton:hover {
