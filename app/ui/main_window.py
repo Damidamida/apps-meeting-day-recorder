@@ -358,6 +358,7 @@ class MainWindow(QMainWindow):
         title_label = QLabel(title)
         title_label.setObjectName("pipelineStepTitle")
         status_label = QLabel()
+        status_label.setObjectName("pipelineStatus")
         status_label.setWordWrap(True)
         status_label.setMinimumHeight(28)
 
@@ -855,6 +856,11 @@ class MainWindow(QMainWindow):
             "error": ("#fee2e2", "#991b1b"),
         }
         background, color = colors.get(state, colors["wait"])
+        if label.objectName() == "pipelineStatus":
+            label.setStyleSheet(
+                f"padding: 2px 0; background: transparent; color: {color};"
+            )
+            return
         label.setStyleSheet(
             f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
         )
