@@ -65,7 +65,7 @@ Codex не имеет права самостоятельно переводит
 | 5. FFmpeg audio extraction | Извлекать аудио | Локальное получение аудиофайлов из записи | Готово |
 | 5.1. Windows launcher | Упростить локальный запуск | Запуск приложения двойным кликом через `.cmd` | Готово |
 | 6. Transcription service | Добавить транскрипцию | Локальный сервис подготовки транскрипта | Готово |
-| 7. Summary generation | Добавить генерацию итогов | Черновик итогов одной встречи из готового transcript | На проверке |
+| 7. Summary generation | Добавить генерацию итогов | Черновик итогов одной встречи из готового transcript | Готово |
 | 8. UX/safety polish | Усилить удобство и защиту данных | Проверки, понятные ошибки, безопасные сценарии | Сделать |
 | 9. Manual smoke test | Проверить рабочий маршрут | Подтвержденный ручной сценарий | Сделать |
 | 10. Windows packaging | Собрать приложение | Устанавливаемая Windows-сборка | Сделать |
@@ -128,15 +128,13 @@ Codex не имеет права самостоятельно переводит
 
 ## 9. Текущий статус
 
-Этапы 1–6 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
+Этапы 1–7 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
 
-Этап 7 `Summary generation` реализован в ветке/PR и ожидает ручной проверки. Этап 8 остается в статусе `Сделать` и не начинался.
+Этап 7 `Summary generation` принят после ручной проверки полного сценария. Этап 8 `UX/safety polish` остается в статусе `Сделать` и не начинался.
 
-Ручная сервисная проверка с прямым OpenAI API в текущем окружении не завершилась из-за отсутствия доступной оплаты/валидного ключа. Для обхода этого ограничения в PR #16 добавлена поддержка ProxyAPI через `summary.base_url`. Реальная проверка ProxyAPI требует локального ProxyAPI-ключа в `config.yaml` / внешнем `.env.local`. Unit-тесты и lifecycle-тесты используют mock OpenAI и не выполняют реальные API-запросы.
+Ручная проверка полного сценария прошла успешно: приложение запущено через Windows launcher, рабочий день начат, встреча начата и записана через OBS, после завершения встречи FFmpeg создал `audio.wav`, локальный Whisper создал `transcript.md` и `transcript.json`, OpenAI-compatible endpoint / ProxyAPI создал `summary_draft.md`, metadata встречи обновилась корректно.
 
-При ручной проверке полного сценария с ProxyAPI обнаружено, что приложение, запущенное через launcher, не видело локальный `whisper.exe` из `.venv\Scripts`. Технический fix в текущей ветке добавляет `.venv\Scripts` в `PATH` до запуска приложения, чтобы локальный Whisper CLI находился автоматически.
-
-По результатам ревью кода устранен технический дефект учета usage: для длинных transcript с chunking metadata теперь должна отражать суммарные `input_tokens` и `output_tokens` всех запросов, а не только финального запроса.
+Подтверждено, что для summary generation во внешний OpenAI-compatible endpoint / ProxyAPI отправляется только текст transcript. Аудио и видео во внешний сервис не отправляются.
 
 Последняя проверка:
 
@@ -145,7 +143,7 @@ Codex не имеет права самостоятельно переводит
 
 ## 10. Следующий шаг
 
-Ручная проверка этапа 7 на короткой встрече.
+Подготовить отдельный PR для этапа 8 — UX/safety polish.
 
 ## 11. Текущая структура файлов
 
@@ -238,3 +236,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #17, ветка `codex/proxyapi-summary-generation`: добавлена поддержка ProxyAPI для этапа 7 через настройку `summary.base_url` и OpenAI-совместимый endpoint `https://api.proxyapi.ru/openai/v1`. Обновлены README, `config.yaml.example`, PROJECT_STATE и тесты передачи `base_url` в OpenAI client. В ProxyAPI/OpenAI отправляется только текст transcript, не аудио и не видео. Реальная проверка ProxyAPI требует локального ProxyAPI-ключа. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.
 - PR #18, ветка `codex/fix-launcher-whisper-path`: launcher дополнен добавлением `.venv\Scripts` в `PATH`, чтобы приложение находило локальный optional Whisper CLI при запуске двойным кликом. Добавлен тест launcher. Логика OBS, FFmpeg, Whisper pipeline, ProxyAPI/OpenAI и summary generation не менялась. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `cmd /c "set PATH=%CD%\.venv\Scripts;%PATH%&& where whisper"` — найден локальный `.venv\Scripts\whisper.exe`; `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #20, ветка `codex/fix-summary-usage-aggregation`: исправлен учет `summary_usage` при chunking длинных transcript. Теперь `input_tokens` и `output_tokens` суммируются по промежуточным chunk-запросам и финальному summary-запросу. Добавлен тест на агрегацию usage. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- Ветка `codex/mark-stage-7-done`: этап 7 Summary generation принят после ручной проверки полного сценария. Подтверждены запуск через Windows launcher, OBS-запись, извлечение `audio.wav` через FFmpeg, локальная транскрипция через Whisper, создание `summary_draft.md` через OpenAI-compatible endpoint / ProxyAPI и корректное обновление metadata. Во внешний сервис отправляется только текст transcript, не аудио и не видео. Код приложения не менялся, обновлен только `PROJECT_STATE.md`. Этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
