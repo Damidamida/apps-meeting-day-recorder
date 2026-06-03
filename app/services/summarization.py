@@ -8,6 +8,7 @@ from typing import Any, Callable, Protocol
 SUMMARY_PROVIDER = "openai"
 SUMMARY_DISABLED_ERROR = "Генерация итогов выключена в настройках."
 TRANSCRIPT_NOT_READY_ERROR = "Транскрипт еще не готов."
+TRANSCRIPT_EMPTY_ERROR = "Транскрипт пустой. Итоги не будут отправлены во внешний сервис."
 OPENAI_KEY_MISSING_ERROR = "OpenAI API key не найден."
 OPENAI_FAILED_ERROR = "Не удалось подготовить черновик итогов через OpenAI."
 
@@ -85,9 +86,10 @@ class OpenAISummarizer:
         if metadata.get("transcription_status") != "completed":
             return skipped_summary_metadata()
 
-        transcript = read_transcript_text(meeting_folder)
-        if transcript is None:
-            return skipped_summary_metadata()
+        transcript_state = transcript_readiness(meeting_folder)
+        transcript = transcript_state.get("text")
+        if transcript_state["status"] != "ready" or not transcript:
+            return skipped_summary_metadata(transcript_state["message"])
 
         api_key = load_api_key(
             str(self.config.get("api_key_env") or "OPENAI_API_KEY"),
@@ -182,10 +184,10 @@ def disabled_summary_metadata() -> dict[str, str]:
     }
 
 
-def skipped_summary_metadata() -> dict[str, str]:
+def skipped_summary_metadata(reason: str = TRANSCRIPT_NOT_READY_ERROR) -> dict[str, str]:
     return {
         "summary_status": "skipped",
-        "summary_error": TRANSCRIPT_NOT_READY_ERROR,
+        "summary_error": reason,
     }
 
 
@@ -205,17 +207,22 @@ def summary_message(metadata: dict[str, Any]) -> str:
 
 
 def read_transcript_text(meeting_folder: Path) -> str | None:
-    json_text = _read_transcript_json(meeting_folder / "transcript.json")
-    if json_text:
-        return json_text
+    state = transcript_readiness(meeting_folder)
+    return state.get("text") if state["status"] == "ready" else None
+
+
+def transcript_readiness(meeting_folder: Path) -> dict[str, str]:
+    json_path = meeting_folder / "transcript.json"
+    if json_path.is_file():
+        return _transcript_json_state(json_path)
 
     transcript_path = meeting_folder / "transcript.md"
     if not transcript_path.is_file():
-        return None
+        return {"status": "missing", "message": "Транскрипт не готов."}
     text = transcript_path.read_text(encoding="utf-8").strip()
     if not text or _is_placeholder_transcript(text):
-        return None
-    return text
+        return {"status": "placeholder", "message": "Транскрипт не готов."}
+    return {"status": "ready", "message": "Транскрипция завершена.", "text": text}
 
 
 def load_api_key(api_key_env: str, env_file: str | Path | None = None) -> str | None:
@@ -305,19 +312,17 @@ def merge_usage(*items: dict[str, int]) -> dict[str, int]:
     return result
 
 
-def _read_transcript_json(path: Path) -> str | None:
-    if not path.is_file():
-        return None
+def _transcript_json_state(path: Path) -> dict[str, str]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return None
+        return {"status": "invalid", "message": "Транскрипт не готов."}
     if payload.get("status") != "completed":
-        return None
+        return {"status": "placeholder", "message": "Транскрипт не готов."}
 
     text = str(payload.get("text") or "").strip()
     if text:
-        return text
+        return {"status": "ready", "message": "Транскрипция завершена.", "text": text}
 
     segments = payload.get("segments") or []
     segment_lines = [
@@ -325,7 +330,14 @@ def _read_transcript_json(path: Path) -> str | None:
         for segment in segments
         if str(segment.get("text") or "").strip()
     ]
-    return "\n".join(segment_lines).strip() or None
+    segment_text = "\n".join(segment_lines).strip()
+    if segment_text:
+        return {
+            "status": "ready",
+            "message": "Транскрипция завершена.",
+            "text": segment_text,
+        }
+    return {"status": "empty", "message": TRANSCRIPT_EMPTY_ERROR}
 
 
 def _is_placeholder_transcript(text: str) -> bool:

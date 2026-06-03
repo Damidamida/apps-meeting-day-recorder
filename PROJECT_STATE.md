@@ -66,7 +66,7 @@ Codex не имеет права самостоятельно переводит
 | 5.1. Windows launcher | Упростить локальный запуск | Запуск приложения двойным кликом через `.cmd` | Готово |
 | 6. Transcription service | Добавить транскрипцию | Локальный сервис подготовки транскрипта | Готово |
 | 7. Summary generation | Добавить генерацию итогов | Черновик итогов одной встречи из готового transcript | Готово |
-| 8. UX/safety polish | Усилить удобство и защиту данных | Проверки, понятные ошибки, безопасные сценарии | Сделать |
+| 8. UX/safety polish | Усилить удобство и защиту данных | Проверки, понятные ошибки, безопасные сценарии | На проверке |
 | 9. Manual smoke test | Проверить рабочий маршрут | Подтвержденный ручной сценарий | Сделать |
 | 10. Windows packaging | Собрать приложение | Устанавливаемая Windows-сборка | Сделать |
 
@@ -124,26 +124,35 @@ Codex не имеет права самостоятельно переводит
 - безопасные статусы summary `disabled`, `skipped`, `openai_unavailable`, `failed`, `draft_created`;
 - разбиение длинного transcript на chunks для обработки одной длинной встречи;
 - суммирование `summary_usage` по всем chunk-запросам и финальному summary-запросу для длинных transcript;
+- кнопка `Проверить готовность` со статусами OBS, FFmpeg, Whisper, summary, API key, endpoint и папки данных;
+- визуальная статусная модель pipeline встречи;
+- явное определение пустого или неготового transcript без отправки пустого текста во внешний сервис;
+- фоновый pipeline завершения встречи для FFmpeg, Whisper и summary, чтобы UI не зависал;
+- безопасная config validation с fallback на defaults при ошибках YAML и некорректных типах;
+- README-инструкция ручной проверки полного сценария;
 - тесты.
 
 ## 9. Текущий статус
 
 Этапы 1–7 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
 
-Этап 7 `Summary generation` принят после ручной проверки полного сценария. Этап 8 `UX/safety polish` остается в статусе `Сделать` и не начинался.
+Этап 8 `UX/safety polish` реализован в ветке/PR и находится на проверке. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
 
 Ручная проверка полного сценария прошла успешно: приложение запущено через Windows launcher, рабочий день начат, встреча начата и записана через OBS, после завершения встречи FFmpeg создал `audio.wav`, локальный Whisper создал `transcript.md` и `transcript.json`, OpenAI-compatible endpoint / ProxyAPI создал `summary_draft.md`, metadata встречи обновилась корректно.
 
 Подтверждено, что для summary generation во внешний OpenAI-compatible endpoint / ProxyAPI отправляется только текст transcript. Аудио и видео во внешний сервис не отправляются.
 
+Для этапа 8 добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых шагов завершения встречи, безопасная config validation, защита секретов и README-инструкция ручного полного сценария.
+
 Последняя проверка:
 
-- `.venv\Scripts\python.exe -m pytest`: `51 passed`.
+- `.venv\Scripts\python.exe -m pip install -e ".[dev]"`: успешно.
+- `.venv\Scripts\python.exe -m pytest`: `62 passed`.
 - `.venv\Scripts\python.exe -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Подготовить отдельный PR для этапа 8 — UX/safety polish.
+Провести ручной smoke test этапа 8 и подготовиться к отдельному PR для этапа 9 — Manual smoke test.
 
 ## 11. Текущая структура файлов
 
@@ -158,11 +167,13 @@ Codex не имеет права самостоятельно переводит
 - `app/ui/main_window.py` — главное окно.
 - `app/services/storage.py` — локальное хранение и жизненный цикл.
 - `app/services/recorder.py` — безопасная OBS-интеграция и Noop-режим.
+- `app/services/readiness.py` — безопасная проверка готовности локальной среды.
 - `app/services/audio.py` — локальное извлечение `audio.wav` через FFmpeg.
 - `app/services/transcription.py` — локальный слой транскрипции через optional Whisper CLI.
 - `app/services/summarization.py` — слой генерации итогов встречи через безопасный `Summarizer` и OpenAI backend.
 - `tests/test_storage.py` — тесты локального хранения.
 - `tests/test_launcher.py` — тест launcher для поиска локальных CLI-инструментов из `.venv\Scripts`.
+- `tests/test_readiness.py` — тесты проверки готовности и защиты отображения API key.
 - `tests/test_summarization.py` — тесты генерации итогов, включая суммирование usage при chunking.
 
 ## 12. Структура локальных данных
@@ -237,3 +248,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #18, ветка `codex/fix-launcher-whisper-path`: launcher дополнен добавлением `.venv\Scripts` в `PATH`, чтобы приложение находило локальный optional Whisper CLI при запуске двойным кликом. Добавлен тест launcher. Логика OBS, FFmpeg, Whisper pipeline, ProxyAPI/OpenAI и summary generation не менялась. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `cmd /c "set PATH=%CD%\.venv\Scripts;%PATH%&& where whisper"` — найден локальный `.venv\Scripts\whisper.exe`; `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #20, ветка `codex/fix-summary-usage-aggregation`: исправлен учет `summary_usage` при chunking длинных transcript. Теперь `input_tokens` и `output_tokens` суммируются по промежуточным chunk-запросам и финальному summary-запросу. Добавлен тест на агрегацию usage. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #21, ветка `codex/mark-stage-7-done`: этап 7 Summary generation принят после ручной проверки полного сценария. Подтверждены запуск через Windows launcher, OBS-запись, извлечение `audio.wav` через FFmpeg, локальная транскрипция через Whisper, создание `summary_draft.md` через OpenAI-compatible endpoint / ProxyAPI и корректное обновление metadata. Во внешний сервис отправляется только текст transcript, не аудио и не видео. Код приложения не менялся, обновлен только `PROJECT_STATE.md`. Этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- PR #22, ветка `codex/ux-safety-polish`: этап 8 UX/safety polish реализован и переведен в статус `На проверке`. Добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых операций FFmpeg/Whisper/Summary, безопасная config validation, защита секретов и README-инструкция ручного полного сценария. Устранен потенциальный race condition в UI progress: поздние pipeline-сигналы читают metadata по сохраненной папке встречи, а не через уже сброшенный active meeting. Этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pip install -e ".[dev]"` — успешно; `.venv\Scripts\python.exe -m pytest` — `62 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.

@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.services.audio import AudioExtractor, skipped_audio_metadata
 from app.services.recorder import NoopRecorder, Recorder, RecorderError
@@ -163,20 +163,49 @@ class StorageService:
         return meeting_folder
 
     def end_meeting(self, ended_at: datetime | None = None) -> Path:
+        return self.end_meeting_pipeline(ended_at)
+
+    def end_meeting_pipeline(
+        self,
+        ended_at: datetime | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> Path:
         if not self.meeting_active:
             raise ValueError("Нет активной встречи для завершения.")
 
         ended_at = ended_at or datetime.now()
         meeting_folder = self.active_meeting_folder
         metadata = self._read_json(meeting_folder / "meeting_metadata.json")
+        self._emit_pipeline(progress_callback, "meeting_ending", "Завершение встречи.")
         if metadata.get("recording_status") == "recording":
+            self._emit_pipeline(progress_callback, "recording_stopping", "Останавливаем OBS запись.")
             metadata.update(self._stop_recording())
+            self.write_metadata(meeting_folder, metadata)
+            self._emit_pipeline(progress_callback, "recording_done", self.last_recorder_message or "")
+        else:
+            self._emit_pipeline(progress_callback, "recording_skipped", "OBS запись не активна.")
+
+        self._emit_pipeline(progress_callback, "audio_running", "Извлекаем audio.wav через FFmpeg.")
         metadata.update(self._extract_audio(metadata, meeting_folder))
+        self.write_metadata(meeting_folder, metadata)
+        self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
+
         self.write_placeholder_transcript(meeting_folder)
         self.write_placeholder_transcript_json(meeting_folder)
         self.write_placeholder_summary(meeting_folder)
+        self._emit_pipeline(progress_callback, "transcription_running", "Готовим локальный transcript.")
         metadata.update(self._transcribe_audio(metadata, meeting_folder))
+        self.write_metadata(meeting_folder, metadata)
+        self._emit_pipeline(
+            progress_callback,
+            "transcription_done",
+            self.last_transcription_message or "",
+        )
+
+        self._emit_pipeline(progress_callback, "summary_running", "Готовим черновик итогов.")
         metadata.update(self._summarize_meeting(metadata, meeting_folder))
+        self.write_metadata(meeting_folder, metadata)
+        self._emit_pipeline(progress_callback, "summary_done", self.last_summary_message or "")
         started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
@@ -186,6 +215,7 @@ class StorageService:
             }
         )
         self.write_metadata(meeting_folder, metadata)
+        self._emit_pipeline(progress_callback, "meeting_done", "Встреча завершена.")
 
         day_metadata_path = self.active_day_folder / "day_metadata.json"
         day_metadata = self._read_json(day_metadata_path)
@@ -198,6 +228,15 @@ class StorageService:
         self._write_json(day_metadata_path, day_metadata)
         self.active_meeting_folder = None
         return meeting_folder
+
+    @staticmethod
+    def _emit_pipeline(
+        progress_callback: Callable[[str, str], None] | None,
+        event: str,
+        message: str,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(event, message)
 
     def _start_recording(self, meeting_folder: Path) -> None:
         metadata = self._read_json(meeting_folder / "meeting_metadata.json")

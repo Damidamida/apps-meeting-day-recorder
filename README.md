@@ -51,9 +51,12 @@ pytest
 - Сохранение финальных Markdown-файлов без удаления черновиков.
 - Безопасная интеграция с OBS для запуска и остановки записи встречи.
 - Индикатор состояния OBS и кнопка ручной проверки подключения.
+- Кнопка `Проверить готовность` со статусами OBS, FFmpeg, Whisper, summary, API key, endpoint и папки данных.
+- Визуальная статусная модель pipeline встречи: запись, извлечение аудио, транскрипция, генерация итогов и финальный статус.
 - Локальное извлечение `audio.wav` из OBS-записи через FFmpeg.
 - Локальная транскрипция `audio.wav` через optional Whisper CLI, если команда `whisper` доступна в `PATH`.
 - Генерация `summary_draft.md` одной встречи через OpenAI из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
+- Тяжелые шаги завершения встречи выполняются в фоне, чтобы UI не зависал.
 - Локальные папки по датам и безопасные имена папок встреч.
 - JSON-метаданные рабочего дня и встреч, включая длительность встречи.
 - Markdown- и JSON-заглушки транскриптов, черновиков итогов дня и задач.
@@ -130,6 +133,62 @@ summary:
 ```
 
 В этом режиме приложение продолжает использовать официальный OpenAI SDK, но отправляет текстовые запросы через ProxyAPI. Видео и аудио по-прежнему не отправляются.
+
+## Ручная проверка полного сценария
+
+1. Установите зависимости:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+2. Создайте локальный `config.yaml` из `config.yaml.example`.
+3. Настройте OBS WebSocket и путь записи в самом OBS.
+4. Проверьте, что FFmpeg доступен в `PATH`:
+
+```powershell
+ffmpeg -version
+```
+
+5. Проверьте, что Whisper CLI доступен локально:
+
+```powershell
+whisper --help
+```
+
+6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или `.env.local`, который не добавляется в git.
+7. Запустите приложение двойным кликом через `start_meeting_day_recorder.cmd`.
+8. Нажмите `Проверить готовность`.
+9. Начните рабочий день.
+10. Начните короткую встречу.
+11. Завершите встречу и дождитесь завершения фонового pipeline.
+12. Проверьте папку встречи в `MeetingSummaries/YYYY-MM-DD/HH-MM_title/`.
+
+Ожидаемые файлы:
+
+- `meeting_metadata.json`;
+- `audio.wav`;
+- `transcript.md`;
+- `transcript.json`;
+- `summary_draft.md`, если summary включен и transcript готов.
+
+Успешные статусы в `meeting_metadata.json`:
+
+- `audio_status: extracted`;
+- `transcription_status: completed`;
+- `summary_status: draft_created`.
+
+Безопасные пропуски:
+
+- `summary_status: disabled` — генерация итогов выключена;
+- `transcription_status: whisper_unavailable` — Whisper недоступен;
+- `summary_status: openai_unavailable` — API key не найден;
+- `summary_status: skipped` — transcript не готов или пустой.
+
+Если transcript пустой, приложение не отправляет запрос во внешний OpenAI-compatible endpoint / ProxyAPI.
 
 ## Намеренно не реализовано
 
