@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -21,9 +21,31 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import load_config
+from app.services.readiness import check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
 from app.services.summarization import create_summarizer
+
+
+class MeetingPipelineWorker(QObject):
+    progress = Signal(str, str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, storage: StorageService) -> None:
+        super().__init__()
+        self.storage = storage
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            meeting_folder = self.storage.end_meeting_pipeline(
+                progress_callback=lambda event, message: self.progress.emit(event, message)
+            )
+        except Exception as error:
+            self.failed.emit(str(error))
+            return
+        self.finished.emit(str(meeting_folder))
 
 
 class MainWindow(QMainWindow):
@@ -35,14 +57,22 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Meeting Day Recorder")
         self.resize(1100, 720)
-        config = load_config()
-        self.recorder = recorder or (storage.recorder if storage else create_recorder(config["obs"]))
+        self.config = load_config()
+        self.pipeline_running = False
+        self.pipeline_completed = False
+        self.pipeline_thread: QThread | None = None
+        self.pipeline_worker: MeetingPipelineWorker | None = None
+        self.recorder = recorder or (
+            storage.recorder if storage else create_recorder(self.config["obs"])
+        )
         self.storage = storage or StorageService(
-            Path(config["storage"]["root"]),
+            Path(self.config["storage"]["root"]),
             self.recorder,
-            summarizer=create_summarizer(config["summary"]),
+            summarizer=create_summarizer(self.config["summary"]),
         )
         self.storage.load_today_state()
+        self.readiness_labels: dict[str, QLabel] = {}
+        self.pipeline_labels: dict[str, QLabel] = {}
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self._create_workday_page())
@@ -73,6 +103,15 @@ class MainWindow(QMainWindow):
         navigation.setLayout(layout)
         return navigation
 
+    def closeEvent(self, event) -> None:
+        if self.pipeline_running:
+            event.ignore()
+            self.status_label.setText(
+                "Дождитесь завершения обработки встречи. Сейчас обновляются локальные файлы."
+            )
+            return
+        super().closeEvent(event)
+
     def _create_workday_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
@@ -97,8 +136,47 @@ class MainWindow(QMainWindow):
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
 
+        readiness_group = QGroupBox("Готовность системы")
+        readiness_layout = QFormLayout()
+        for component in [
+            "OBS",
+            "FFmpeg",
+            "Whisper",
+            "Summary",
+            "API key",
+            "Summary endpoint",
+            "Папка данных",
+        ]:
+            label = QLabel("Не проверено")
+            label.setWordWrap(True)
+            self._apply_status_style(label, "wait")
+            self.readiness_labels[component] = label
+            readiness_layout.addRow(f"{component}:", label)
+        readiness_group.setLayout(readiness_layout)
+        layout.addWidget(readiness_group)
+
+        pipeline_group = QGroupBox("Pipeline встречи")
+        pipeline_layout = QFormLayout()
+        for key, title in [
+            ("meeting", "Созвон"),
+            ("recording", "OBS запись"),
+            ("audio", "Извлечение аудио"),
+            ("transcription", "Транскрипция"),
+            ("summary", "Генерация итогов"),
+            ("done", "Готово"),
+        ]:
+            label = QLabel()
+            label.setWordWrap(True)
+            self.pipeline_labels[key] = label
+            pipeline_layout.addRow(f"{title}:", label)
+        pipeline_group.setLayout(pipeline_layout)
+        layout.addWidget(pipeline_group)
+
         actions_group = QGroupBox("Действия")
         actions_layout = QVBoxLayout()
+        self.check_readiness_button = self._add_button(
+            actions_layout, "Проверить готовность", self.check_readiness
+        )
         self.start_workday_button = self._add_button(
             actions_layout, "Начать рабочий день", self.start_workday
         )
@@ -235,32 +313,212 @@ class MainWindow(QMainWindow):
         message = f"Встреча начата: {meeting_folder.name}"
         if self.storage.last_recorder_message:
             message = f"{message} {self.storage.last_recorder_message}"
+        self.pipeline_completed = False
+        self._set_pipeline_step("meeting", "Готово", "Созвон начат.", "ok")
+        self._set_pipeline_step("recording", "Выполняется", "OBS ведет запись или шаг пропущен.", "active")
+        self._set_pipeline_step("audio", "Ожидает", "Ждет завершение встречи.", "wait")
+        self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
+        self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
+        self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
         self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 
     def end_meeting(self) -> None:
-        try:
-            meeting_folder = self.storage.end_meeting()
-        except ValueError as error:
-            self.status_label.setText(str(error))
+        if self.pipeline_running:
+            self.status_label.setText("Завершение встречи уже выполняется.")
             return
+        if not self.storage.meeting_active:
+            self.status_label.setText("Нет активной встречи для завершения.")
+            return
+        self.pipeline_running = True
+        self.pipeline_completed = False
+        self._set_pipeline_step("meeting", "Готово", "Созвон завершается.", "ok")
+        self._set_pipeline_step("recording", "Выполняется", "Останавливаем OBS запись.", "active")
+        self._set_pipeline_step("audio", "Ожидает", "Ждет остановку записи.", "wait")
+        self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
+        self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
+        self._set_pipeline_step("done", "Ожидает", "Pipeline выполняется.", "wait")
+        self.status_label.setText("Завершение встречи запущено в фоне. Окно не зависло.")
+        self.refresh_buttons()
+
+        self.pipeline_thread = QThread(self)
+        self.pipeline_worker = MeetingPipelineWorker(self.storage)
+        self.pipeline_worker.moveToThread(self.pipeline_thread)
+        self.pipeline_thread.started.connect(self.pipeline_worker.run)
+        self.pipeline_worker.progress.connect(self._on_pipeline_progress)
+        self.pipeline_worker.finished.connect(self._on_pipeline_finished)
+        self.pipeline_worker.failed.connect(self._on_pipeline_failed)
+        self.pipeline_worker.finished.connect(self.pipeline_thread.quit)
+        self.pipeline_worker.failed.connect(self.pipeline_thread.quit)
+        self.pipeline_thread.finished.connect(self.pipeline_worker.deleteLater)
+        self.pipeline_thread.finished.connect(self.pipeline_thread.deleteLater)
+        self.pipeline_thread.finished.connect(self._clear_pipeline_worker)
+        self.pipeline_thread.start()
+
+    def check_readiness(self) -> None:
+        statuses = check_readiness(self.config, self.recorder, self.storage.root)
+        messages = []
+        for status in statuses:
+            component = status["component"]
+            label = self.readiness_labels.get(component)
+            if label is None:
+                continue
+            state = status["state"]
+            label.setText(self._readiness_state_text(state, status["message"]))
+            self._apply_status_style(label, state)
+            messages.append(status["message"])
+        self.obs_status_value.setText(self.recorder.status_text)
+        self.status_label.setText("Проверка готовности завершена. " + " ".join(messages))
+
+    def _on_pipeline_progress(self, event: str, message: str) -> None:
+        mapping = {
+            "meeting_ending": ("meeting", "Выполняется", "Завершаем созвон.", "active"),
+            "recording_stopping": ("recording", "Выполняется", message, "active"),
+            "recording_done": ("recording", "Готово", message or "OBS запись остановлена.", "ok"),
+            "recording_skipped": ("recording", "Пропущено", message, "skip"),
+            "audio_running": ("audio", "Выполняется", message, "active"),
+            "audio_done": ("audio", None, message, None),
+            "transcription_running": ("transcription", "Выполняется", message, "active"),
+            "transcription_done": ("transcription", None, message, None),
+            "summary_running": ("summary", "Выполняется", message, "active"),
+            "summary_done": ("summary", None, message, None),
+            "meeting_done": ("done", "Готово", message, "ok"),
+        }
+        item = mapping.get(event)
+        if item is None:
+            self.status_label.setText(message)
+            return
+        step, label, default_message, state = item
+        if label is None or state is None:
+            metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
+            label, state = self._step_status_from_metadata(step, metadata)
+        self._set_pipeline_step(step, label, default_message, state)
+        self.status_label.setText(default_message)
+
+    def _on_pipeline_finished(self, meeting_folder_text: str) -> None:
+        meeting_folder = Path(meeting_folder_text)
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        self._refresh_pipeline_from_metadata(metadata)
         message = f"Встреча завершена: {meeting_folder.name}"
-        if self.storage.last_recorder_message:
-            message = f"{message} {self.storage.last_recorder_message}"
-        if self.storage.last_audio_message:
-            message = f"{message} {self.storage.last_audio_message}"
-        if self.storage.last_transcription_message:
-            message = f"{message} {self.storage.last_transcription_message}"
-        if self.storage.last_summary_message:
-            message = f"{message} {self.storage.last_summary_message}"
+        for extra in [
+            self.storage.last_recorder_message,
+            self.storage.last_audio_message,
+            self.storage.last_transcription_message,
+            self.storage.last_summary_message,
+        ]:
+            if extra:
+                message = f"{message} {extra}"
         self.status_label.setText(message)
+        self.pipeline_running = False
+        self.pipeline_completed = True
         self._refresh_after_lifecycle_change()
+
+    def _on_pipeline_failed(self, message: str) -> None:
+        self.pipeline_running = False
+        self._set_pipeline_step("done", "Ошибка", message, "error")
+        self.status_label.setText(f"Завершение встречи не выполнено: {message}")
+        self.refresh_buttons()
+
+    def _clear_pipeline_worker(self) -> None:
+        self.pipeline_thread = None
+        self.pipeline_worker = None
+
+    def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
+        widget = self.pipeline_labels[step]
+        widget.setText(f"{label}: {message}")
+        self._apply_status_style(widget, state)
+
+    def _refresh_pipeline_from_metadata(self, metadata: dict[str, object]) -> None:
+        self._set_pipeline_step("meeting", "Готово", "Созвон завершен.", "ok")
+        for step in ["recording", "audio", "transcription", "summary"]:
+            label, state = self._step_status_from_metadata(step, metadata)
+            self._set_pipeline_step(step, label, self._step_message(step, metadata), state)
+        self._set_pipeline_step("done", "Готово", "Metadata обновлена.", "ok")
+
+    def _step_status_from_metadata(
+        self,
+        step: str,
+        metadata: dict[str, object],
+    ) -> tuple[str, str]:
+        status = str(metadata.get(f"{step}_status") or "")
+        if step == "recording":
+            status = str(metadata.get("recording_status") or "")
+            if status in {"stopped", "disabled"}:
+                return ("Готово" if status == "stopped" else "Пропущено", "ok" if status == "stopped" else "skip")
+            if status.endswith("failed"):
+                return "Ошибка", "error"
+            return "Ожидает", "wait"
+        if step == "audio":
+            if status == "extracted":
+                return "Готово", "ok"
+            if status == "skipped":
+                return "Пропущено", "skip"
+            if status:
+                return "Ошибка", "error"
+        if step == "transcription":
+            if status == "completed":
+                return "Готово", "ok"
+            if status == "skipped":
+                return "Пропущено", "skip"
+            if status:
+                return "Ошибка", "error"
+        if step == "summary":
+            if status == "draft_created":
+                return "Готово", "ok"
+            if status in {"disabled", "skipped"}:
+                return "Пропущено", "skip"
+            if status:
+                return "Ошибка", "error"
+        return "Ожидает", "wait"
+
+    def _step_message(self, step: str, metadata: dict[str, object]) -> str:
+        if step == "recording":
+            return str(metadata.get("recording_note") or metadata.get("recording_path") or "OBS запись обработана.")
+        if step == "audio":
+            return str(metadata.get("audio_error") or metadata.get("audio_path") or "Аудио обработано.")
+        if step == "transcription":
+            return str(
+                metadata.get("transcription_error")
+                or metadata.get("transcript_path")
+                or "Транскрипция обработана."
+            )
+        if step == "summary":
+            return str(metadata.get("summary_error") or metadata.get("summary_path") or "Итоги обработаны.")
+        return ""
+
+    @staticmethod
+    def _readiness_state_text(state: str, message: str) -> str:
+        prefix = {
+            "ok": "Готово",
+            "active": "Выполняется",
+            "wait": "Ожидает",
+            "skip": "Пропущено",
+            "skipped": "Пропущено",
+            "error": "Ошибка",
+        }.get(state, "Статус")
+        return f"{prefix}: {message}"
+
+    @staticmethod
+    def _apply_status_style(label: QLabel, state: str) -> None:
+        colors = {
+            "ok": ("#dcfce7", "#166534"),
+            "active": ("#dbeafe", "#1d4ed8"),
+            "wait": ("#f3f4f6", "#4b5563"),
+            "skip": ("#f5f5f5", "#525252"),
+            "skipped": ("#f5f5f5", "#525252"),
+            "error": ("#fee2e2", "#991b1b"),
+        }
+        background, color = colors.get(state, colors["wait"])
+        label.setStyleSheet(
+            f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
+        )
 
     def check_obs(self) -> None:
         try:
             message = self.recorder.check_connection()
         except RecorderError as error:
-            message = str(error)
+            self.status_label.setText(str(error))
+            return
         self.obs_status_value.setText(self.recorder.status_text)
         self.status_label.setText(message)
 
@@ -370,6 +628,9 @@ class MainWindow(QMainWindow):
         return Path(current.data(Qt.ItemDataRole.UserRole))
 
     def _startup_status(self) -> str:
+        warnings = self.config.get("_warnings") or []
+        if warnings:
+            return " ".join(str(warning) for warning in warnings)
         if self.storage.meeting_active:
             return f"Восстановлена активная встреча: {self.storage.active_meeting_folder.name}"
         if self.storage.workday_active:
@@ -383,15 +644,22 @@ class MainWindow(QMainWindow):
             self.refresh_review()
 
     def refresh_buttons(self) -> None:
-        self.start_workday_button.setEnabled(not self.storage.workday_active)
+        self.check_readiness_button.setEnabled(not self.pipeline_running)
+        self.start_workday_button.setEnabled(
+            not self.pipeline_running and not self.storage.workday_active
+        )
         self.start_meeting_button.setEnabled(
-            self.storage.workday_active and not self.storage.meeting_active
+            not self.pipeline_running and self.storage.workday_active and not self.storage.meeting_active
         )
-        self.end_meeting_button.setEnabled(self.storage.meeting_active)
+        self.end_meeting_button.setEnabled(self.storage.meeting_active and not self.pipeline_running)
         self.end_workday_button.setEnabled(
-            self.storage.workday_active and not self.storage.meeting_active
+            not self.pipeline_running
+            and self.storage.workday_active
+            and not self.storage.meeting_active
         )
-        self.open_day_folder_button.setEnabled(self.storage.get_today_day_folder() is not None)
+        self.open_day_folder_button.setEnabled(
+            not self.pipeline_running and self.storage.get_today_day_folder() is not None
+        )
         self._refresh_review_buttons()
 
     def refresh_status(self) -> None:
@@ -403,13 +671,24 @@ class MainWindow(QMainWindow):
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
         self.obs_status_value.setText(self.recorder.status_text)
+        if not self.storage.meeting_active and not self.pipeline_running and not self.pipeline_completed:
+            self._set_pipeline_step("meeting", "Ожидает", "Созвон не начат.", "wait")
+            self._set_pipeline_step("recording", "Ожидает", "Созвон не начат.", "wait")
+            self._set_pipeline_step("audio", "Ожидает", "Созвон не начат.", "wait")
+            self._set_pipeline_step("transcription", "Ожидает", "Созвон не начат.", "wait")
+            self._set_pipeline_step("summary", "Ожидает", "Созвон не начат.", "wait")
+            self._set_pipeline_step("done", "Ожидает", "Созвон не начат.", "wait")
 
     def _refresh_review_buttons(self) -> None:
         has_day_folder = self.storage.get_today_day_folder() is not None
         has_selected_meeting = self._selected_meeting_folder() is not None
-        self.review_open_folder_button.setEnabled(has_day_folder)
-        self.save_drafts_button.setEnabled(has_day_folder and has_selected_meeting)
-        self.save_final_files_button.setEnabled(has_day_folder and has_selected_meeting)
+        self.review_open_folder_button.setEnabled(has_day_folder and not self.pipeline_running)
+        self.save_drafts_button.setEnabled(
+            has_day_folder and has_selected_meeting and not self.pipeline_running
+        )
+        self.save_final_files_button.setEnabled(
+            has_day_folder and has_selected_meeting and not self.pipeline_running
+        )
 
     def _clear_review_editors(self) -> None:
         self.meeting_summary_editor.clear()

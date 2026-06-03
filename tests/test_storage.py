@@ -337,6 +337,38 @@ def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) ->
     assert "Обсудили план" in (meeting_folder / "summary_draft.md").read_text(encoding="utf-8")
 
 
+def test_end_meeting_pipeline_emits_progress_events(tmp_path) -> None:
+    class FakeRecorder:
+        enabled = False
+        status_text = "OBS: выключен в настройках"
+
+        def check_connection(self):
+            return self.status_text
+
+        def start_recording(self, meeting_folder):
+            del meeting_folder
+            return RecorderResult({"recording_status": "disabled"}, "OBS выключен.")
+
+        def stop_recording(self):
+            return RecorderResult({"recording_status": "disabled"}, "OBS выключен.")
+
+    storage = StorageService(tmp_path, recorder=FakeRecorder())
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    storage.start_meeting("Pipeline", datetime(2026, 6, 1, 9, 0))
+    events = []
+
+    storage.end_meeting_pipeline(
+        datetime(2026, 6, 1, 9, 30),
+        progress_callback=lambda event, message: events.append(event),
+    )
+
+    assert "meeting_ending" in events
+    assert "audio_running" in events
+    assert "transcription_running" in events
+    assert "summary_running" in events
+    assert events[-1] == "meeting_done"
+
+
 def test_list_today_meeting_folders(tmp_path) -> None:
     storage = StorageService(tmp_path)
     storage.start_workday(datetime(2026, 6, 1, 8, 30))

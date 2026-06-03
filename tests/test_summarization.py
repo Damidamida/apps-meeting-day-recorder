@@ -9,6 +9,7 @@ from app.services.summarization import (
     load_api_key,
     read_transcript_text,
     split_text,
+    transcript_readiness,
 )
 
 
@@ -79,8 +80,37 @@ def test_not_ready_transcript_is_skipped(tmp_path: Path, monkeypatch) -> None:
 
     assert metadata == {
         "summary_status": "skipped",
-        "summary_error": "Транскрипт еще не готов.",
+        "summary_error": "Транскрипт не готов.",
     }
+
+
+def test_empty_completed_transcript_is_skipped_without_calling_openai(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    (tmp_path / "transcript.json").write_text(
+        json.dumps({"status": "completed", "text": "", "segments": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / "transcript.md").write_text(
+        "# Транскрипт\n\n_Источник: локальная транскрипция Whisper._\n",
+        encoding="utf-8",
+    )
+
+    def forbidden_client(**kwargs):
+        raise AssertionError("OpenAI client should not be created for empty transcript")
+
+    metadata = OpenAISummarizer(_summary_config(), client_factory=forbidden_client).summarize_meeting(
+        tmp_path,
+        {"transcription_status": "completed"},
+    )
+
+    assert metadata == {
+        "summary_status": "skipped",
+        "summary_error": "Транскрипт пустой. Итоги не будут отправлены во внешний сервис.",
+    }
+    assert read_transcript_text(tmp_path) is None
 
 
 def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -201,6 +231,32 @@ def test_read_transcript_prefers_completed_json_segments(tmp_path: Path) -> None
     )
 
     assert read_transcript_text(tmp_path) == "Первый сегмент\nВторой сегмент"
+
+
+def test_transcript_readiness_reports_missing_placeholder_empty_and_ready(tmp_path: Path) -> None:
+    assert transcript_readiness(tmp_path)["status"] == "missing"
+
+    (tmp_path / "transcript.json").write_text(
+        json.dumps({"status": "placeholder", "segments": []}),
+        encoding="utf-8",
+    )
+    assert transcript_readiness(tmp_path)["status"] == "placeholder"
+
+    (tmp_path / "transcript.json").write_text(
+        json.dumps({"status": "completed", "text": "", "segments": []}),
+        encoding="utf-8",
+    )
+    assert transcript_readiness(tmp_path)["status"] == "empty"
+
+    (tmp_path / "transcript.json").write_text(
+        json.dumps({"status": "completed", "text": "Готовый текст", "segments": []}),
+        encoding="utf-8",
+    )
+    assert transcript_readiness(tmp_path) == {
+        "status": "ready",
+        "message": "Транскрипция завершена.",
+        "text": "Готовый текст",
+    }
 
 
 def test_split_text_handles_long_line() -> None:
