@@ -123,6 +123,7 @@ Codex не имеет права самостоятельно переводит
 - отправка в OpenAI только текста `transcript.md` / `transcript.json`, без аудио и видео;
 - безопасные статусы summary `disabled`, `skipped`, `openai_unavailable`, `failed`, `draft_created`;
 - разбиение длинного transcript на chunks для обработки одной длинной встречи;
+- суммирование `summary_usage` по всем chunk-запросам и финальному summary-запросу для длинных transcript;
 - тесты.
 
 ## 9. Текущий статус
@@ -135,9 +136,10 @@ Codex не имеет права самостоятельно переводит
 
 При ручной проверке полного сценария с ProxyAPI обнаружено, что приложение, запущенное через launcher, не видело локальный `whisper.exe` из `.venv\Scripts`. Технический fix в текущей ветке добавляет `.venv\Scripts` в `PATH` до запуска приложения, чтобы локальный Whisper CLI находился автоматически.
 
+По результатам ревью кода устранен технический дефект учета usage: для длинных transcript с chunking metadata теперь должна отражать суммарные `input_tokens` и `output_tokens` всех запросов, а не только финального запроса.
+
 Последняя проверка:
 
-- `cmd /c "set PATH=%CD%\.venv\Scripts;%PATH%&& where whisper"`: найден локальный `.venv\Scripts\whisper.exe`.
 - `.venv\Scripts\python.exe -m pytest`: `51 passed`.
 - `.venv\Scripts\python.exe -m compileall -q app`: успешно.
 
@@ -163,6 +165,7 @@ Codex не имеет права самостоятельно переводит
 - `app/services/summarization.py` — слой генерации итогов встречи через безопасный `Summarizer` и OpenAI backend.
 - `tests/test_storage.py` — тесты локального хранения.
 - `tests/test_launcher.py` — тест launcher для поиска локальных CLI-инструментов из `.venv\Scripts`.
+- `tests/test_summarization.py` — тесты генерации итогов, включая суммирование usage при chunking.
 
 ## 12. Структура локальных данных
 
@@ -234,3 +237,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #16, ветка `codex/openai-summary-generation`: этап 7 Summary generation реализован и переведен в статус `На проверке`. Добавлен слой summary generation, OpenAI backend для подготовки `summary_draft.md` одной встречи из готового текстового transcript, безопасная загрузка API key из переменной окружения или внешнего `.env.local`, статусы ошибок без сбоя lifecycle и chunking для длинного transcript. В OpenAI отправляется только текст transcript, не аудио и не видео. Summary по умолчанию выключен и включается через локальный `config.yaml`. Этап 8 не начинался. Ручная сервисная проверка с прямым OpenAI API не завершилась из-за отсутствия доступной оплаты/валидного ключа. Unit/lifecycle проверки выполнены с mock OpenAI без реальных API-запросов. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.
 - PR #17, ветка `codex/proxyapi-summary-generation`: добавлена поддержка ProxyAPI для этапа 7 через настройку `summary.base_url` и OpenAI-совместимый endpoint `https://api.proxyapi.ru/openai/v1`. Обновлены README, `config.yaml.example`, PROJECT_STATE и тесты передачи `base_url` в OpenAI client. В ProxyAPI/OpenAI отправляется только текст transcript, не аудио и не видео. Реальная проверка ProxyAPI требует локального ProxyAPI-ключа. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `python -m pip install -e ".[dev]"` — успешно; `python -m pytest` — `50 passed`; `python -m compileall -q app` — успешно.
 - PR #18, ветка `codex/fix-launcher-whisper-path`: launcher дополнен добавлением `.venv\Scripts` в `PATH`, чтобы приложение находило локальный optional Whisper CLI при запуске двойным кликом. Добавлен тест launcher. Логика OBS, FFmpeg, Whisper pipeline, ProxyAPI/OpenAI и summary generation не менялась. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `cmd /c "set PATH=%CD%\.venv\Scripts;%PATH%&& where whisper"` — найден локальный `.venv\Scripts\whisper.exe`; `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- Ветка `codex/fix-summary-usage-aggregation`: исправлен учет `summary_usage` при chunking длинных transcript. Теперь `input_tokens` и `output_tokens` суммируются по промежуточным chunk-запросам и финальному summary-запросу. Добавлен тест на агрегацию usage. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
