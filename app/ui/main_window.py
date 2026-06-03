@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
-        self.pipeline_step_rows: dict[str, QWidget] = {}
+        self.pipeline_step_titles: dict[str, QLabel] = {}
         self._apply_app_style()
 
         self.pages = QStackedWidget()
@@ -284,7 +284,6 @@ class MainWindow(QMainWindow):
             QLabel#pipelineStepTitle {
                 color: #3a1408;
                 font-weight: 800;
-                min-width: 145px;
             }
             QPushButton {
                 background: #fffdf8;
@@ -348,30 +347,19 @@ class MainWindow(QMainWindow):
         card.setLayout(layout)
         return card
 
-    def _create_pipeline_step(self, key: str, title: str) -> QWidget:
-        row = QWidget()
-        row.setObjectName("pipelineStep")
-        row_layout = QHBoxLayout()
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(12)
-
+    def _create_pipeline_step_labels(self, key: str, title: str) -> tuple[QLabel, QLabel]:
         title_label = QLabel(title)
         title_label.setObjectName("pipelineStepTitle")
         status_label = QLabel()
         status_label.setObjectName("pipelineStatus")
         status_label.setWordWrap(False)
-        status_label.setMinimumHeight(20)
+        status_label.setMinimumHeight(28)
         status_label.setMinimumWidth(420)
         status_label.setMaximumWidth(900)
 
-        row_layout.addWidget(title_label)
-        row_layout.addWidget(status_label)
-        row_layout.addStretch()
-        row.setLayout(row_layout)
-
+        self.pipeline_step_titles[key] = title_label
         self.pipeline_labels[key] = status_label
-        self.pipeline_step_rows[key] = row
-        return row
+        return title_label, status_label
 
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
@@ -453,14 +441,15 @@ class MainWindow(QMainWindow):
         meetings_layout.addWidget(self.today_meetings_value)
         layout.addWidget(self._create_card("Встречи за день", meetings_layout))
 
-        pipeline_layout = QVBoxLayout()
-        pipeline_layout.setSpacing(8)
+        pipeline_layout = QFormLayout()
+        pipeline_layout.setHorizontalSpacing(18)
+        pipeline_layout.setVerticalSpacing(8)
         pipeline_hint = QLabel(
             "Показывает локальную обработку последней завершенной встречи: запись, аудио, transcript и итоги."
         )
         pipeline_hint.setObjectName("sectionHint")
         pipeline_hint.setWordWrap(True)
-        pipeline_layout.addWidget(pipeline_hint)
+        pipeline_layout.addRow(pipeline_hint)
         for key, title in [
             ("meeting", "Созвон"),
             ("recording", "OBS запись"),
@@ -469,7 +458,8 @@ class MainWindow(QMainWindow):
             ("summary", "Генерация итогов"),
             ("done", "Готово"),
         ]:
-            pipeline_layout.addWidget(self._create_pipeline_step(key, title))
+            title_label, status_label = self._create_pipeline_step_labels(key, title)
+            pipeline_layout.addRow(title_label, status_label)
         layout.addWidget(self._create_card("Pipeline встречи", pipeline_layout))
 
         actions_layout = QHBoxLayout()

@@ -88,7 +88,7 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
-    assert set(window.pipeline_step_rows) == {
+    assert set(window.pipeline_step_titles) == {
         "meeting",
         "recording",
         "audio",
@@ -100,9 +100,9 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     window._set_pipeline_step("audio", "Выполняется", "Тестовая обработка audio.wav.", "active")
 
     assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
-    assert window.pipeline_step_rows["audio"].layout().count() == 3
     assert window.pipeline_labels["audio"].maximumWidth() == 900
     assert window.pipeline_labels["audio"].minimumWidth() == 420
+    assert window.pipeline_labels["audio"].minimumHeight() == 28
     assert not window.pipeline_labels["audio"].wordWrap()
 
     window.close()
