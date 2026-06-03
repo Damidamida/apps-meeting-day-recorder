@@ -281,11 +281,6 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
-            QWidget#pipelineStep {
-                background: #fffaf3;
-                border: 1px solid #ead8c6;
-                border-radius: 8px;
-            }
             QLabel#pipelineStepTitle {
                 color: #3a1408;
                 font-weight: 800;
@@ -357,7 +352,7 @@ class MainWindow(QMainWindow):
         row = QWidget()
         row.setObjectName("pipelineStep")
         row_layout = QHBoxLayout()
-        row_layout.setContentsMargins(12, 8, 12, 8)
+        row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(12)
 
         title_label = QLabel(title)

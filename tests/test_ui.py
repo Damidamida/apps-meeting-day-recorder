@@ -100,7 +100,7 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     window._set_pipeline_step("audio", "Выполняется", "Тестовая обработка audio.wav.", "active")
 
     assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
-    assert window.pipeline_step_rows["audio"].objectName() == "pipelineStep"
+    assert window.pipeline_step_rows["audio"].layout().count() == 2
 
     window.close()
     app.processEvents()
