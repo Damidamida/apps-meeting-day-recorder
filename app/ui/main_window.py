@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
                 font-weight: 800;
             }
             QWidget#readinessTile {
-                background: #fffaf3;
+                background: #fffdf8;
                 border: 1px solid #ead8c6;
                 border-radius: 8px;
             }
@@ -383,6 +383,44 @@ class MainWindow(QMainWindow):
         card.setLayout(layout)
         return card
 
+    def _create_readiness_card(self, body_layout: QVBoxLayout) -> QWidget:
+        card = QWidget()
+        card.setObjectName("card")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(12)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        title_label = QLabel("Готовность системы")
+        title_label.setObjectName("cardTitle")
+        self.check_readiness_button = self._add_button(
+            header_layout,
+            "Проверить готовность",
+            self.check_readiness,
+            "primaryButton",
+        )
+        self.toggle_readiness_button = self._add_button(
+            header_layout,
+            "Свернуть",
+            self._toggle_readiness_card,
+        )
+        header_layout.insertWidget(0, title_label)
+        header_layout.insertStretch(1)
+
+        self.readiness_body = QWidget()
+        self.readiness_body.setLayout(body_layout)
+
+        layout.addLayout(header_layout)
+        layout.addWidget(self.readiness_body)
+        card.setLayout(layout)
+        return card
+
+    def _toggle_readiness_card(self) -> None:
+        is_collapsed = self.readiness_body.isHidden()
+        self.readiness_body.setVisible(is_collapsed)
+        self.toggle_readiness_button.setText("Свернуть" if is_collapsed else "Развернуть")
+
     def _create_pipeline_step_labels(self, key: str, title: str) -> tuple[QLabel, QLabel]:
         title_label = QLabel(title)
         title_label.setObjectName("pipelineStepTitle")
@@ -416,7 +454,7 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(badge_label)
 
         message_label = QLabel("Нажмите «Проверить готовность».")
-        message_label.setObjectName("sectionHint")
+        message_label.setObjectName("readinessMessage")
         message_label.setWordWrap(True)
 
         self.readiness_badges[component] = badge_label
@@ -457,16 +495,15 @@ class MainWindow(QMainWindow):
             "Summary",
             "API key",
             "Summary endpoint",
-            "Папка данных",
         ]
-        for row_components in [readiness_rows[:3], readiness_rows[3:6], readiness_rows[6:]]:
+        for row_components in [readiness_rows[:3], readiness_rows[3:6]]:
             row_layout = QHBoxLayout()
             row_layout.setSpacing(10)
             for component in row_components:
                 row_layout.addWidget(self._create_readiness_tile(component), 1)
             row_layout.addStretch()
             readiness_layout.addLayout(row_layout)
-        layout.addWidget(self._create_card("Готовность системы", readiness_layout))
+        layout.addWidget(self._create_readiness_card(readiness_layout))
 
         status_layout = QFormLayout()
         status_layout.setHorizontalSpacing(18)
@@ -530,9 +567,6 @@ class MainWindow(QMainWindow):
 
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(8)
-        self.check_readiness_button = self._add_button(
-            actions_layout, "Проверить готовность", self.check_readiness
-        )
         self.start_workday_button = self._add_button(
             actions_layout, "Начать рабочий день", self.start_workday, "primaryButton"
         )
@@ -941,6 +975,9 @@ class MainWindow(QMainWindow):
             label.setStyleSheet(
                 f"padding: 0; background: transparent; color: {color};"
             )
+            return
+        if label.objectName() == "readinessMessage":
+            label.setStyleSheet("padding: 0; background: transparent; color: #8a6a58;")
             return
         label.setStyleSheet(
             f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"

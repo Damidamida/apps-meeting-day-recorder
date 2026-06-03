@@ -95,9 +95,17 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
         "Summary",
         "API key",
         "Summary endpoint",
-        "Папка данных",
     }
     assert window.readiness_badges["OBS"].text() == "Не проверено"
+    assert window.check_readiness_button.text() == "Проверить готовность"
+    assert window.check_readiness_button.objectName() == "primaryButton"
+    assert window.toggle_readiness_button.text() == "Свернуть"
+    assert not window.readiness_body.isHidden()
+
+    window.toggle_readiness_button.click()
+
+    assert window.readiness_body.isHidden()
+    assert window.toggle_readiness_button.text() == "Развернуть"
     assert window.start_workday_button.objectName() == "primaryButton"
     assert window.start_meeting_button.objectName() == "primaryButton"
     assert window.end_meeting_button.objectName() == "dangerButton"
