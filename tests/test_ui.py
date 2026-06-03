@@ -111,3 +111,36 @@ def test_end_meeting_starts_background_pipeline_and_disables_lifecycle_buttons(
     assert not window.pipeline_running
     window.close()
     app.processEvents()
+
+
+def test_late_pipeline_progress_uses_saved_meeting_folder(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder()
+    meeting_folder = day_folder / "12-00_Test"
+    meeting_folder.mkdir()
+    storage.write_metadata(
+        meeting_folder,
+        {
+            "title": "Test",
+            "started_at": datetime.now().isoformat(),
+            "status": "ended",
+            "recording_status": "disabled",
+            "audio_status": "extracted",
+            "transcription_status": "completed",
+            "summary_status": "completed",
+        },
+    )
+    storage.active_day_folder = day_folder
+    storage.active_meeting_folder = meeting_folder
+    window = MainWindow(storage, recorder)
+    window.pipeline_meeting_folder = meeting_folder
+
+    storage.active_meeting_folder = None
+    window._on_pipeline_progress("audio_done", "Поздний сигнал audio_done.")
+
+    assert "Готово" in window.pipeline_labels["audio"].text()
+
+    window.close()
+    app.processEvents()

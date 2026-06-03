@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self.config = load_config()
         self.pipeline_running = False
         self.pipeline_completed = False
+        self.pipeline_meeting_folder: Path | None = None
         self.pipeline_thread: QThread | None = None
         self.pipeline_worker: MeetingPipelineWorker | None = None
         self.recorder = recorder or (
@@ -330,6 +331,7 @@ class MainWindow(QMainWindow):
         if not self.storage.meeting_active:
             self.status_label.setText("Нет активной встречи для завершения.")
             return
+        self.pipeline_meeting_folder = self.storage.active_meeting_folder
         self.pipeline_running = True
         self.pipeline_completed = False
         self._set_pipeline_step("meeting", "Готово", "Созвон завершается.", "ok")
@@ -390,13 +392,13 @@ class MainWindow(QMainWindow):
             return
         step, label, default_message, state = item
         if label is None or state is None:
-            metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
+            metadata = self._read_pipeline_metadata()
             label, state = self._step_status_from_metadata(step, metadata)
         self._set_pipeline_step(step, label, default_message, state)
         self.status_label.setText(default_message)
 
     def _on_pipeline_finished(self, meeting_folder_text: str) -> None:
-        meeting_folder = Path(meeting_folder_text)
+        meeting_folder = self.pipeline_meeting_folder or Path(meeting_folder_text)
         metadata = self.storage.read_meeting_metadata(meeting_folder)
         self._refresh_pipeline_from_metadata(metadata)
         message = f"Встреча завершена: {meeting_folder.name}"
@@ -411,10 +413,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText(message)
         self.pipeline_running = False
         self.pipeline_completed = True
+        self.pipeline_meeting_folder = None
         self._refresh_after_lifecycle_change()
 
     def _on_pipeline_failed(self, message: str) -> None:
         self.pipeline_running = False
+        self.pipeline_meeting_folder = None
         self._set_pipeline_step("done", "Ошибка", message, "error")
         self.status_label.setText(f"Завершение встречи не выполнено: {message}")
         self.refresh_buttons()
@@ -427,6 +431,11 @@ class MainWindow(QMainWindow):
         widget = self.pipeline_labels[step]
         widget.setText(f"{label}: {message}")
         self._apply_status_style(widget, state)
+
+    def _read_pipeline_metadata(self) -> dict[str, object]:
+        if self.pipeline_meeting_folder is None:
+            return {}
+        return self.storage.read_meeting_metadata(self.pipeline_meeting_folder)
 
     def _refresh_pipeline_from_metadata(self, metadata: dict[str, object]) -> None:
         self._set_pipeline_step("meeting", "Готово", "Созвон завершен.", "ok")
