@@ -6,7 +6,6 @@ from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -263,22 +262,15 @@ class MainWindow(QMainWindow):
                 border-radius: 8px;
                 padding: 18px;
             }
-            QGroupBox {
+            QWidget#card {
                 background: #fffdf8;
-                color: #3a1408;
                 border: 1px solid #ead8c6;
                 border-radius: 8px;
-                margin-top: 20px;
-                padding: 24px 14px 14px 14px;
-                font-weight: 800;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 12px;
-                top: 5px;
-                padding: 0 6px;
-                background: #f6efe6;
+            QLabel#cardTitle {
+                color: #3a1408;
+                font-size: 14px;
+                font-weight: 800;
             }
             QPushButton {
                 background: #fffdf8;
@@ -326,6 +318,22 @@ class MainWindow(QMainWindow):
             """
         )
 
+    @staticmethod
+    def _create_card(title: str, body_layout) -> QWidget:
+        card = QWidget()
+        card.setObjectName("card")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 14, 18, 16)
+        layout.setSpacing(12)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        layout.addWidget(title_label)
+        layout.addLayout(body_layout)
+
+        card.setLayout(layout)
+        return card
+
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
             event.ignore()
@@ -348,8 +356,9 @@ class MainWindow(QMainWindow):
             )
         )
 
-        status_group = QGroupBox("Состояние дня")
         status_layout = QFormLayout()
+        status_layout.setHorizontalSpacing(18)
+        status_layout.setVerticalSpacing(8)
         self.workday_status_value = QLabel()
         self.meeting_status_value = QLabel()
         self.day_folder_value = QLabel()
@@ -360,11 +369,11 @@ class MainWindow(QMainWindow):
         status_layout.addRow("Папка дня:", self.day_folder_value)
         status_layout.addRow("Активная встреча:", self.active_meeting_value)
         status_layout.addRow("Статус OBS:", self.obs_status_value)
-        status_group.setLayout(status_layout)
-        layout.addWidget(status_group)
+        layout.addWidget(self._create_card("Состояние дня", status_layout))
 
-        readiness_group = QGroupBox("Готовность системы")
         readiness_layout = QFormLayout()
+        readiness_layout.setHorizontalSpacing(18)
+        readiness_layout.setVerticalSpacing(8)
         for component in [
             "OBS",
             "FFmpeg",
@@ -379,11 +388,11 @@ class MainWindow(QMainWindow):
             self._apply_status_style(label, "wait")
             self.readiness_labels[component] = label
             readiness_layout.addRow(f"{component}:", label)
-        readiness_group.setLayout(readiness_layout)
-        layout.addWidget(readiness_group)
+        layout.addWidget(self._create_card("Готовность системы", readiness_layout))
 
-        pipeline_group = QGroupBox("Pipeline встречи")
         pipeline_layout = QFormLayout()
+        pipeline_layout.setHorizontalSpacing(18)
+        pipeline_layout.setVerticalSpacing(8)
         for key, title in [
             ("meeting", "Созвон"),
             ("recording", "OBS запись"),
@@ -396,11 +405,10 @@ class MainWindow(QMainWindow):
             label.setWordWrap(True)
             self.pipeline_labels[key] = label
             pipeline_layout.addRow(f"{title}:", label)
-        pipeline_group.setLayout(pipeline_layout)
-        layout.addWidget(pipeline_group)
+        layout.addWidget(self._create_card("Pipeline встречи", pipeline_layout))
 
-        actions_group = QGroupBox("Действия")
-        actions_layout = QVBoxLayout()
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(8)
         self.check_readiness_button = self._add_button(
             actions_layout, "Проверить готовность", self.check_readiness
         )
@@ -420,8 +428,8 @@ class MainWindow(QMainWindow):
             actions_layout, "Открыть папку дня", self.open_day_folder
         )
         self._add_button(actions_layout, "Проверить OBS", self.check_obs)
-        actions_group.setLayout(actions_layout)
-        layout.addWidget(actions_group)
+        actions_layout.addStretch()
+        layout.addWidget(self._create_card("Действия", actions_layout))
 
         self.status_label = QLabel(self._startup_status())
         self.status_label.setWordWrap(True)
@@ -445,12 +453,11 @@ class MainWindow(QMainWindow):
         )
 
         content_layout = QHBoxLayout()
-        meetings_group = QGroupBox("Встречи за сегодня")
         meetings_layout = QVBoxLayout()
         self.meeting_list = QListWidget()
         self.meeting_list.currentItemChanged.connect(self.load_selected_meeting)
         meetings_layout.addWidget(self.meeting_list)
-        meetings_group.setLayout(meetings_layout)
+        meetings_group = self._create_card("Встречи за сегодня", meetings_layout)
         meetings_group.setMinimumWidth(260)
         content_layout.addWidget(meetings_group)
 
@@ -777,6 +784,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _apply_status_style(label: QLabel, state: str) -> None:
+        label.setMinimumHeight(28)
         colors = {
             "ok": ("#dcfce7", "#166534"),
             "active": ("#dbeafe", "#1d4ed8"),
