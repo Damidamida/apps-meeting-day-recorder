@@ -24,6 +24,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
     },
+    "transcription": {
+        "backend": "whisper_cli",
+        "model": "base",
+        "language": "ru",
+        "device": "cpu",
+        "compute_type": "int8",
+        "whisper_command": "whisper",
+    },
 }
 
 
@@ -33,6 +41,7 @@ def _default_config() -> dict[str, Any]:
         "storage": dict(DEFAULT_CONFIG["storage"]),
         "obs": dict(DEFAULT_CONFIG["obs"]),
         "summary": dict(DEFAULT_CONFIG["summary"]),
+        "transcription": dict(DEFAULT_CONFIG["transcription"]),
         "_warnings": [],
     }
 
@@ -60,10 +69,15 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     storage = _section(loaded, "storage", config)
     obs = _section(loaded, "obs", config)
     summary = _section(loaded, "summary", config)
+    transcription = _section(loaded, "transcription", config)
     config.update(loaded)
     config["storage"] = {**DEFAULT_CONFIG["storage"], **storage}
     config["obs"] = _normalize_obs({**DEFAULT_CONFIG["obs"], **obs}, config)
     config["summary"] = _normalize_summary({**DEFAULT_CONFIG["summary"], **summary}, config)
+    config["transcription"] = _normalize_transcription(
+        {**DEFAULT_CONFIG["transcription"], **transcription},
+        config,
+    )
     return config
 
 
@@ -114,6 +128,34 @@ def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[
         config,
     )
     return summary
+
+
+def _normalize_transcription(
+    transcription: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    del config
+    backend = str(transcription.get("backend") or "whisper_cli").strip().lower()
+    if backend not in {"whisper_cli", "faster_whisper"}:
+        backend = "whisper_cli"
+    transcription["backend"] = backend
+    transcription["model"] = str(
+        transcription.get("model") or DEFAULT_CONFIG["transcription"]["model"]
+    ).strip()
+    transcription["language"] = str(
+        transcription.get("language") or DEFAULT_CONFIG["transcription"]["language"]
+    ).strip()
+    transcription["device"] = str(
+        transcription.get("device") or DEFAULT_CONFIG["transcription"]["device"]
+    ).strip()
+    transcription["compute_type"] = str(
+        transcription.get("compute_type") or DEFAULT_CONFIG["transcription"]["compute_type"]
+    ).strip()
+    transcription["whisper_command"] = str(
+        transcription.get("whisper_command")
+        or DEFAULT_CONFIG["transcription"]["whisper_command"]
+    ).strip()
+    return transcription
 
 
 def _safe_bool(value: Any, default: bool) -> bool:

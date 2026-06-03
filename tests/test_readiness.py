@@ -13,7 +13,19 @@ def _config(**summary_overrides):
         "env_file": "",
     }
     summary.update(summary_overrides)
-    return {"summary": summary}
+    return {
+        "summary": summary,
+        "transcription": {
+            "backend": "whisper_cli",
+            "whisper_command": "whisper",
+        },
+    }
+
+
+def _config_with_transcription(transcription):
+    config = _config()
+    config["transcription"] = transcription
+    return config
 
 
 def _by_component(statuses):
@@ -29,6 +41,41 @@ def test_readiness_reports_local_commands_found_and_missing(tmp_path: Path) -> N
 
     assert statuses["FFmpeg"]["state"] == "ok"
     assert statuses["Whisper"]["state"] == "error"
+    assert statuses["Whisper"]["message"] == "Whisper CLI не найден."
+
+
+def test_readiness_reports_faster_whisper_backend_available(tmp_path: Path) -> None:
+    with (
+        patch("app.services.readiness.shutil.which", return_value="/bin/ffmpeg"),
+        patch("app.services.readiness.importlib.util.find_spec", return_value=object()),
+    ):
+        statuses = _by_component(
+            check_readiness(
+                _config_with_transcription({"backend": "faster_whisper"}),
+                NoopRecorder(),
+                tmp_path,
+            )
+        )
+
+    assert statuses["Whisper"]["state"] == "ok"
+    assert statuses["Whisper"]["message"] == "faster-whisper доступен."
+
+
+def test_readiness_reports_faster_whisper_backend_missing(tmp_path: Path) -> None:
+    with (
+        patch("app.services.readiness.shutil.which", return_value="/bin/ffmpeg"),
+        patch("app.services.readiness.importlib.util.find_spec", return_value=None),
+    ):
+        statuses = _by_component(
+            check_readiness(
+                _config_with_transcription({"backend": "faster_whisper"}),
+                NoopRecorder(),
+                tmp_path,
+            )
+        )
+
+    assert statuses["Whisper"]["state"] == "error"
+    assert "faster-whisper не установлен" in statuses["Whisper"]["message"]
 
 
 def test_readiness_reports_summary_disabled_without_api_key(tmp_path: Path) -> None:

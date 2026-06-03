@@ -25,6 +25,7 @@ from app.services.readiness import check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
 from app.services.summarization import create_summarizer
+from app.services.transcription import create_transcriber
 
 
 class MeetingPipelineWorker(QObject):
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         self.storage = storage or StorageService(
             Path(self.config["storage"]["root"]),
             self.recorder,
+            transcriber=create_transcriber(self.config["transcription"]),
             summarizer=create_summarizer(self.config["summary"]),
         )
         self.storage.load_today_state()
