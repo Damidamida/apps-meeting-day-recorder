@@ -272,6 +272,14 @@ class MainWindow(QMainWindow):
                 font-size: 14px;
                 font-weight: 800;
             }
+            QLabel#sectionHint {
+                color: #8a6a58;
+            }
+            QLabel#heroValue {
+                color: #3a1408;
+                font-size: 18px;
+                font-weight: 800;
+            }
             QPushButton {
                 background: #fffdf8;
                 color: #3a1408;
@@ -356,21 +364,6 @@ class MainWindow(QMainWindow):
             )
         )
 
-        status_layout = QFormLayout()
-        status_layout.setHorizontalSpacing(18)
-        status_layout.setVerticalSpacing(8)
-        self.workday_status_value = QLabel()
-        self.meeting_status_value = QLabel()
-        self.day_folder_value = QLabel()
-        self.active_meeting_value = QLabel()
-        self.obs_status_value = QLabel(self.recorder.status_text)
-        status_layout.addRow("Статус рабочего дня:", self.workday_status_value)
-        status_layout.addRow("Статус встречи:", self.meeting_status_value)
-        status_layout.addRow("Папка дня:", self.day_folder_value)
-        status_layout.addRow("Активная встреча:", self.active_meeting_value)
-        status_layout.addRow("Статус OBS:", self.obs_status_value)
-        layout.addWidget(self._create_card("Состояние дня", status_layout))
-
         readiness_layout = QFormLayout()
         readiness_layout.setHorizontalSpacing(18)
         readiness_layout.setVerticalSpacing(8)
@@ -389,6 +382,45 @@ class MainWindow(QMainWindow):
             self.readiness_labels[component] = label
             readiness_layout.addRow(f"{component}:", label)
         layout.addWidget(self._create_card("Готовность системы", readiness_layout))
+
+        status_layout = QFormLayout()
+        status_layout.setHorizontalSpacing(18)
+        status_layout.setVerticalSpacing(8)
+        self.workday_status_value = QLabel()
+        self.meeting_status_value = QLabel()
+        self.day_folder_value = QLabel()
+        self.active_meeting_value = QLabel()
+        self.obs_status_value = QLabel(self.recorder.status_text)
+        status_layout.addRow("Статус рабочего дня:", self.workday_status_value)
+        status_layout.addRow("Статус встречи:", self.meeting_status_value)
+        status_layout.addRow("Папка дня:", self.day_folder_value)
+        status_layout.addRow("Активная встреча:", self.active_meeting_value)
+        status_layout.addRow("Статус OBS:", self.obs_status_value)
+
+        active_call_layout = QVBoxLayout()
+        active_call_layout.setSpacing(8)
+        self.active_call_title_value = QLabel()
+        self.active_call_title_value.setObjectName("heroValue")
+        self.active_call_detail_value = QLabel()
+        self.active_call_detail_value.setObjectName("sectionHint")
+        self.active_call_detail_value.setWordWrap(True)
+        active_call_layout.addWidget(self.active_call_title_value)
+        active_call_layout.addWidget(self.active_call_detail_value)
+        active_call_layout.addStretch()
+
+        day_overview_layout = QHBoxLayout()
+        day_overview_layout.setSpacing(14)
+        day_overview_layout.addWidget(self._create_card("Состояние дня", status_layout), 1)
+        day_overview_layout.addWidget(self._create_card("Активный созвон", active_call_layout), 1)
+        layout.addLayout(day_overview_layout)
+
+        meetings_layout = QVBoxLayout()
+        meetings_layout.setSpacing(8)
+        self.today_meetings_value = QLabel()
+        self.today_meetings_value.setObjectName("sectionHint")
+        self.today_meetings_value.setWordWrap(True)
+        meetings_layout.addWidget(self.today_meetings_value)
+        layout.addWidget(self._create_card("Встречи за день", meetings_layout))
 
         pipeline_layout = QFormLayout()
         pipeline_layout.setHorizontalSpacing(18)
@@ -956,6 +988,28 @@ class MainWindow(QMainWindow):
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
         self.obs_status_value.setText(self.recorder.status_text)
+        if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
+            self.active_call_title_value.setText(self.storage.active_meeting_folder.name)
+            self.active_call_detail_value.setText(
+                "Встреча идет сейчас. Управление записью доступно в блоке действий."
+            )
+        elif self.pipeline_running:
+            self.active_call_title_value.setText("Нет активного созвона")
+            self.active_call_detail_value.setText(
+                "Можно начать следующую встречу, пока предыдущая обрабатывается в фоне."
+            )
+        else:
+            self.active_call_title_value.setText("Нет активного созвона")
+            self.active_call_detail_value.setText(
+                "Когда рабочий день активен, нажмите «Начать встречу» в блоке действий."
+            )
+        meeting_count = len(self.storage.list_today_meeting_folders()) if day_folder else 0
+        if meeting_count == 0:
+            self.today_meetings_value.setText("За выбранный день пока нет созданных встреч.")
+        else:
+            self.today_meetings_value.setText(
+                f"Создано встреч за день: {meeting_count}. Детали доступны на экране ревью."
+            )
         if not self.storage.meeting_active and not self.pipeline_running and not self.pipeline_completed:
             self._set_pipeline_step("meeting", "Ожидает", "Созвон не начат.", "wait")
             self._set_pipeline_step("recording", "Ожидает", "Созвон не начат.", "wait")
