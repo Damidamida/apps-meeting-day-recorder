@@ -82,6 +82,30 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
     app.processEvents()
 
 
+def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert set(window.pipeline_step_rows) == {
+        "meeting",
+        "recording",
+        "audio",
+        "transcription",
+        "summary",
+        "done",
+    }
+
+    window._set_pipeline_step("audio", "Выполняется", "Тестовая обработка audio.wav.", "active")
+
+    assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
+    assert window.pipeline_step_rows["audio"].objectName() == "pipelineStep"
+
+    window.close()
+    app.processEvents()
+
+
 def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     tmp_path: Path,
 ) -> None:

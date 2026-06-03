@@ -148,16 +148,16 @@ Codex не имеет права самостоятельно переводит
 
 Для этапа 8 добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых шагов обработки встречи, неблокирующее начало следующего созвона после остановки записи, optional faster-whisper backend для локального ускорения транскрипции, безопасная config validation, защита секретов и README-инструкция ручного полного сценария.
 
-PR #25 со светлым UI-каркасом главного окна был смержен после визуальной проверки пользователем. В ветке `codex/workday-screen-layout` готовится следующая UI-доработка этапа 8: экран `Рабочий день` получает более понятную композицию с блоками `Готовность системы`, `Состояние дня`, `Активный созвон`, `Встречи за день`, `Pipeline встречи` и `Действия` без изменения OBS/FFmpeg/Whisper/Summary lifecycle. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
+PR #25 со светлым UI-каркасом главного окна был смержен после визуальной проверки пользователем. PR #26 с новой композицией экрана `Рабочий день` был смержен после визуальной проверки пользователем. В ветке `codex/pipeline-status-layout` готовится следующая UI-доработка этапа 8: блок `Pipeline встречи` получает компактные строки шагов с отдельным названием и статусом без изменения OBS/FFmpeg/Whisper/Summary lifecycle. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
 
 Последняя проверка:
 
-- `.venv\Scripts\python.exe -m pytest`: `73 passed`.
+- `.venv\Scripts\python.exe -m pytest`: `74 passed`.
 - `.venv\Scripts\python.exe -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Проверить PR с новой компоновкой экрана `Рабочий день`: открыть приложение, убедиться, что блоки `Готовность системы`, `Состояние дня`, `Активный созвон`, `Встречи за день`, `Pipeline встречи` и `Действия` читаются понятно и не мешают рабочему сценарию. Этап 9 не начинать до принятия доработок этапа 8.
+Проверить PR с новым отображением `Pipeline встречи`: открыть приложение, убедиться, что шаги pipeline читаются как отдельные строки со статусами и не мешают рабочему сценарию. Этап 9 не начинать до принятия доработок этапа 8.
 
 ## 11. Текущая структура файлов
 
@@ -259,3 +259,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #24, ветка `codex/faster-whisper-transcription`: доработка этапа 8 для ускорения локальной транскрипции. Добавлен optional backend `faster_whisper`, настройка `transcription.backend`, readiness-проверка выбранного backend, fallback на прежний `whisper_cli` по умолчанию, README-инструкция и тесты. Аудио остается локальным и не отправляется во внешние сервисы. Этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pip install -e .` — успешно после повторного последовательного запуска; `.venv\Scripts\python.exe -m pip install -e ".[dev]"` — успешно; `.venv\Scripts\python.exe -m pip install -e ".[faster-whisper]"` — успешно; `import faster_whisper` — `1.2.1`; `.venv\Scripts\python.exe -m pytest` — `71 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #25, ветка `codex/ui-shell-redesign`: доработка этапа 8 с новым светлым UI-каркасом главного окна. Добавлены левая навигация `Рабочий день / Ревью / Архив / Настройки / Справка`, теплая Burger King-палитра, заголовки страниц и placeholder-разделы для будущих экранов без изменения OBS/FFmpeg/Whisper/Summary lifecycle. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `72 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #26, ветка `codex/workday-screen-layout`: доработка этапа 8 с новой композицией экрана `Рабочий день`. Блоки главного сценария переставлены в порядок `Готовность системы`, `Состояние дня`, `Активный созвон`, `Встречи за день`, `Pipeline встречи`, `Действия`; добавлены краткие статусы активного созвона и количества встреч за день. Логика OBS, FFmpeg, Whisper/faster-whisper, Summary generation и lifecycle встреч не менялась. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `73 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- PR TBD, ветка `codex/pipeline-status-layout`: доработка этапа 8 с новым отображением блока `Pipeline встречи`. Каждый шаг pipeline отображается отдельной компактной строкой с названием и статусом; существующие progress-события и metadata-логика не менялись. Логика OBS, FFmpeg, Whisper/faster-whisper, Summary generation и lifecycle встреч не менялась. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `74 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
