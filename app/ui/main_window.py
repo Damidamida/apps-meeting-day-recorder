@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
         self.readiness_badges: dict[str, QLabel] = {}
+        self.readiness_tiles: dict[str, QWidget] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
         self._apply_app_style()
@@ -286,10 +288,16 @@ class MainWindow(QMainWindow):
                 background: #fffdf8;
                 border: 1px solid #ead8c6;
                 border-radius: 8px;
+                min-height: 82px;
+                min-width: 300px;
             }
             QLabel#readinessTitle {
                 color: #3a1408;
                 font-weight: 800;
+            }
+            QLabel#readinessMessage {
+                color: #8a6a58;
+                min-height: 30px;
             }
             QLabel#statusBadge {
                 border-radius: 10px;
@@ -339,6 +347,31 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
                 border-color: #b91c1c;
             }
+            QPushButton#headerPrimaryButton {
+                background: #ff6f1a;
+                color: #ffffff;
+                border: 1px solid #ff6f1a;
+                border-radius: 6px;
+                padding: 4px 12px;
+                min-height: 24px;
+                max-height: 34px;
+                font-weight: 700;
+            }
+            QPushButton#headerPrimaryButton:hover {
+                background: #f45a00;
+                color: #ffffff;
+                border-color: #f45a00;
+            }
+            QPushButton#headerButton {
+                background: #fffdf8;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 6px;
+                padding: 4px 12px;
+                min-height: 24px;
+                max-height: 34px;
+                font-weight: 600;
+            }
             QListWidget,
             QPlainTextEdit {
                 background: #fffdf8;
@@ -387,26 +420,44 @@ class MainWindow(QMainWindow):
         card = QWidget()
         card.setObjectName("card")
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 14, 18, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(18, 10, 18, 16)
+        layout.setSpacing(14)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        title_block = QWidget()
+        title_layout = QVBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(4)
         title_label = QLabel("Готовность системы")
         title_label.setObjectName("cardTitle")
+        subtitle_label = QLabel("Проверяется до старта дня и перед важными записями.")
+        subtitle_label.setObjectName("sectionHint")
+        subtitle_label.setWordWrap(True)
+        title_layout.addWidget(title_label)
+        title_layout.addWidget(subtitle_label)
+        title_block.setLayout(title_layout)
+
+        header_layout.addWidget(title_block, 1, Qt.AlignmentFlag.AlignTop)
+        header_layout.addStretch(1)
         self.check_readiness_button = self._add_button(
             header_layout,
             "Проверить готовность",
             self.check_readiness,
-            "primaryButton",
+            "headerPrimaryButton",
         )
         self.toggle_readiness_button = self._add_button(
             header_layout,
             "Свернуть",
             self._toggle_readiness_card,
+            "headerButton",
         )
-        header_layout.insertWidget(0, title_label)
-        header_layout.insertStretch(1)
+        self.check_readiness_button.setFixedHeight(34)
+        self.toggle_readiness_button.setFixedHeight(34)
+        header_layout.setAlignment(self.check_readiness_button, Qt.AlignmentFlag.AlignTop)
+        header_layout.setAlignment(self.toggle_readiness_button, Qt.AlignmentFlag.AlignTop)
 
         self.readiness_body = QWidget()
         self.readiness_body.setLayout(body_layout)
@@ -438,16 +489,23 @@ class MainWindow(QMainWindow):
     def _create_readiness_tile(self, component: str) -> QWidget:
         tile = QWidget()
         tile.setObjectName("readinessTile")
+        tile.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tile.setMinimumHeight(82)
+        tile.setMinimumWidth(300)
+        tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         tile_layout = QVBoxLayout()
         tile_layout.setContentsMargins(12, 10, 12, 10)
-        tile_layout.setSpacing(8)
+        tile_layout.setSpacing(7)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         title_label = QLabel(component)
         title_label.setObjectName("readinessTitle")
+        title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         badge_label = QLabel("Не проверено")
         badge_label.setObjectName("statusBadge")
+        badge_label.setMinimumWidth(32)
+        badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._apply_badge_style(badge_label, "wait")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
@@ -456,7 +514,10 @@ class MainWindow(QMainWindow):
         message_label = QLabel("Нажмите «Проверить готовность».")
         message_label.setObjectName("readinessMessage")
         message_label.setWordWrap(True)
+        message_label.setMinimumHeight(30)
+        message_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
+        self.readiness_tiles[component] = tile
         self.readiness_badges[component] = badge_label
         self.readiness_labels[component] = message_label
         tile_layout.addLayout(header_layout)
@@ -501,7 +562,6 @@ class MainWindow(QMainWindow):
             row_layout.setSpacing(10)
             for component in row_components:
                 row_layout.addWidget(self._create_readiness_tile(component), 1)
-            row_layout.addStretch()
             readiness_layout.addLayout(row_layout)
         layout.addWidget(self._create_readiness_card(readiness_layout))
 

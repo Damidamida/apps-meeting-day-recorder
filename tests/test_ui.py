@@ -97,9 +97,15 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
         "Summary endpoint",
     }
     assert window.readiness_badges["OBS"].text() == "Не проверено"
+    assert window.readiness_tiles["OBS"].minimumHeight() >= 82
+    assert window.readiness_tiles["OBS"].minimumWidth() >= 300
+    assert window.readiness_labels["OBS"].wordWrap()
     assert window.check_readiness_button.text() == "Проверить готовность"
-    assert window.check_readiness_button.objectName() == "primaryButton"
+    assert window.check_readiness_button.objectName() == "headerPrimaryButton"
+    assert window.check_readiness_button.height() <= 34
     assert window.toggle_readiness_button.text() == "Свернуть"
+    assert window.toggle_readiness_button.objectName() == "headerButton"
+    assert window.toggle_readiness_button.height() <= 34
     assert not window.readiness_body.isHidden()
 
     window.toggle_readiness_button.click()
