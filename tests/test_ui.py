@@ -39,7 +39,7 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
     app.processEvents()
 
 
-def test_end_meeting_starts_background_pipeline_and_disables_lifecycle_buttons(
+def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     tmp_path: Path,
 ) -> None:
     app = QApplication.instance() or QApplication([])
@@ -68,7 +68,25 @@ def test_end_meeting_starts_background_pipeline_and_disables_lifecycle_buttons(
         def load_today_state(self, now=None) -> None:
             del now
 
-        def end_meeting_pipeline(self, ended_at=None, progress_callback=None):
+        def finish_active_meeting_recording(self, ended_at=None, progress_callback=None):
+            del ended_at
+            if progress_callback is not None:
+                progress_callback("recording_skipped", "OBS запись не активна.")
+            self.write_metadata(
+                self.meeting_folder,
+                {
+                    "title": "Test",
+                    "started_at": datetime.now().isoformat(),
+                    "status": "ended",
+                    "recording_status": "disabled",
+                    "processing_status": "pending",
+                },
+            )
+            self.active_meeting_folder = None
+            return self.meeting_folder
+
+        def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            assert meeting_folder == self.meeting_folder
             if progress_callback is not None:
                 progress_callback("audio_running", "Тестовый pipeline выполняется.")
             self.entered.set()
@@ -83,9 +101,9 @@ def test_end_meeting_starts_background_pipeline_and_disables_lifecycle_buttons(
                     "audio_status": "skipped",
                     "transcription_status": "skipped",
                     "summary_status": "disabled",
+                    "processing_status": "completed",
                 },
             )
-            self.active_meeting_folder = None
             return self.meeting_folder
 
     storage = SlowStorage(tmp_path)
@@ -99,8 +117,17 @@ def test_end_meeting_starts_background_pipeline_and_disables_lifecycle_buttons(
 
     assert storage.entered.is_set()
     assert window.pipeline_running
-    assert not window.start_meeting_button.isEnabled()
-    assert not window.end_meeting_button.isEnabled()
+    assert not storage.meeting_active
+    assert window.start_meeting_button.isEnabled()
+    assert not window.end_workday_button.isEnabled()
+
+    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Second", True)):
+        window.start_meeting()
+
+    assert storage.meeting_active
+    second_metadata = storage.read_meeting_metadata(storage.active_meeting_folder)
+    assert second_metadata["title"] == "Second"
+    assert window.end_meeting_button.isEnabled()
 
     storage.release.set()
     deadline = time.time() + 2

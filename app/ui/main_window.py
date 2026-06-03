@@ -32,14 +32,16 @@ class MeetingPipelineWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, storage: StorageService) -> None:
+    def __init__(self, storage: StorageService, meeting_folder: Path) -> None:
         super().__init__()
         self.storage = storage
+        self.meeting_folder = meeting_folder
 
     @Slot()
     def run(self) -> None:
         try:
-            meeting_folder = self.storage.end_meeting_pipeline(
+            meeting_folder = self.storage.process_meeting_pipeline(
+                self.meeting_folder,
                 progress_callback=lambda event, message: self.progress.emit(event, message)
             )
         except Exception as error:
@@ -61,6 +63,7 @@ class MainWindow(QMainWindow):
         self.pipeline_running = False
         self.pipeline_completed = False
         self.pipeline_meeting_folder: Path | None = None
+        self.processing_queue: list[Path] = []
         self.pipeline_thread: QThread | None = None
         self.pipeline_worker: MeetingPipelineWorker | None = None
         self.recorder = recorder or (
@@ -105,7 +108,7 @@ class MainWindow(QMainWindow):
         return navigation
 
     def closeEvent(self, event) -> None:
-        if self.pipeline_running:
+        if self._has_processing_work():
             event.ignore()
             self.status_label.setText(
                 "Дождитесь завершения обработки встречи. Сейчас обновляются локальные файлы."
@@ -315,36 +318,72 @@ class MainWindow(QMainWindow):
         if self.storage.last_recorder_message:
             message = f"{message} {self.storage.last_recorder_message}"
         self.pipeline_completed = False
-        self._set_pipeline_step("meeting", "Готово", "Созвон начат.", "ok")
-        self._set_pipeline_step("recording", "Выполняется", "OBS ведет запись или шаг пропущен.", "active")
-        self._set_pipeline_step("audio", "Ожидает", "Ждет завершение встречи.", "wait")
-        self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
-        self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
-        self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
+        if self.pipeline_running:
+            message = f"{message} Предыдущая встреча еще обрабатывается в фоне."
+        else:
+            self._set_pipeline_step("meeting", "Готово", "Созвон начат.", "ok")
+            self._set_pipeline_step("recording", "Выполняется", "OBS ведет запись или шаг пропущен.", "active")
+            self._set_pipeline_step("audio", "Ожидает", "Ждет завершение встречи.", "wait")
+            self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
+            self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
+            self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
         self.status_label.setText(message)
         self._refresh_after_lifecycle_change()
 
     def end_meeting(self) -> None:
-        if self.pipeline_running:
-            self.status_label.setText("Завершение встречи уже выполняется.")
-            return
         if not self.storage.meeting_active:
             self.status_label.setText("Нет активной встречи для завершения.")
             return
-        self.pipeline_meeting_folder = self.storage.active_meeting_folder
+        finishing_meeting_folder = self.storage.active_meeting_folder
+        processing_already_running = self.pipeline_running
+        if not self.pipeline_running:
+            self.pipeline_meeting_folder = finishing_meeting_folder
+        self.pipeline_completed = False
+        if not self.pipeline_running:
+            self._set_pipeline_step("meeting", "Готово", "Созвон завершается.", "ok")
+            self._set_pipeline_step("recording", "Выполняется", "Останавливаем OBS запись.", "active")
+            self._set_pipeline_step("audio", "Ожидает", "Ждет остановку записи.", "wait")
+            self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
+            self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
+            self._set_pipeline_step("done", "Ожидает", "Pipeline ожидает обработки.", "wait")
+        try:
+            meeting_folder = self.storage.finish_active_meeting_recording(
+                progress_callback=self._on_pipeline_progress if not self.pipeline_running else None
+            )
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            return
+        self._enqueue_meeting_processing(meeting_folder)
+        queue_message = (
+            "Обработка встречи добавлена в очередь."
+            if processing_already_running
+            else "Обработка встречи запущена в фоне."
+        )
+        self.status_label.setText(
+            f"Запись встречи остановлена. Можно начать следующий созвон. {queue_message}"
+        )
+        self._refresh_after_lifecycle_change()
+
+    def _enqueue_meeting_processing(self, meeting_folder: Path) -> None:
+        self.processing_queue.append(meeting_folder)
+        if not self.pipeline_running:
+            self._start_next_pipeline()
+
+    def _start_next_pipeline(self) -> None:
+        if self.pipeline_running or self.pipeline_thread is not None or not self.processing_queue:
+            return
+        self.pipeline_meeting_folder = self.processing_queue.pop(0)
         self.pipeline_running = True
         self.pipeline_completed = False
-        self._set_pipeline_step("meeting", "Готово", "Созвон завершается.", "ok")
-        self._set_pipeline_step("recording", "Выполняется", "Останавливаем OBS запись.", "active")
-        self._set_pipeline_step("audio", "Ожидает", "Ждет остановку записи.", "wait")
-        self._set_pipeline_step("transcription", "Ожидает", "Ждет audio.wav.", "wait")
-        self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
+        metadata = self.storage.read_meeting_metadata(self.pipeline_meeting_folder)
+        self._refresh_pipeline_from_metadata(metadata)
         self._set_pipeline_step("done", "Ожидает", "Pipeline выполняется.", "wait")
-        self.status_label.setText("Завершение встречи запущено в фоне. Окно не зависло.")
+        self.status_label.setText(
+            f"Фоновая обработка встречи запущена: {self.pipeline_meeting_folder.name}"
+        )
         self.refresh_buttons()
-
         self.pipeline_thread = QThread(self)
-        self.pipeline_worker = MeetingPipelineWorker(self.storage)
+        self.pipeline_worker = MeetingPipelineWorker(self.storage, self.pipeline_meeting_folder)
         self.pipeline_worker.moveToThread(self.pipeline_thread)
         self.pipeline_thread.started.connect(self.pipeline_worker.run)
         self.pipeline_worker.progress.connect(self._on_pipeline_progress)
@@ -354,7 +393,7 @@ class MainWindow(QMainWindow):
         self.pipeline_worker.failed.connect(self.pipeline_thread.quit)
         self.pipeline_thread.finished.connect(self.pipeline_worker.deleteLater)
         self.pipeline_thread.finished.connect(self.pipeline_thread.deleteLater)
-        self.pipeline_thread.finished.connect(self._clear_pipeline_worker)
+        self.pipeline_thread.finished.connect(self._on_pipeline_thread_finished)
         self.pipeline_thread.start()
 
     def check_readiness(self) -> None:
@@ -401,7 +440,7 @@ class MainWindow(QMainWindow):
         meeting_folder = self.pipeline_meeting_folder or Path(meeting_folder_text)
         metadata = self.storage.read_meeting_metadata(meeting_folder)
         self._refresh_pipeline_from_metadata(metadata)
-        message = f"Встреча завершена: {meeting_folder.name}"
+        message = f"Обработка встречи завершена: {meeting_folder.name}"
         for extra in [
             self.storage.last_recorder_message,
             self.storage.last_audio_message,
@@ -420,12 +459,13 @@ class MainWindow(QMainWindow):
         self.pipeline_running = False
         self.pipeline_meeting_folder = None
         self._set_pipeline_step("done", "Ошибка", message, "error")
-        self.status_label.setText(f"Завершение встречи не выполнено: {message}")
+        self.status_label.setText(f"Фоновая обработка встречи не выполнена: {message}")
         self.refresh_buttons()
 
-    def _clear_pipeline_worker(self) -> None:
+    def _on_pipeline_thread_finished(self) -> None:
         self.pipeline_thread = None
         self.pipeline_worker = None
+        self._start_next_pipeline()
 
     def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
         widget = self.pipeline_labels[step]
@@ -655,19 +695,19 @@ class MainWindow(QMainWindow):
     def refresh_buttons(self) -> None:
         self.check_readiness_button.setEnabled(not self.pipeline_running)
         self.start_workday_button.setEnabled(
-            not self.pipeline_running and not self.storage.workday_active
+            not self._has_processing_work() and not self.storage.workday_active
         )
         self.start_meeting_button.setEnabled(
-            not self.pipeline_running and self.storage.workday_active and not self.storage.meeting_active
+            self.storage.workday_active and not self.storage.meeting_active
         )
-        self.end_meeting_button.setEnabled(self.storage.meeting_active and not self.pipeline_running)
+        self.end_meeting_button.setEnabled(self.storage.meeting_active)
         self.end_workday_button.setEnabled(
-            not self.pipeline_running
+            not self._has_processing_work()
             and self.storage.workday_active
             and not self.storage.meeting_active
         )
         self.open_day_folder_button.setEnabled(
-            not self.pipeline_running and self.storage.get_today_day_folder() is not None
+            self.storage.get_today_day_folder() is not None
         )
         self._refresh_review_buttons()
 
@@ -691,13 +731,16 @@ class MainWindow(QMainWindow):
     def _refresh_review_buttons(self) -> None:
         has_day_folder = self.storage.get_today_day_folder() is not None
         has_selected_meeting = self._selected_meeting_folder() is not None
-        self.review_open_folder_button.setEnabled(has_day_folder and not self.pipeline_running)
+        self.review_open_folder_button.setEnabled(has_day_folder)
         self.save_drafts_button.setEnabled(
-            has_day_folder and has_selected_meeting and not self.pipeline_running
+            has_day_folder and has_selected_meeting and not self._has_processing_work()
         )
         self.save_final_files_button.setEnabled(
-            has_day_folder and has_selected_meeting and not self.pipeline_running
+            has_day_folder and has_selected_meeting and not self._has_processing_work()
         )
+
+    def _has_processing_work(self) -> bool:
+        return self.pipeline_running or bool(self.processing_queue)
 
     def _clear_review_editors(self) -> None:
         self.meeting_summary_editor.clear()

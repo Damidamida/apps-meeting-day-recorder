@@ -174,6 +174,41 @@ def test_end_meeting_creates_placeholder_files_and_updates_day(tmp_path) -> None
     assert not storage.meeting_active
 
 
+def test_finish_active_meeting_recording_allows_next_meeting_before_processing(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    first_meeting = storage.start_meeting("Первый созвон", datetime(2026, 6, 1, 9, 0))
+
+    finished_meeting = storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+    second_meeting = storage.start_meeting("Второй созвон", datetime(2026, 6, 1, 9, 31))
+
+    first_metadata = json.loads(
+        (first_meeting / "meeting_metadata.json").read_text(encoding="utf-8")
+    )
+    day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert finished_meeting == first_meeting
+    assert second_meeting != first_meeting
+    assert storage.active_meeting_folder == second_meeting
+    assert first_metadata["status"] == "ended"
+    assert first_metadata["processing_status"] == "pending"
+    assert day_metadata["meetings"][0]["folder"] == first_meeting.name
+    assert day_metadata["meetings"][0]["processing_status"] == "pending"
+
+
+def test_process_meeting_pipeline_updates_existing_day_meeting_entry(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Pipeline", datetime(2026, 6, 1, 9, 0))
+    storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+
+    storage.process_meeting_pipeline(meeting_folder)
+
+    metadata = json.loads((meeting_folder / "meeting_metadata.json").read_text(encoding="utf-8"))
+    day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["processing_status"] == "completed"
+    assert day_metadata["meetings"] == [{"folder": meeting_folder.name, **metadata}]
+
+
 def test_end_workday_creates_day_drafts(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))

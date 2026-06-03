@@ -127,7 +127,8 @@ Codex не имеет права самостоятельно переводит
 - кнопка `Проверить готовность` со статусами OBS, FFmpeg, Whisper, summary, API key, endpoint и папки данных;
 - визуальная статусная модель pipeline встречи;
 - явное определение пустого или неготового transcript без отправки пустого текста во внешний сервис;
-- фоновый pipeline завершения встречи для FFmpeg, Whisper и summary, чтобы UI не зависал;
+- фоновый pipeline обработки встречи для FFmpeg, Whisper и summary, чтобы UI не зависал;
+- неблокирующее завершение встречи: после остановки записи можно сразу начать следующий созвон, а обработка предыдущей встречи продолжается в очереди;
 - безопасная config validation с fallback на defaults при ошибках YAML и некорректных типах;
 - README-инструкция ручной проверки полного сценария;
 - тесты.
@@ -136,23 +137,23 @@ Codex не имеет права самостоятельно переводит
 
 Этапы 1–7 завершены и приняты пользователем. Промежуточный этап 5.1 — Windows launcher также завершен и принят. Технический fix кодировки русских пользовательских строк из PR #14 принят.
 
-Этап 8 `UX/safety polish` реализован в ветке/PR и находится на проверке. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
+Этап 8 `UX/safety polish` реализован в ветке/PR и находится на проверке. На ручной проверке выявлено, что локальный Whisper может работать примерно столько же времени, сколько длилась запись, а прежняя модель блокировала начало следующего созвона до завершения всего pipeline. В ветке `codex/non-blocking-meeting-processing` исправляется первая рабочая блокировка: после остановки записи следующую встречу можно начать сразу, а FFmpeg/Whisper/Summary по предыдущей встрече выполняются в фоновой очереди. Ускорение Whisper остается отдельным будущим решением. Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
 
 Ручная проверка полного сценария прошла успешно: приложение запущено через Windows launcher, рабочий день начат, встреча начата и записана через OBS, после завершения встречи FFmpeg создал `audio.wav`, локальный Whisper создал `transcript.md` и `transcript.json`, OpenAI-compatible endpoint / ProxyAPI создал `summary_draft.md`, metadata встречи обновилась корректно.
 
 Подтверждено, что для summary generation во внешний OpenAI-compatible endpoint / ProxyAPI отправляется только текст transcript. Аудио и видео во внешний сервис не отправляются.
 
-Для этапа 8 добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых шагов завершения встречи, безопасная config validation, защита секретов и README-инструкция ручного полного сценария.
+Для этапа 8 добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых шагов обработки встречи, неблокирующее начало следующего созвона после остановки записи, безопасная config validation, защита секретов и README-инструкция ручного полного сценария.
 
 Последняя проверка:
 
 - `.venv\Scripts\python.exe -m pip install -e ".[dev]"`: успешно.
-- `.venv\Scripts\python.exe -m pytest`: `62 passed`.
+- `.venv\Scripts\python.exe -m pytest`: `64 passed`.
 - `.venv\Scripts\python.exe -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Провести ручной smoke test этапа 8 и подготовиться к отдельному PR для этапа 9 — Manual smoke test.
+Проверить PR с неблокирующей обработкой встречи: завершить первую встречу, сразу начать вторую, убедиться, что первая продолжает обрабатываться в фоне. После принятия доработок этапа 8 можно будет отдельно подготовиться к этапу 9 — Manual smoke test.
 
 ## 11. Текущая структура файлов
 
@@ -221,6 +222,7 @@ MeetingSummaries/YYYY-MM-DD/
 - Путь записи настраивается в OBS; приложение сохраняет `recording_path`, только если OBS возвращает его после остановки записи.
 - Большие записи могут потребовать политику очистки.
 - Длинное аудио может потребовать разбиение на части.
+- Локальный Whisper CLI на модели `base` может обрабатывать запись примерно в режиме real-time; ускорение через faster-whisper, chunking или другой backend нужно рассматривать отдельным PR.
 - Качество prompt для итогов нужно будет улучшать итерационно.
 - OpenAI/ProxyAPI key должен храниться только во внешнем окружении или локальном `.env.local`, который не добавляется в git.
 - Генерация итогов не должна отправлять в OpenAI аудио или видео; только текстовый transcript.
@@ -249,3 +251,4 @@ MeetingSummaries/YYYY-MM-DD/
 - PR #20, ветка `codex/fix-summary-usage-aggregation`: исправлен учет `summary_usage` при chunking длинных transcript. Теперь `input_tokens` и `output_tokens` суммируются по промежуточным chunk-запросам и финальному summary-запросу. Добавлен тест на агрегацию usage. Этап 7 остается `На проверке`, этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #21, ветка `codex/mark-stage-7-done`: этап 7 Summary generation принят после ручной проверки полного сценария. Подтверждены запуск через Windows launcher, OBS-запись, извлечение `audio.wav` через FFmpeg, локальная транскрипция через Whisper, создание `summary_draft.md` через OpenAI-compatible endpoint / ProxyAPI и корректное обновление metadata. Во внешний сервис отправляется только текст transcript, не аудио и не видео. Код приложения не менялся, обновлен только `PROJECT_STATE.md`. Этап 8 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `51 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
 - PR #22, ветка `codex/ux-safety-polish`: этап 8 UX/safety polish реализован и переведен в статус `На проверке`. Добавлены readiness check, визуальная статусная модель pipeline, явное отображение пустого transcript, background worker для тяжелых операций FFmpeg/Whisper/Summary, безопасная config validation, защита секретов и README-инструкция ручного полного сценария. Устранен потенциальный race condition в UI progress: поздние pipeline-сигналы читают metadata по сохраненной папке встречи, а не через уже сброшенный active meeting. Этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pip install -e ".[dev]"` — успешно; `.venv\Scripts\python.exe -m pytest` — `62 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.
+- PR #23, ветка `codex/non-blocking-meeting-processing`: доработка этапа 8 после ручной проверки. Завершение встречи разделено на быструю остановку записи и фоновую обработку. После остановки записи `active_meeting` сбрасывается, кнопка `Начать встречу` снова доступна, а FFmpeg/Whisper/Summary по завершенным встречам выполняются в очереди. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `.venv\Scripts\python.exe -m pytest` — `64 passed`; `.venv\Scripts\python.exe -m compileall -q app` — успешно.

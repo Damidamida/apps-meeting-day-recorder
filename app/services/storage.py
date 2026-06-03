@@ -170,6 +170,14 @@ class StorageService:
         ended_at: datetime | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
     ) -> Path:
+        meeting_folder = self.finish_active_meeting_recording(ended_at, progress_callback)
+        return self.process_meeting_pipeline(meeting_folder, progress_callback)
+
+    def finish_active_meeting_recording(
+        self,
+        ended_at: datetime | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> Path:
         if not self.meeting_active:
             raise ValueError("Нет активной встречи для завершения.")
 
@@ -185,17 +193,48 @@ class StorageService:
         else:
             self._emit_pipeline(progress_callback, "recording_skipped", "OBS запись не активна.")
 
-        self._emit_pipeline(progress_callback, "audio_running", "Извлекаем audio.wav через FFmpeg.")
-        metadata.update(self._extract_audio(metadata, meeting_folder))
-        self.write_metadata(meeting_folder, metadata)
-        self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
-
         self.write_placeholder_transcript(meeting_folder)
         self.write_placeholder_transcript_json(meeting_folder)
         self.write_placeholder_summary(meeting_folder)
+        started_at = datetime.fromisoformat(metadata["started_at"])
+        metadata.update(
+            {
+                "ended_at": ended_at.isoformat(),
+                "duration_seconds": max(0, int((ended_at - started_at).total_seconds())),
+                "status": "ended",
+                "processing_status": "pending",
+            }
+        )
+        self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
+        self.active_meeting_folder = None
+        return meeting_folder
+
+    def process_meeting_pipeline(
+        self,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> Path:
+        metadata = self._read_json(meeting_folder / "meeting_metadata.json")
+        metadata.update(
+            {
+                "processing_status": "running",
+                "processing_started_at": datetime.now().isoformat(),
+            }
+        )
+        self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
+
+        self._emit_pipeline(progress_callback, "audio_running", "Извлекаем audio.wav через FFmpeg.")
+        metadata.update(self._extract_audio(metadata, meeting_folder))
+        self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
+        self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
+
         self._emit_pipeline(progress_callback, "transcription_running", "Готовим локальный transcript.")
         metadata.update(self._transcribe_audio(metadata, meeting_folder))
         self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
         self._emit_pipeline(
             progress_callback,
             "transcription_done",
@@ -205,28 +244,17 @@ class StorageService:
         self._emit_pipeline(progress_callback, "summary_running", "Готовим черновик итогов.")
         metadata.update(self._summarize_meeting(metadata, meeting_folder))
         self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
         self._emit_pipeline(progress_callback, "summary_done", self.last_summary_message or "")
-        started_at = datetime.fromisoformat(metadata["started_at"])
         metadata.update(
             {
-                "ended_at": ended_at.isoformat(),
-                "duration_seconds": max(0, int((ended_at - started_at).total_seconds())),
-                "status": "ended",
+                "processing_status": "completed",
+                "processed_at": datetime.now().isoformat(),
             }
         )
         self.write_metadata(meeting_folder, metadata)
-        self._emit_pipeline(progress_callback, "meeting_done", "Встреча завершена.")
-
-        day_metadata_path = self.active_day_folder / "day_metadata.json"
-        day_metadata = self._read_json(day_metadata_path)
-        day_metadata["meetings"].append(
-            {
-                "folder": meeting_folder.name,
-                **metadata,
-            }
-        )
-        self._write_json(day_metadata_path, day_metadata)
-        self.active_meeting_folder = None
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
+        self._emit_pipeline(progress_callback, "meeting_done", "Обработка встречи завершена.")
         return meeting_folder
 
     @staticmethod
@@ -299,6 +327,21 @@ class StorageService:
         summary_metadata = self.summarizer.summarize_meeting(meeting_folder, metadata)
         self.last_summary_message = summary_message(summary_metadata)
         return summary_metadata
+
+    def _sync_day_meeting_metadata(self, meeting_folder: Path, metadata: dict[str, Any]) -> None:
+        day_metadata_path = meeting_folder.parent / "day_metadata.json"
+        if not day_metadata_path.exists():
+            return
+        day_metadata = self._read_json(day_metadata_path)
+        meetings = day_metadata.setdefault("meetings", [])
+        entry = {"folder": meeting_folder.name, **metadata}
+        for index, meeting in enumerate(meetings):
+            if meeting.get("folder") == meeting_folder.name:
+                meetings[index] = entry
+                break
+        else:
+            meetings.append(entry)
+        self._write_json(day_metadata_path, day_metadata)
 
     def end_workday(self, ended_at: datetime | None = None) -> Path:
         if not self.workday_active:
