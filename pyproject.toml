@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8,<9",
 ]
+faster-whisper = [
+    "faster-whisper>=1,<2",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

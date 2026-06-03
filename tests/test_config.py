@@ -11,6 +11,9 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["api_key_env"] == "OPENAI_API_KEY"
     assert config["summary"]["base_url"] == ""
+    assert config["transcription"]["backend"] == "whisper_cli"
+    assert config["transcription"]["model"] == "base"
+    assert config["transcription"]["compute_type"] == "int8"
 
 
 def test_partial_obs_config_uses_safe_defaults(tmp_path) -> None:
@@ -35,6 +38,38 @@ def test_partial_summary_config_uses_safe_defaults(tmp_path) -> None:
     assert config["summary"]["model"] == "gpt-5.4-mini"
     assert config["summary"]["base_url"] == ""
     assert config["summary"]["env_file"] == ""
+
+
+def test_transcription_config_supports_faster_whisper_backend(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "transcription:\n"
+        "  backend: faster_whisper\n"
+        "  model: small\n"
+        "  device: cpu\n"
+        "  compute_type: int8\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["transcription"]["backend"] == "faster_whisper"
+    assert config["transcription"]["model"] == "small"
+    assert config["transcription"]["device"] == "cpu"
+    assert config["transcription"]["compute_type"] == "int8"
+
+
+def test_unknown_transcription_backend_falls_back_to_whisper_cli(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "transcription:\n"
+        "  backend: something_else\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["transcription"]["backend"] == "whisper_cli"
 
 
 def test_invalid_yaml_uses_safe_defaults(tmp_path) -> None:

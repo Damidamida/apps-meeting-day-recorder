@@ -1,9 +1,15 @@
 import json
 import subprocess
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services.transcription import LocalWhisperTranscriber
+from app.services.transcription import (
+    FasterWhisperTranscriber,
+    LocalWhisperTranscriber,
+    create_transcriber,
+)
 
 
 def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> None:
@@ -106,3 +112,74 @@ def test_local_whisper_transcriber_reports_cli_failure(tmp_path: Path) -> None:
         "transcription_status": "failed",
         "transcription_error": "Не удалось выполнить локальную транскрипцию.",
     }
+
+
+def test_faster_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
+
+    class FakeSegment:
+        start = 0.5
+        end = 2.0
+        text = " Быстрый сегмент "
+
+    class FakeInfo:
+        language = "ru"
+
+    class FakeWhisperModel:
+        def __init__(self, model_name, device, compute_type) -> None:
+            assert model_name == "base"
+            assert device == "cpu"
+            assert compute_type == "int8"
+
+        def transcribe(self, audio, language):
+            assert audio == str(audio_path)
+            assert language == "ru"
+            return [FakeSegment()], FakeInfo()
+
+    fake_module = types.SimpleNamespace(WhisperModel=FakeWhisperModel)
+    with patch.dict(sys.modules, {"faster_whisper": fake_module}):
+        metadata = FasterWhisperTranscriber().transcribe(audio_path, tmp_path)
+
+    transcript_json = json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8"))
+    transcript_md = (tmp_path / "transcript.md").read_text(encoding="utf-8")
+    assert metadata["transcription_status"] == "completed"
+    assert metadata["transcription_provider"] == "local_faster_whisper"
+    assert metadata["transcription_model"] == "base"
+    assert transcript_json["provider"] == "local_faster_whisper"
+    assert transcript_json["text"] == "Быстрый сегмент"
+    assert transcript_json["segments"] == [
+        {"start": 0.5, "end": 2.0, "text": "Быстрый сегмент"}
+    ]
+    assert "Быстрый сегмент" in transcript_md
+
+
+def test_faster_whisper_transcriber_reports_missing_dependency(tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
+
+    with patch.dict(sys.modules, {"faster_whisper": None}):
+        metadata = FasterWhisperTranscriber().transcribe(audio_path, tmp_path)
+
+    assert metadata == {
+        "transcription_status": "faster_whisper_unavailable",
+        "transcription_error": (
+            "Локальный faster-whisper недоступен. "
+            "Установите optional-зависимость или выберите whisper_cli."
+        ),
+    }
+
+
+def test_create_transcriber_uses_configured_backend() -> None:
+    transcriber = create_transcriber(
+        {
+            "backend": "faster_whisper",
+            "model": "small",
+            "language": "ru",
+            "device": "cpu",
+            "compute_type": "int8",
+        }
+    )
+
+    assert isinstance(transcriber, FasterWhisperTranscriber)
+    assert transcriber.model_name == "small"

@@ -54,7 +54,7 @@ pytest
 - Кнопка `Проверить готовность` со статусами OBS, FFmpeg, Whisper, summary, API key, endpoint и папки данных.
 - Визуальная статусная модель pipeline встречи: запись, извлечение аудио, транскрипция, генерация итогов и финальный статус.
 - Локальное извлечение `audio.wav` из OBS-записи через FFmpeg.
-- Локальная транскрипция `audio.wav` через optional Whisper CLI, если команда `whisper` доступна в `PATH`.
+- Локальная транскрипция `audio.wav` через optional Whisper CLI или optional faster-whisper.
 - Генерация `summary_draft.md` одной встречи через OpenAI из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
 - Тяжелые шаги обработки встречи выполняются в фоне, чтобы UI не зависал.
 - После остановки записи можно сразу начать следующую встречу; FFmpeg, Whisper и summary по предыдущей встрече продолжают выполняться в очереди.
@@ -87,13 +87,39 @@ obs:
 
 ## Локальная транскрипция
 
-На этапе 6 приложение может использовать локальный CLI `whisper` для подготовки `transcript.md` и `transcript.json` из файла `audio.wav`.
+На этапе 6 приложение может использовать локальный CLI `whisper` для подготовки `transcript.md` и `transcript.json` из файла `audio.wav`. После ручной проверки добавлен optional backend `faster-whisper`, чтобы ускорять локальную транскрипцию без отправки аудио во внешние сервисы.
 
-По умолчанию используется multilingual-модель `base`: это стартовый локальный вариант для слабых CPU/GPU-конфигураций. Модель должна быть доступна локальному Whisper CLI; при первом запуске Whisper может скачать ее на диск.
+По умолчанию используется backend `whisper_cli` и multilingual-модель `base`: это совместимый стартовый вариант. Модель должна быть доступна локальному Whisper CLI; при первом запуске Whisper может скачать ее на диск.
 
 Если `whisper` не установлен или недоступен в `PATH`, приложение не падает: встреча завершается, placeholder-файлы остаются на месте, а в metadata фиксируется причина, почему транскрипция не выполнена.
 
-Архитектура транскрипции сделана через отдельный сервис, чтобы позже можно было добавить другой backend, например OpenAI API, отдельным решением и отдельным PR. На этом этапе приложение не отправляет аудио во внешние сервисы и не использует OpenAI API.
+Для ускоренного локального backend установите optional-зависимость:
+
+```powershell
+python -m pip install -e ".[faster-whisper]"
+```
+
+Затем в локальном `config.yaml` укажите:
+
+```yaml
+transcription:
+  backend: "faster_whisper"
+  model: "base"
+  language: "ru"
+  device: "cpu"
+  compute_type: "int8"
+```
+
+Для возврата к старому CLI-варианту:
+
+```yaml
+transcription:
+  backend: "whisper_cli"
+  model: "base"
+  whisper_command: "whisper"
+```
+
+На этом этапе приложение не отправляет аудио во внешние сервисы и не использует OpenAI API для транскрипции.
 
 ## Генерация итогов через OpenAI
 
@@ -154,10 +180,16 @@ python -m pip install -e ".[dev]"
 ffmpeg -version
 ```
 
-5. Проверьте, что Whisper CLI доступен локально:
+5. Проверьте, что выбранный backend транскрипции доступен локально. Для `whisper_cli`:
 
 ```powershell
 whisper --help
+```
+
+Для `faster_whisper` установите optional-зависимость и нажмите в приложении `Проверить готовность`:
+
+```powershell
+python -m pip install -e ".[faster-whisper]"
 ```
 
 6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или `.env.local`, который не добавляется в git.
@@ -187,7 +219,8 @@ whisper --help
 Безопасные пропуски:
 
 - `summary_status: disabled` — генерация итогов выключена;
-- `transcription_status: whisper_unavailable` — Whisper недоступен;
+- `transcription_status: whisper_unavailable` — Whisper CLI недоступен;
+- `transcription_status: faster_whisper_unavailable` — faster-whisper не установлен;
 - `summary_status: openai_unavailable` — API key не найден;
 - `summary_status: skipped` — transcript не готов или пустой.
 

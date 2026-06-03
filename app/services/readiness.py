@@ -1,3 +1,4 @@
+import importlib.util
 import shutil
 from pathlib import Path
 from typing import Any
@@ -8,11 +9,12 @@ from app.services.summarization import load_api_key
 
 def check_readiness(config: dict[str, Any], recorder: Recorder, data_root: Path) -> list[dict[str, str]]:
     summary_config = config.get("summary", {})
+    transcription_config = config.get("transcription", {})
     summary_enabled = bool(summary_config.get("enabled", False))
     return [
         _obs_status(recorder),
         _command_status("FFmpeg", "ffmpeg", "FFmpeg найден.", "FFmpeg не найден."),
-        _command_status("Whisper", "whisper", "Whisper найден.", "Whisper не найден."),
+        _transcription_status(transcription_config),
         _summary_status(summary_enabled),
         _api_key_status(summary_config, summary_enabled),
         _endpoint_status(summary_config, summary_enabled),
@@ -38,6 +40,20 @@ def _command_status(label: str, command: str, ok_message: str, error_message: st
     if shutil.which(command):
         return _status(label, "ok", ok_message)
     return _status(label, "error", error_message)
+
+
+def _transcription_status(config: dict[str, Any]) -> dict[str, str]:
+    backend = str(config.get("backend") or "whisper_cli")
+    if backend == "faster_whisper":
+        if importlib.util.find_spec("faster_whisper") is not None:
+            return _status("Whisper", "ok", "faster-whisper доступен.")
+        return _status(
+            "Whisper",
+            "error",
+            "faster-whisper не установлен. Установите optional-зависимость или выберите whisper_cli.",
+        )
+    command = str(config.get("whisper_command") or "whisper")
+    return _command_status("Whisper", command, "Whisper CLI найден.", "Whisper CLI не найден.")
 
 
 def _summary_status(enabled: bool) -> dict[str, str]:

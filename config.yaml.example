@@ -7,6 +7,17 @@ obs:
   websocket_port: 4455
   websocket_password: ""
 
+transcription:
+  # Варианты:
+  # backend: "whisper_cli"      # старый CLI-вариант
+  # backend: "faster_whisper"   # ускоренный локальный backend, требует optional-зависимость
+  backend: "whisper_cli"
+  model: "base"
+  language: "ru"
+  device: "cpu"
+  compute_type: "int8"
+  whisper_command: "whisper"
+
 summary:
   enabled: false
   provider: "openai"
