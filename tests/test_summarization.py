@@ -164,8 +164,14 @@ def test_chunking_splits_long_transcript_and_combines_final_summary(tmp_path: Pa
     def create_response(**kwargs):
         calls.append(kwargs)
         if len(calls) < 3:
-            return SimpleNamespace(output_text=f"Конспект части {len(calls)}")
-        return SimpleNamespace(output_text="# Итоги встречи\n\n## Кратко\n\nСводный итог.")
+            return SimpleNamespace(
+                output_text=f"Конспект части {len(calls)}",
+                usage=SimpleNamespace(input_tokens=10 * len(calls), output_tokens=5 * len(calls)),
+            )
+        return SimpleNamespace(
+            output_text="# Итоги встречи\n\n## Кратко\n\nСводный итог.",
+            usage=SimpleNamespace(input_tokens=30, output_tokens=15),
+        )
 
     client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
     summarizer = OpenAISummarizer(
@@ -176,6 +182,7 @@ def test_chunking_splits_long_transcript_and_combines_final_summary(tmp_path: Pa
     metadata = summarizer.summarize_meeting(tmp_path, {"transcription_status": "completed"})
 
     assert metadata["summary_status"] == "draft_created"
+    assert metadata["summary_usage"] == {"input_tokens": 60, "output_tokens": 30}
     assert len(calls) == 3
     assert "Сводный итог" in (tmp_path / "summary_draft.md").read_text(encoding="utf-8")
 

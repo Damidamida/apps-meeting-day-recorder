@@ -137,16 +137,19 @@ class OpenAISummarizer:
             return extract_response_text(response), extract_usage(response)
 
         chunk_summaries = []
+        total_usage: dict[str, int] = {}
         for index, chunk in enumerate(chunks, start=1):
             response = self._create_response(client, _chunk_summary_input(index, len(chunks), chunk))
             chunk_summaries.append(extract_response_text(response))
+            total_usage = merge_usage(total_usage, extract_usage(response))
 
         combined = "\n\n".join(
             f"## Часть {index}\n\n{summary}"
             for index, summary in enumerate(chunk_summaries, start=1)
         )
         response = self._create_response(client, _final_summary_input(combined))
-        return extract_response_text(response), extract_usage(response)
+        total_usage = merge_usage(total_usage, extract_usage(response))
+        return extract_response_text(response), total_usage
 
     def _create_response(self, client: Any, user_input: str) -> Any:
         return client.responses.create(
@@ -289,6 +292,16 @@ def extract_usage(response: Any) -> dict[str, int]:
         result["input_tokens"] = input_tokens
     if output_tokens is not None:
         result["output_tokens"] = output_tokens
+    return result
+
+
+def merge_usage(*items: dict[str, int]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for item in items:
+        for key in ("input_tokens", "output_tokens"):
+            value = item.get(key)
+            if value is not None:
+                result[key] = result.get(key, 0) + value
     return result
 
 
