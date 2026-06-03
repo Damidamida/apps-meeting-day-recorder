@@ -32,9 +32,15 @@ class NoopTranscriber:
 
 
 class LocalWhisperTranscriber:
-    def __init__(self, whisper_command: str = "whisper", model_name: str = "base") -> None:
+    def __init__(
+        self,
+        whisper_command: str = "whisper",
+        model_name: str = "base",
+        language: str = "ru",
+    ) -> None:
         self.whisper_command = whisper_command
         self.model_name = model_name
+        self.language = language
 
     def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
         audio_path = Path(audio_path)
@@ -57,7 +63,7 @@ class LocalWhisperTranscriber:
                     "--model",
                     self.model_name,
                     "--language",
-                    "Russian",
+                    self.language,
                     "--output_format",
                     "json",
                     "--output_dir",
@@ -218,6 +224,7 @@ def create_transcriber(config: dict[str, Any]) -> Transcriber:
     return LocalWhisperTranscriber(
         whisper_command=str(config.get("whisper_command") or "whisper"),
         model_name=model_name,
+        language=str(config.get("language") or "ru"),
     )
 
 

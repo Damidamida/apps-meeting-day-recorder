@@ -35,7 +35,15 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
         patch("app.services.transcription.shutil.which", return_value="C:/tools/whisper.exe"),
         patch("app.services.transcription.subprocess.run", side_effect=fake_run) as run,
     ):
-        metadata = LocalWhisperTranscriber().transcribe(audio_path, tmp_path)
+        transcriber = create_transcriber(
+            {
+                "backend": "whisper_cli",
+                "model": "base",
+                "language": "ru",
+                "whisper_command": "whisper",
+            }
+        )
+        metadata = transcriber.transcribe(audio_path, tmp_path)
 
     transcript_json = json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8"))
     transcript_md = (tmp_path / "transcript.md").read_text(encoding="utf-8")
@@ -59,7 +67,7 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
             "--model",
             "base",
             "--language",
-            "Russian",
+            "ru",
             "--output_format",
             "json",
             "--output_dir",
