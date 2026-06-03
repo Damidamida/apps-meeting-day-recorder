@@ -102,6 +102,8 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
     assert window.pipeline_step_rows["audio"].layout().count() == 3
     assert window.pipeline_labels["audio"].maximumWidth() == 900
+    assert window.pipeline_labels["audio"].minimumWidth() == 420
+    assert not window.pipeline_labels["audio"].wordWrap()
 
     window.close()
     app.processEvents()
