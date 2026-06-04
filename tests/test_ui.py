@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
-from app.ui.main_window import MainWindow, StartMeetingOverlay
+from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
 
 
 class EnabledRecorder(NoopRecorder):
@@ -53,6 +53,155 @@ def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> Non
     assert enabled_overlay.recording_status_label.text() == "OBS будет запущен автоматически"
     assert enabled_overlay.recording_status_label.property("state") == "ok"
     enabled_overlay.close()
+    app.processEvents()
+
+
+def test_floating_control_states_validate_title_and_confirm_end() -> None:
+    app = QApplication.instance() or QApplication([])
+    control = FloatingMeetingControl()
+    started_days: list[bool] = []
+    started_meetings: list[str] = []
+    ended_meetings: list[bool] = []
+    control.start_workday_requested.connect(lambda: started_days.append(True))
+    control.start_meeting_requested.connect(started_meetings.append)
+    control.end_meeting_requested.connect(lambda: ended_meetings.append(True))
+
+    assert control.state_label.text() == "Рабочий день не начат"
+    assert control.primary_button.text() == "Начать рабочий день"
+
+    control.primary_button.click()
+    assert started_days == [True]
+
+    control.update_state(
+        workday_active=True,
+        meeting_active=False,
+        recorder_enabled=False,
+        pipeline_running=False,
+    )
+    assert control.primary_button.text() == "Начать созвон"
+
+    control.primary_button.click()
+    assert not control.title_input.isHidden()
+
+    control.primary_button.click()
+    assert not control.error_label.isHidden()
+    assert started_meetings == []
+
+    control.title_input.setText("Быстрый созвон")
+    control.primary_button.click()
+    assert started_meetings == ["Быстрый созвон"]
+
+    control.update_state(
+        workday_active=True,
+        meeting_active=True,
+        recorder_enabled=True,
+        pipeline_running=True,
+        meeting_title="Быстрый созвон",
+        elapsed_text="00:01:23",
+        background_message="Фоновая обработка выполняется.",
+    )
+    assert control.state_label.text() == "Созвон идет"
+    assert "Быстрый созвон" in control.detail_label.text()
+    assert control.timer_label.text() == "00:01:23"
+    assert not control.timer_label.isHidden()
+    assert "Фоновая обработка выполняется." in control.background_label.text()
+
+    control.primary_button.click()
+    assert control.state_label.text() == "Завершить созвон?"
+    assert ended_meetings == []
+
+    control.secondary_button.click()
+    assert control.state_label.text() == "Созвон идет"
+
+    control.primary_button.click()
+    control.primary_button.click()
+    assert ended_meetings == [True]
+
+    control.close_from_app()
+    app.processEvents()
+
+
+def test_main_window_toggles_floating_control_and_closes_it_with_app(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.show()
+    app.processEvents()
+
+    assert window.floating_control.isVisible()
+    assert window.toggle_floating_button.text() == "Скрыть плавающую кнопку"
+
+    window.toggle_floating_control()
+    app.processEvents()
+    assert not window.floating_control.isVisible()
+    assert window.toggle_floating_button.text() == "Показать плавающую кнопку"
+
+    window.toggle_floating_control()
+    app.processEvents()
+    assert window.floating_control.isVisible()
+
+    window.floating_control.close()
+    app.processEvents()
+    assert not window.floating_control.isVisible()
+    assert window.isVisible()
+
+    window.close()
+    app.processEvents()
+    assert not window.floating_control.isVisible()
+
+
+def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.floating_control.primary_button.click()
+    assert storage.workday_active
+    assert window.floating_control.primary_button.text() == "Начать созвон"
+
+    window.floating_control.primary_button.click()
+    window.floating_control.title_input.setText("Созвон из кнопки")
+    window.floating_control.primary_button.click()
+
+    assert storage.meeting_active
+    metadata = storage.read_meeting_metadata(storage.active_meeting_folder)
+    assert metadata["title"] == "Созвон из кнопки"
+    assert window.floating_control.state_label.text() == "Созвон идет"
+    assert window.floating_control.timer_label.text() == window.active_call_timer_value.text()
+    assert not window.floating_control.timer_label.isHidden()
+
+    window.floating_control.primary_button.click()
+    assert storage.meeting_active
+    assert window.floating_control.state_label.text() == "Завершить созвон?"
+
+    window.floating_control.primary_button.click()
+    deadline = time.time() + 2
+    while window.pipeline_running and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert not storage.meeting_active
+    assert window.floating_control.primary_button.text() == "Начать созвон"
+
+    window.close()
+    app.processEvents()
+
+
+def test_floating_control_pipeline_progress_updates_background_text(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.pipeline_running = True
+
+    window._on_pipeline_progress("audio_running", "Тестовый pipeline выполняется.")
+
+    assert "Тестовый pipeline выполняется." in window.floating_control.background_label.text()
+
+    window.pipeline_running = False
+    window.close()
     app.processEvents()
 
 
