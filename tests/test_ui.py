@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
@@ -77,6 +77,50 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     assert "Планерка" in window.active_call_title_value.text()
     assert "Создано встреч за день: 1" in window.today_meetings_value.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert isinstance(window.pages.widget(0), QScrollArea)
+    assert window.pages.widget(0).widgetResizable()
+    assert set(window.readiness_badges) == {
+        "OBS",
+        "FFmpeg",
+        "Whisper",
+        "Summary",
+        "API key",
+        "Summary endpoint",
+    }
+    assert window.readiness_badges["OBS"].text() == "Не проверено"
+    assert window.readiness_tiles["OBS"].minimumHeight() >= 82
+    assert window.readiness_tiles["OBS"].minimumWidth() >= 300
+    assert window.readiness_labels["OBS"].wordWrap()
+    assert window.check_readiness_button.text() == "Проверить готовность"
+    assert window.check_readiness_button.objectName() == "headerPrimaryButton"
+    assert window.check_readiness_button.height() <= 34
+    assert window.toggle_readiness_button.text() == "Свернуть"
+    assert window.toggle_readiness_button.objectName() == "headerButton"
+    assert window.toggle_readiness_button.height() <= 34
+    assert window.readiness_card.height() == window.READINESS_CARD_EXPANDED_HEIGHT
+    assert window.readiness_body.height() == window.READINESS_GRID_HEIGHT
+    assert not window.readiness_body.isHidden()
+
+    window.toggle_readiness_button.click()
+
+    assert window.readiness_body.isHidden()
+    assert window.readiness_card.height() == window.READINESS_CARD_COLLAPSED_HEIGHT
+    assert window.toggle_readiness_button.text() == "Развернуть"
+    assert window.start_workday_button.objectName() == "primaryButton"
+    assert window.start_meeting_button.objectName() == "primaryButton"
+    assert window.end_meeting_button.objectName() == "dangerButton"
+    assert window.end_workday_button.objectName() == "dangerButton"
 
     window.close()
     app.processEvents()
