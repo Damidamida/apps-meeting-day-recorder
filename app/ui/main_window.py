@@ -9,11 +9,11 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -70,6 +70,194 @@ class ClickableFrame(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
+
+
+class StartMeetingDialog(QDialog):
+    def __init__(self, recorder: Recorder, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("meetingDialog")
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedWidth(520)
+        self.title_value = ""
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        card = QFrame()
+        card.setObjectName("meetingDialogCard")
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        body = QWidget()
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(18, 18, 18, 14)
+        body_layout.setSpacing(10)
+
+        title_label = QLabel("Начать встречу")
+        title_label.setObjectName("dialogTitle")
+        title_label.setMinimumHeight(24)
+
+        name_label = QLabel("Название встречи")
+        name_label.setObjectName("dialogLabel")
+        self.title_input = QLineEdit()
+        self.title_input.setObjectName("meetingTitleInput")
+        self.title_input.setPlaceholderText("Например: синхронизация по релизу")
+        self.title_input.returnPressed.connect(self._accept_if_valid)
+
+        recording_label = QLabel("Запись")
+        recording_label.setObjectName("dialogLabel")
+        self.recording_status_label = QLabel(self._recording_status_text(recorder))
+        self.recording_status_label.setObjectName("dialogRecordingStatus")
+        self.recording_status_label.setProperty(
+            "state",
+            "ok" if getattr(recorder, "enabled", False) else "wait",
+        )
+
+        self.error_label = QLabel("Введите название встречи.")
+        self.error_label.setObjectName("dialogError")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
+
+        body_layout.addWidget(title_label)
+        body_layout.addSpacing(4)
+        body_layout.addWidget(name_label)
+        body_layout.addWidget(self.title_input)
+        body_layout.addSpacing(6)
+        body_layout.addWidget(recording_label)
+        body_layout.addWidget(self.recording_status_label)
+        body_layout.addWidget(self.error_label)
+        body.setLayout(body_layout)
+
+        footer = QWidget()
+        footer.setObjectName("meetingDialogFooter")
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(18, 12, 10, 10)
+        footer_layout.setSpacing(8)
+        footer_layout.addStretch(1)
+        cancel_button = QPushButton("Отмена")
+        cancel_button.setObjectName("dialogButton")
+        cancel_button.clicked.connect(self.reject)
+        start_button = QPushButton("Начать встречу")
+        start_button.setObjectName("dialogPrimaryButton")
+        start_button.clicked.connect(self._accept_if_valid)
+        footer_layout.addWidget(cancel_button)
+        footer_layout.addWidget(start_button)
+        footer.setLayout(footer_layout)
+
+        card_layout.addWidget(body)
+        card_layout.addWidget(footer)
+        card.setLayout(card_layout)
+        root_layout.addWidget(card)
+        self.setLayout(root_layout)
+        self.setStyleSheet(self._dialog_style())
+
+    @staticmethod
+    def _recording_status_text(recorder: Recorder) -> str:
+        if getattr(recorder, "enabled", False):
+            return "OBS будет запущен автоматически"
+        return "OBS недоступен или выключен, встреча начнется без записи"
+
+    @staticmethod
+    def _dialog_style() -> str:
+        return """
+            QDialog#meetingDialog {
+                background: transparent;
+                font-family: "Segoe UI";
+                font-size: 13px;
+                color: #3a1408;
+            }
+            QFrame#meetingDialogCard {
+                background: #fffdf8;
+                border-radius: 8px;
+            }
+            QLabel#dialogTitle {
+                color: #3a1408;
+                font-size: 16px;
+                font-weight: 800;
+            }
+            QLabel#dialogLabel {
+                color: #7b4b35;
+                font-weight: 500;
+            }
+            QLineEdit#meetingTitleInput {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #ead8c6;
+                border-radius: 6px;
+                padding: 8px 10px;
+                min-height: 32px;
+            }
+            QLineEdit#meetingTitleInput:focus {
+                border-color: #ff6f1a;
+            }
+            QLabel#dialogRecordingStatus {
+                border-radius: 10px;
+                padding: 4px 10px;
+                font-weight: 700;
+            }
+            QLabel#dialogRecordingStatus[state="ok"] {
+                background: #d7f8df;
+                color: #007a32;
+            }
+            QLabel#dialogRecordingStatus[state="wait"] {
+                background: #f3e8dc;
+                color: #7b4b35;
+            }
+            QLabel#dialogError {
+                color: #d9280f;
+                font-weight: 600;
+            }
+            QWidget#meetingDialogFooter {
+                background: #f6efe6;
+                border-top: 1px solid #ead8c6;
+            }
+            QPushButton#dialogButton {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #ead8c6;
+                border-radius: 6px;
+                padding: 8px 12px;
+                min-height: 28px;
+                font-weight: 600;
+            }
+            QPushButton#dialogButton:hover {
+                border-color: #ff6f1a;
+                color: #ff6f1a;
+            }
+            QPushButton#dialogPrimaryButton {
+                background: #ff6f1a;
+                color: #ffffff;
+                border: 1px solid #ff6f1a;
+                border-radius: 6px;
+                padding: 8px 12px;
+                min-height: 28px;
+                font-weight: 800;
+            }
+            QPushButton#dialogPrimaryButton:hover {
+                background: #f45a00;
+                border-color: #f45a00;
+            }
+        """
+
+    def _accept_if_valid(self) -> None:
+        title = self.title_input.text().strip()
+        if not title:
+            self.error_label.show()
+            self.title_input.setFocus()
+            return
+        self.title_value = title
+        self.accept()
+
+    @classmethod
+    def get_title(cls, parent: QWidget, recorder: Recorder) -> tuple[str, bool]:
+        dialog = cls(recorder, parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return "", False
+        return dialog.title_value, True
 
 
 class MainWindow(QMainWindow):
@@ -1425,7 +1613,7 @@ class MainWindow(QMainWindow):
         self._refresh_after_lifecycle_change()
 
     def start_meeting(self) -> None:
-        title, accepted = QInputDialog.getText(self, "Начать встречу", "Название встречи:")
+        title, accepted = StartMeetingDialog.get_title(self, self.recorder)
         if not accepted:
             self.status_label.setText("Создание встречи отменено.")
             return
