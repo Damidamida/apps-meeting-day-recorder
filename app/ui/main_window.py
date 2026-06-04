@@ -6,6 +6,8 @@ from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFormLayout,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QTabWidget,
@@ -53,6 +56,10 @@ class MeetingPipelineWorker(QObject):
 
 
 class MainWindow(QMainWindow):
+    READINESS_CARD_EXPANDED_HEIGHT = 276
+    READINESS_CARD_COLLAPSED_HEIGHT = 86
+    READINESS_GRID_HEIGHT = 182
+
     def __init__(
         self,
         storage: StorageService | None = None,
@@ -284,11 +291,12 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
-            QWidget#readinessTile {
+            QFrame#readinessTile {
                 background: #fffdf8;
                 border: 1px solid #ead8c6;
                 border-radius: 8px;
                 min-height: 82px;
+                max-height: 82px;
                 min-width: 300px;
             }
             QLabel#readinessTitle {
@@ -416,12 +424,14 @@ class MainWindow(QMainWindow):
         card.setLayout(layout)
         return card
 
-    def _create_readiness_card(self, body_layout: QVBoxLayout) -> QWidget:
+    def _create_readiness_card(self, body_layout) -> QWidget:
         card = QWidget()
         card.setObjectName("card")
+        card.setFixedHeight(self.READINESS_CARD_EXPANDED_HEIGHT)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout()
         layout.setContentsMargins(18, 10, 18, 16)
-        layout.setSpacing(14)
+        layout.setSpacing(8)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -460,16 +470,24 @@ class MainWindow(QMainWindow):
         header_layout.setAlignment(self.toggle_readiness_button, Qt.AlignmentFlag.AlignTop)
 
         self.readiness_body = QWidget()
+        self.readiness_body.setFixedHeight(self.READINESS_GRID_HEIGHT)
+        self.readiness_body.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.readiness_body.setLayout(body_layout)
+        self.readiness_card = card
 
         layout.addLayout(header_layout)
-        layout.addWidget(self.readiness_body)
+        layout.addWidget(self.readiness_body, 0, Qt.AlignmentFlag.AlignTop)
         card.setLayout(layout)
         return card
 
     def _toggle_readiness_card(self) -> None:
         is_collapsed = self.readiness_body.isHidden()
         self.readiness_body.setVisible(is_collapsed)
+        self.readiness_card.setFixedHeight(
+            self.READINESS_CARD_EXPANDED_HEIGHT
+            if is_collapsed
+            else self.READINESS_CARD_COLLAPSED_HEIGHT
+        )
         self.toggle_readiness_button.setText("Свернуть" if is_collapsed else "Развернуть")
 
     def _create_pipeline_step_labels(self, key: str, title: str) -> tuple[QLabel, QLabel]:
@@ -487,10 +505,12 @@ class MainWindow(QMainWindow):
         return title_label, status_label
 
     def _create_readiness_tile(self, component: str) -> QWidget:
-        tile = QWidget()
+        tile = QFrame()
         tile.setObjectName("readinessTile")
         tile.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        tile.setMinimumHeight(82)
+        tile.setFrameShape(QFrame.Shape.StyledPanel)
+        tile.setFrameShadow(QFrame.Shadow.Plain)
+        tile.setFixedHeight(82)
         tile.setMinimumWidth(300)
         tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         tile_layout = QVBoxLayout()
@@ -536,6 +556,7 @@ class MainWindow(QMainWindow):
 
     def _create_workday_page(self) -> QWidget:
         page = QWidget()
+        page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -547,8 +568,10 @@ class MainWindow(QMainWindow):
             )
         )
 
-        readiness_layout = QVBoxLayout()
-        readiness_layout.setSpacing(10)
+        readiness_layout = QGridLayout()
+        readiness_layout.setContentsMargins(0, 0, 0, 0)
+        readiness_layout.setHorizontalSpacing(10)
+        readiness_layout.setVerticalSpacing(10)
         readiness_rows = [
             "OBS",
             "FFmpeg",
@@ -557,12 +580,19 @@ class MainWindow(QMainWindow):
             "API key",
             "Summary endpoint",
         ]
-        for row_components in [readiness_rows[:3], readiness_rows[3:6]]:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(10)
-            for component in row_components:
-                row_layout.addWidget(self._create_readiness_tile(component), 1)
-            readiness_layout.addLayout(row_layout)
+        for index, component in enumerate(readiness_rows):
+            row = index // 3
+            column = index % 3
+            readiness_layout.addWidget(
+                self._create_readiness_tile(component),
+                row,
+                column,
+                Qt.AlignmentFlag.AlignTop,
+            )
+        for column in range(3):
+            readiness_layout.setColumnStretch(column, 1)
+        for row in range(2):
+            readiness_layout.setRowMinimumHeight(row, 82)
         layout.addWidget(self._create_readiness_card(readiness_layout))
 
         status_layout = QFormLayout()
@@ -650,9 +680,14 @@ class MainWindow(QMainWindow):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
         layout.addWidget(self.status_label)
-        layout.addStretch()
         page.setLayout(layout)
-        return page
+
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("workdayScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setWidget(page)
+        return scroll_area
 
     def _create_review_page(self) -> QWidget:
         page = QWidget()

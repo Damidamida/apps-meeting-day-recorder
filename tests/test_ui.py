@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
@@ -88,6 +88,8 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
+    assert isinstance(window.pages.widget(0), QScrollArea)
+    assert window.pages.widget(0).widgetResizable()
     assert set(window.readiness_badges) == {
         "OBS",
         "FFmpeg",
@@ -106,11 +108,14 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.toggle_readiness_button.text() == "Свернуть"
     assert window.toggle_readiness_button.objectName() == "headerButton"
     assert window.toggle_readiness_button.height() <= 34
+    assert window.readiness_card.height() == window.READINESS_CARD_EXPANDED_HEIGHT
+    assert window.readiness_body.height() == window.READINESS_GRID_HEIGHT
     assert not window.readiness_body.isHidden()
 
     window.toggle_readiness_button.click()
 
     assert window.readiness_body.isHidden()
+    assert window.readiness_card.height() == window.READINESS_CARD_COLLAPSED_HEIGHT
     assert window.toggle_readiness_button.text() == "Развернуть"
     assert window.start_workday_button.objectName() == "primaryButton"
     assert window.start_meeting_button.objectName() == "primaryButton"
