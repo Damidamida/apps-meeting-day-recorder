@@ -79,8 +79,13 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     assert "Планерка" in window.active_call_title_value.text()
     assert "Создано встреч за день: 1" in window.today_meetings_value.text()
+    assert window.selected_workday_meeting_folder is None
+    assert storage.active_meeting_folder in window.workday_meeting_cards
+
+    window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
+
     assert window.selected_workday_meeting_folder == storage.active_meeting_folder
-    assert "Выполняется" in window.pipeline_labels["recording"].text()
+    assert "Пропущено" in window.pipeline_labels["recording"].text()
 
     window.close()
     app.processEvents()
@@ -115,16 +120,28 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.readiness_card.height() == window.READINESS_CARD_EXPANDED_HEIGHT
     assert window.readiness_body.height() == window.READINESS_GRID_HEIGHT
     assert not window.readiness_body.isHidden()
+    assert window.toggle_meetings_button.text() == "Свернуть"
+    assert not window.meetings_body.isHidden()
 
     window.toggle_readiness_button.click()
+    window.toggle_meetings_button.click()
 
     assert window.readiness_body.isHidden()
     assert window.readiness_card.height() == window.READINESS_CARD_COLLAPSED_HEIGHT
     assert window.toggle_readiness_button.text() == "Развернуть"
-    assert window.start_workday_button.objectName() == "primaryButton"
-    assert window.start_meeting_button.objectName() == "primaryButton"
+    assert window.meetings_body.isHidden()
+    assert window.toggle_meetings_button.text() == "Развернуть"
+    assert window.start_workday_button is window.end_workday_button
+    assert window.workday_action_button.text() == "Начать рабочий день"
+    assert window.workday_action_button.objectName() == "primaryButton"
+    assert window.start_meeting_button.isHidden()
     assert window.end_meeting_button.objectName() == "dangerButton"
-    assert window.end_workday_button.objectName() == "dangerButton"
+
+    window.start_workday()
+
+    assert window.workday_action_button.text() == "Завершить рабочий день"
+    assert window.workday_action_button.objectName() == "dangerButton"
+    assert not window.start_meeting_button.isHidden()
 
     window.close()
     app.processEvents()
@@ -139,6 +156,8 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     window.start_workday()
     with patch("app.ui.main_window.QInputDialog.getText", return_value=("Pipeline", True)):
         window.start_meeting()
+
+    window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
 
     assert set(window.pipeline_step_titles) == {
         "meeting",
@@ -156,6 +175,34 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     assert window.pipeline_labels["audio"].minimumWidth() == 420
     assert window.pipeline_labels["audio"].minimumHeight() == 28
     assert not window.pipeline_labels["audio"].wordWrap()
+
+    window.close()
+    app.processEvents()
+
+
+def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.start_workday()
+    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Карточка", True)):
+        window.start_meeting()
+    meeting_folder = storage.active_meeting_folder
+
+    assert meeting_folder in window.workday_meeting_cards
+    assert window.open_day_folder_button.isHidden()
+
+    window.workday_meeting_cards[meeting_folder].clicked.emit()
+
+    meeting_card = window.workday_meeting_cards[meeting_folder]
+    meeting_buttons = {
+        button.text()
+        for button in meeting_card.findChildren(type(window.workday_action_button))
+    }
+    assert "Открыть папку встречи" in meeting_buttons
+    assert "Открыть папку дня" in meeting_buttons
 
     window.close()
     app.processEvents()
@@ -189,6 +236,7 @@ def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
     assert window.review_tabs.tabText(1) == "Транскрипт"
     assert not hasattr(window, "tasks_editor")
     assert window.selected_review_meeting_folder == meeting_folder
+    assert meeting_folder in window.review_meeting_cards
     assert window.meeting_summary_editor.toPlainText() == "# Итоги встречи\n"
     assert window.meeting_transcript_editor.isReadOnly()
     assert window.meeting_transcript_editor.toPlainText() == "# Транскрипт встречи\n"
@@ -201,6 +249,34 @@ def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
     assert window.day_summary_editor.isEnabled()
     assert window.day_summary_editor.toPlainText() == "# Итоги дня\n"
     assert window.save_final_files_button.isEnabled()
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_meeting_card_click_selects_whole_card(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    first = storage.create_meeting_folder(
+        "Первая",
+        started_at=datetime(2026, 6, 4, 10, 0, 0),
+        metadata={"status": "ended"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая",
+        started_at=datetime(2026, 6, 4, 11, 0, 0),
+        metadata={"status": "ended"},
+    )
+    window = MainWindow(storage, recorder)
+    window.open_review()
+
+    assert window.selected_review_meeting_folder == first
+
+    window.review_meeting_cards[second].clicked.emit()
+
+    assert window.selected_review_meeting_folder == second
 
     window.close()
     app.processEvents()
@@ -390,6 +466,8 @@ def test_late_pipeline_progress_uses_saved_meeting_folder(tmp_path: Path) -> Non
     storage.active_meeting_folder = meeting_folder
     window = MainWindow(storage, recorder)
     window.pipeline_meeting_folder = meeting_folder
+    window.selected_workday_meeting_folder = meeting_folder
+    window._refresh_workday_meetings()
 
     storage.active_meeting_folder = None
     window._on_pipeline_progress("audio_done", "Поздний сигнал audio_done.")
