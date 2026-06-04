@@ -714,7 +714,11 @@ class MainWindow(QMainWindow):
         return card
 
     def select_workday_meeting(self, meeting_folder: Path) -> None:
-        self.selected_workday_meeting_folder = meeting_folder
+        self.selected_workday_meeting_folder = (
+            None
+            if self.selected_workday_meeting_folder == meeting_folder
+            else meeting_folder
+        )
         self._refresh_workday_meetings()
         self.refresh_buttons()
 

@@ -206,6 +206,11 @@ def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path
     assert "Открыть папку встречи" in meeting_buttons
     assert "Открыть папку дня" in meeting_buttons
 
+    window.workday_meeting_cards[meeting_folder].clicked.emit()
+
+    assert window.selected_workday_meeting_folder is None
+    assert window.pipeline_labels == {}
+
     window.close()
     app.processEvents()
 
