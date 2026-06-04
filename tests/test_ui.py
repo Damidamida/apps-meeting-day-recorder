@@ -135,6 +135,13 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.active_call_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
     assert window.day_status_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
     assert window.active_call_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
+    assert window.day_status_panel.objectName() == "overviewInnerPanel"
+    assert window.active_call_panel.objectName() == "overviewInnerPanel"
+    assert window.day_status_badge.text() == "Не активен"
+    assert window.day_folder_badge.text() == "Папка не создана"
+    assert window.day_status_open_folder_button.text() == "Открыть папку дня"
+    assert window.day_status_open_folder_button.isHidden()
+    assert window.active_call_badge.parent() is not window.active_call_panel
     assert window.start_workday_button is window.end_workday_button
     assert window.workday_action_button.text() == "Начать рабочий день"
     assert window.workday_action_button.objectName() == "primaryButton"
@@ -145,7 +152,17 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
 
     assert window.workday_action_button.text() == "Завершить рабочий день"
     assert window.workday_action_button.objectName() == "dangerButton"
+    assert window.day_status_badge.text() == "Активен"
+    assert window.day_folder_badge.text() == "Папка создана"
+    assert not window.day_status_open_folder_button.isHidden()
     assert not window.start_meeting_button.isHidden()
+
+    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Карточка созвона", True)):
+        window.start_meeting()
+
+    assert window.active_call_panel.objectName() == "activeCallInnerPanel"
+    assert window.start_meeting_button.isHidden()
+    assert not window.end_meeting_button.isHidden()
 
     window.close()
     app.processEvents()

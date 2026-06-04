@@ -320,6 +320,18 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
+            QFrame#overviewInnerPanel {
+                background: #fffdf8;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                min-height: 150px;
+            }
+            QFrame#activeCallInnerPanel {
+                background: #fff3e6;
+                border: 1px solid #ffb98a;
+                border-radius: 8px;
+                min-height: 150px;
+            }
             QLabel#callTimer {
                 color: #d9280f;
                 font-size: 28px;
@@ -476,7 +488,12 @@ class MainWindow(QMainWindow):
         )
 
     @staticmethod
-    def _create_card(title: str, body_layout, header_actions: list[QWidget] | None = None) -> QWidget:
+    def _create_card(
+        title: str,
+        body_layout,
+        header_actions: list[QWidget] | None = None,
+        title_badges: list[QWidget] | None = None,
+    ) -> QWidget:
         card = QWidget()
         card.setObjectName("card")
         layout = QVBoxLayout()
@@ -489,6 +506,8 @@ class MainWindow(QMainWindow):
         title_label = QLabel(title)
         title_label.setObjectName("cardTitle")
         header_layout.addWidget(title_label)
+        for badge in title_badges or []:
+            header_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
         header_layout.addStretch(1)
         for action in header_actions or []:
             header_layout.addWidget(action, 0, Qt.AlignmentFlag.AlignTop)
@@ -898,22 +917,40 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._create_readiness_card(readiness_layout))
 
         status_layout = QVBoxLayout()
-        status_layout.setSpacing(12)
-        status_form = QFormLayout()
-        status_form.setHorizontalSpacing(18)
-        status_form.setVerticalSpacing(8)
+        status_layout.setSpacing(0)
         self.workday_status_value = QLabel()
         self.meeting_status_value = QLabel()
         self.day_folder_value = QLabel()
         self.active_meeting_value = QLabel()
         self.obs_status_value = QLabel(self.recorder.status_text)
-        status_form.addRow("Статус рабочего дня:", self.workday_status_value)
-        status_form.addRow("Статус встречи:", self.meeting_status_value)
-        status_form.addRow("Папка дня:", self.day_folder_value)
-        status_form.addRow("Активная встреча:", self.active_meeting_value)
-        status_form.addRow("Статус OBS:", self.obs_status_value)
-        status_layout.addLayout(status_form)
-        status_layout.addStretch(1)
+
+        self.day_status_badge = QLabel("Не активен")
+        self.day_status_badge.setObjectName("statusBadge")
+        self._apply_badge_style(self.day_status_badge, "wait")
+        self.day_folder_badge = QLabel("Папка не создана")
+        self.day_folder_badge.setObjectName("statusBadge")
+        self._apply_badge_style(self.day_folder_badge, "wait")
+        self.day_status_panel = QFrame()
+        self.day_status_panel.setObjectName("overviewInnerPanel")
+        self.day_status_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.day_status_panel.setMinimumHeight(160)
+        self.day_status_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        day_panel_layout = QVBoxLayout()
+        day_panel_layout.setContentsMargins(12, 10, 12, 10)
+        day_panel_layout.setSpacing(8)
+        day_panel_header = QHBoxLayout()
+        day_panel_header.setContentsMargins(0, 0, 0, 0)
+        self.day_date_title_value = QLabel()
+        self.day_date_title_value.setObjectName("heroValue")
+        day_panel_header.addWidget(self.day_date_title_value)
+        day_panel_header.addStretch(1)
+        day_panel_header.addWidget(self.day_folder_badge, 0, Qt.AlignmentFlag.AlignTop)
+        self.day_status_detail_value = QLabel()
+        self.day_status_detail_value.setObjectName("sectionHint")
+        self.day_status_detail_value.setWordWrap(True)
         day_actions_layout = QHBoxLayout()
         day_actions_layout.setSpacing(8)
         self.workday_action_button = self._add_button(
@@ -921,45 +958,92 @@ class MainWindow(QMainWindow):
         )
         self.start_workday_button = self.workday_action_button
         self.end_workday_button = self.workday_action_button
+        self.day_status_open_folder_button = self._add_button(
+            day_actions_layout, "Открыть папку дня", self.open_day_folder
+        )
         day_actions_layout.addStretch(1)
-        status_layout.addLayout(day_actions_layout)
+        day_panel_layout.addLayout(day_panel_header)
+        day_panel_layout.addWidget(self.day_status_detail_value)
+        day_panel_layout.addStretch(1)
+        day_panel_layout.addLayout(day_actions_layout)
+        self.day_status_panel.setLayout(day_panel_layout)
+        status_layout.addWidget(self.day_status_panel)
 
         active_call_layout = QVBoxLayout()
-        active_call_layout.setSpacing(10)
-        active_call_header = QHBoxLayout()
-        active_call_header.setContentsMargins(0, 0, 0, 0)
-        self.active_call_title_value = QLabel()
-        self.active_call_title_value.setObjectName("heroValue")
-        self.active_call_badge = QLabel("Ожидает")
+        active_call_layout.setSpacing(0)
+        self.active_call_badge = QLabel("Не начат")
         self.active_call_badge.setObjectName("statusBadge")
         self._apply_badge_style(self.active_call_badge, "wait")
-        active_call_header.addWidget(self.active_call_title_value)
-        active_call_header.addStretch(1)
-        active_call_header.addWidget(self.active_call_badge)
+        self.active_call_panel = QFrame()
+        self.active_call_panel.setObjectName("overviewInnerPanel")
+        self.active_call_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.active_call_panel.setMinimumHeight(160)
+        self.active_call_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        active_call_panel_layout = QHBoxLayout()
+        active_call_panel_layout.setContentsMargins(14, 12, 14, 12)
+        active_call_panel_layout.setSpacing(14)
+        active_call_text_layout = QVBoxLayout()
+        active_call_text_layout.setContentsMargins(0, 0, 0, 0)
+        active_call_text_layout.setSpacing(8)
+        active_call_text_layout.addStretch(1)
+        self.active_call_title_value = QLabel()
+        self.active_call_title_value.setObjectName("heroValue")
         self.active_call_detail_value = QLabel()
         self.active_call_detail_value.setObjectName("sectionHint")
         self.active_call_detail_value.setWordWrap(True)
+        active_call_text_layout.addWidget(self.active_call_title_value)
+        active_call_text_layout.addWidget(self.active_call_detail_value)
+        active_call_text_layout.addStretch(1)
+
+        active_call_controls_layout = QVBoxLayout()
+        active_call_controls_layout.setContentsMargins(0, 0, 0, 0)
+        active_call_controls_layout.setSpacing(10)
+        active_call_controls_layout.addStretch(1)
         self.active_call_timer_value = QLabel("00:00:00")
         self.active_call_timer_value.setObjectName("callTimer")
-        active_call_buttons = QHBoxLayout()
-        active_call_buttons.setSpacing(8)
-        self.start_meeting_button = self._add_button(
-            active_call_buttons, "Начать встречу", self.start_meeting, "primaryButton"
+        self.active_call_timer_value.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.start_meeting_button = QPushButton("Начать встречу")
+        self.start_meeting_button.setObjectName("primaryButton")
+        self.start_meeting_button.clicked.connect(self.start_meeting)
+        self.end_meeting_button = QPushButton("Завершить встречу")
+        self.end_meeting_button.setObjectName("dangerButton")
+        self.end_meeting_button.clicked.connect(self.end_meeting)
+        active_call_controls_layout.addWidget(
+            self.active_call_timer_value,
+            0,
+            Qt.AlignmentFlag.AlignRight,
         )
-        self.end_meeting_button = self._add_button(
-            active_call_buttons, "Завершить встречу", self.end_meeting, "dangerButton"
+        active_call_controls_layout.addWidget(
+            self.start_meeting_button,
+            0,
+            Qt.AlignmentFlag.AlignRight,
         )
-        active_call_buttons.addStretch(1)
-        active_call_layout.addLayout(active_call_header)
-        active_call_layout.addWidget(self.active_call_detail_value)
-        active_call_layout.addWidget(self.active_call_timer_value, 0, Qt.AlignmentFlag.AlignRight)
-        active_call_layout.addStretch(1)
-        active_call_layout.addLayout(active_call_buttons)
+        active_call_controls_layout.addWidget(
+            self.end_meeting_button,
+            0,
+            Qt.AlignmentFlag.AlignRight,
+        )
+        active_call_controls_layout.addStretch(1)
+        active_call_panel_layout.addLayout(active_call_text_layout, 1)
+        active_call_panel_layout.addLayout(active_call_controls_layout)
+        self.active_call_panel.setLayout(active_call_panel_layout)
+        active_call_layout.addWidget(self.active_call_panel)
 
         day_overview_layout = QHBoxLayout()
         day_overview_layout.setSpacing(14)
-        self.day_status_card = self._create_card("Состояние дня", status_layout)
-        self.active_call_card = self._create_card("Активный созвон", active_call_layout)
+        self.day_status_card = self._create_card(
+            "Состояние дня",
+            status_layout,
+            title_badges=[self.day_status_badge],
+        )
+        self.active_call_card = self._create_card(
+            "Активный созвон",
+            active_call_layout,
+            title_badges=[self.active_call_badge],
+        )
         for overview_card in [self.day_status_card, self.active_call_card]:
             overview_card.setMinimumHeight(self.DAY_OVERVIEW_CARD_MIN_HEIGHT)
             overview_card.setSizePolicy(
@@ -1959,10 +2043,72 @@ class MainWindow(QMainWindow):
         if self.pages.currentIndex() == 1:
             self.refresh_review()
 
+    @staticmethod
+    def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
+        if widget.objectName() == object_name:
+            return
+        widget.setObjectName(object_name)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    @staticmethod
+    def _format_day_title(value: date) -> str:
+        months = [
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        ]
+        return f"{value.day} {months[value.month - 1]} {value.year}"
+
+    def _refresh_day_status_display(self, day_folder: Path | None) -> None:
+        if not hasattr(self, "day_date_title_value"):
+            return
+
+        today_title = self._format_day_title(date.today())
+        if self.storage.workday_active:
+            self.day_status_badge.setText("Активен")
+            self._apply_badge_style(self.day_status_badge, "active")
+            self.day_date_title_value.setText(today_title)
+            self.day_status_detail_value.setText(
+                "Рабочий день активен. Можно запускать встречи и сохранять локальные итоги."
+            )
+        elif day_folder is not None:
+            self.day_status_badge.setText("Не активен")
+            self._apply_badge_style(self.day_status_badge, "wait")
+            self.day_date_title_value.setText(today_title)
+            self.day_status_detail_value.setText(
+                "Рабочий день не активен. Можно переоткрыть день и продолжить работу в той же папке."
+            )
+        else:
+            self.day_status_badge.setText("Не активен")
+            self._apply_badge_style(self.day_status_badge, "wait")
+            self.day_date_title_value.setText("Рабочий день не начат")
+            self.day_status_detail_value.setText(
+                "Начните рабочий день, чтобы записывать встречи и сохранять итоги локально."
+            )
+
+        if day_folder is not None:
+            self.day_folder_badge.setText("Папка создана")
+            self._apply_badge_style(self.day_folder_badge, "ok")
+        else:
+            self.day_folder_badge.setText("Папка не создана")
+            self._apply_badge_style(self.day_folder_badge, "wait")
+
     def _refresh_active_call_display(self) -> None:
         if not hasattr(self, "active_call_title_value"):
             return
         if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
+            self._set_widget_object_name(self.active_call_panel, "activeCallInnerPanel")
             metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
             self.active_call_title_value.setText(
                 str(metadata.get("title") or self.storage.active_meeting_folder.name)
@@ -1978,6 +2124,7 @@ class MainWindow(QMainWindow):
             self._apply_badge_style(self.active_call_badge, badge_state)
             return
 
+        self._set_widget_object_name(self.active_call_panel, "overviewInnerPanel")
         self.active_call_timer_value.setText("00:00:00")
         if self.storage.workday_active:
             self.active_call_title_value.setText("Нет активного созвона")
@@ -2008,6 +2155,10 @@ class MainWindow(QMainWindow):
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def refresh_buttons(self) -> None:
+        day_folder = self.storage.get_today_day_folder()
+        has_day_folder = day_folder is not None
+        has_today_meetings = bool(self.storage.list_today_meeting_folders()) if has_day_folder else False
+
         self.check_readiness_button.setEnabled(not self.pipeline_running)
         self._configure_workday_action_button()
         self.start_meeting_button.setEnabled(
@@ -2018,13 +2169,10 @@ class MainWindow(QMainWindow):
             self.storage.workday_active and not self.storage.meeting_active
         )
         self.end_meeting_button.setVisible(self.storage.meeting_active)
-        self.open_day_folder_button.setEnabled(
-            self.storage.get_today_day_folder() is not None
-        )
-        self.open_day_folder_button.setVisible(
-            self.storage.get_today_day_folder() is not None
-            and not self.storage.list_today_meeting_folders()
-        )
+        self.day_status_open_folder_button.setEnabled(has_day_folder)
+        self.day_status_open_folder_button.setVisible(has_day_folder)
+        self.open_day_folder_button.setEnabled(has_day_folder)
+        self.open_day_folder_button.setVisible(has_day_folder and not has_today_meetings)
         self._refresh_review_buttons()
 
     def _configure_workday_action_button(self) -> None:
@@ -2062,6 +2210,7 @@ class MainWindow(QMainWindow):
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
         self.obs_status_value.setText(self.recorder.status_text)
+        self._refresh_day_status_display(day_folder)
         self._refresh_active_call_display()
         meeting_count = len(self.storage.list_today_meeting_folders()) if day_folder else 0
         if meeting_count == 0:
