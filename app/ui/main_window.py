@@ -5,13 +5,13 @@ from pathlib import Path
 import yaml
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -72,53 +72,62 @@ class ClickableFrame(QFrame):
         super().mouseReleaseEvent(event)
 
 
-class StartMeetingDialog(QDialog):
+class StartMeetingOverlay(QWidget):
+    submitted = Signal(str)
+    canceled = Signal()
+
     def __init__(self, recorder: Recorder, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("meetingDialog")
-        self.setModal(True)
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedWidth(520)
-        self.title_value = ""
+        self.setObjectName("meetingOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.hide()
 
         root_layout = QVBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
+        root_layout.addStretch(1)
 
-        card = QFrame()
-        card.setObjectName("meetingDialogCard")
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(24, 24, 24, 24)
+        center_row.addStretch(1)
+
+        self.card = QFrame()
+        self.card.setObjectName("meetingOverlayCard")
+        self.card.setFixedWidth(560)
+        shadow = QGraphicsDropShadowEffect(self.card)
+        shadow.setBlurRadius(32)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(58, 20, 8, 90))
+        self.card.setGraphicsEffect(shadow)
+
         card_layout = QVBoxLayout()
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
 
         body = QWidget()
+        body.setObjectName("meetingOverlayBody")
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 18, 18, 14)
+        body_layout.setContentsMargins(24, 22, 24, 18)
         body_layout.setSpacing(10)
 
         title_label = QLabel("Начать встречу")
-        title_label.setObjectName("dialogTitle")
-        title_label.setMinimumHeight(24)
+        title_label.setObjectName("overlayTitle")
+        title_label.setMinimumHeight(26)
 
         name_label = QLabel("Название встречи")
-        name_label.setObjectName("dialogLabel")
+        name_label.setObjectName("overlayLabel")
         self.title_input = QLineEdit()
         self.title_input.setObjectName("meetingTitleInput")
         self.title_input.setPlaceholderText("Например: синхронизация по релизу")
         self.title_input.returnPressed.connect(self._accept_if_valid)
 
         recording_label = QLabel("Запись")
-        recording_label.setObjectName("dialogLabel")
-        self.recording_status_label = QLabel(self._recording_status_text(recorder))
-        self.recording_status_label.setObjectName("dialogRecordingStatus")
-        self.recording_status_label.setProperty(
-            "state",
-            "ok" if getattr(recorder, "enabled", False) else "wait",
-        )
+        recording_label.setObjectName("overlayLabel")
+        self.recording_status_label = QLabel()
+        self.recording_status_label.setObjectName("overlayRecordingStatus")
 
         self.error_label = QLabel("Введите название встречи.")
-        self.error_label.setObjectName("dialogError")
+        self.error_label.setObjectName("overlayError")
         self.error_label.setWordWrap(True)
         self.error_label.hide()
 
@@ -133,14 +142,14 @@ class StartMeetingDialog(QDialog):
         body.setLayout(body_layout)
 
         footer = QWidget()
-        footer.setObjectName("meetingDialogFooter")
+        footer.setObjectName("meetingOverlayFooter")
         footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(18, 12, 10, 10)
-        footer_layout.setSpacing(8)
+        footer_layout.setContentsMargins(24, 14, 16, 14)
+        footer_layout.setSpacing(10)
         footer_layout.addStretch(1)
         cancel_button = QPushButton("Отмена")
         cancel_button.setObjectName("dialogButton")
-        cancel_button.clicked.connect(self.reject)
+        cancel_button.clicked.connect(self._cancel)
         start_button = QPushButton("Начать встречу")
         start_button.setObjectName("dialogPrimaryButton")
         start_button.clicked.connect(self._accept_if_valid)
@@ -150,10 +159,31 @@ class StartMeetingDialog(QDialog):
 
         card_layout.addWidget(body)
         card_layout.addWidget(footer)
-        card.setLayout(card_layout)
-        root_layout.addWidget(card)
+        self.card.setLayout(card_layout)
+        center_row.addWidget(self.card, 0, Qt.AlignmentFlag.AlignCenter)
+        center_row.addStretch(1)
+        root_layout.addLayout(center_row)
+        root_layout.addStretch(1)
         self.setLayout(root_layout)
-        self.setStyleSheet(self._dialog_style())
+        self.setStyleSheet(self._overlay_style())
+        self.update_recorder_state(recorder)
+
+    def open_for_recorder(self, recorder: Recorder) -> None:
+        self.update_recorder_state(recorder)
+        self.title_input.clear()
+        self.error_label.hide()
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.title_input.setFocus()
+
+    def update_recorder_state(self, recorder: Recorder) -> None:
+        state = "ok" if getattr(recorder, "enabled", False) else "wait"
+        self.recording_status_label.setText(self._recording_status_text(recorder))
+        self.recording_status_label.setProperty("state", state)
+        self.recording_status_label.style().unpolish(self.recording_status_label)
+        self.recording_status_label.style().polish(self.recording_status_label)
 
     @staticmethod
     def _recording_status_text(recorder: Recorder) -> str:
@@ -162,66 +192,75 @@ class StartMeetingDialog(QDialog):
         return "OBS недоступен или выключен, встреча начнется без записи"
 
     @staticmethod
-    def _dialog_style() -> str:
+    def _overlay_style() -> str:
         return """
-            QDialog#meetingDialog {
-                background: transparent;
+            QWidget#meetingOverlay {
+                background: rgba(48, 52, 60, 150);
                 font-family: "Segoe UI";
                 font-size: 13px;
                 color: #3a1408;
             }
-            QFrame#meetingDialogCard {
+            QFrame#meetingOverlayCard {
                 background: #fffdf8;
-                border-radius: 8px;
+                border: 1px solid #ead8c6;
+                border-radius: 10px;
             }
-            QLabel#dialogTitle {
+            QWidget#meetingOverlayBody {
+                background: #fffdf8;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }
+            QLabel#overlayTitle {
                 color: #3a1408;
-                font-size: 16px;
+                font-size: 17px;
                 font-weight: 800;
             }
-            QLabel#dialogLabel {
+            QLabel#overlayLabel {
                 color: #7b4b35;
                 font-weight: 500;
             }
             QLineEdit#meetingTitleInput {
                 background: #fffdf8;
                 color: #3a1408;
-                border: 1px solid #ead8c6;
+                border: 1px solid #d9bfa8;
                 border-radius: 6px;
                 padding: 8px 10px;
-                min-height: 32px;
+                min-height: 34px;
             }
             QLineEdit#meetingTitleInput:focus {
+                background: #ffffff;
                 border-color: #ff6f1a;
             }
-            QLabel#dialogRecordingStatus {
-                border-radius: 10px;
-                padding: 4px 10px;
-                font-weight: 700;
+            QLabel#overlayRecordingStatus {
+                border-radius: 11px;
+                padding: 5px 10px;
+                font-weight: 800;
             }
-            QLabel#dialogRecordingStatus[state="ok"] {
+            QLabel#overlayRecordingStatus[state="ok"] {
                 background: #d7f8df;
                 color: #007a32;
             }
-            QLabel#dialogRecordingStatus[state="wait"] {
+            QLabel#overlayRecordingStatus[state="wait"] {
                 background: #f3e8dc;
                 color: #7b4b35;
             }
-            QLabel#dialogError {
+            QLabel#overlayError {
                 color: #d9280f;
                 font-weight: 600;
             }
-            QWidget#meetingDialogFooter {
+            QWidget#meetingOverlayFooter {
                 background: #f6efe6;
                 border-top: 1px solid #ead8c6;
+                border-bottom-left-radius: 10px;
+                border-bottom-right-radius: 10px;
             }
             QPushButton#dialogButton {
                 background: #fffdf8;
                 color: #3a1408;
                 border: 1px solid #ead8c6;
                 border-radius: 6px;
-                padding: 8px 12px;
-                min-height: 28px;
+                padding: 8px 14px;
+                min-height: 30px;
                 font-weight: 600;
             }
             QPushButton#dialogButton:hover {
@@ -233,8 +272,8 @@ class StartMeetingDialog(QDialog):
                 color: #ffffff;
                 border: 1px solid #ff6f1a;
                 border-radius: 6px;
-                padding: 8px 12px;
-                min-height: 28px;
+                padding: 8px 14px;
+                min-height: 30px;
                 font-weight: 800;
             }
             QPushButton#dialogPrimaryButton:hover {
@@ -243,21 +282,24 @@ class StartMeetingDialog(QDialog):
             }
         """
 
+    def _cancel(self) -> None:
+        self.hide()
+        self.canceled.emit()
+
     def _accept_if_valid(self) -> None:
         title = self.title_input.text().strip()
         if not title:
             self.error_label.show()
             self.title_input.setFocus()
             return
-        self.title_value = title
-        self.accept()
+        self.hide()
+        self.submitted.emit(title)
 
-    @classmethod
-    def get_title(cls, parent: QWidget, recorder: Recorder) -> tuple[str, bool]:
-        dialog = cls(recorder, parent)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return "", False
-        return dialog.title_value, True
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._cancel()
+            return
+        super().keyPressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -339,6 +381,12 @@ class MainWindow(QMainWindow):
         container.setObjectName("appRoot")
         container.setLayout(root_layout)
         self.setCentralWidget(container)
+        self.start_meeting_overlay = StartMeetingOverlay(self.recorder, container)
+        self.start_meeting_overlay.submitted.connect(self._start_meeting_with_title)
+        self.start_meeting_overlay.canceled.connect(
+            lambda: self.status_label.setText("Создание встречи отменено.")
+        )
+        self._resize_start_meeting_overlay()
         self._refresh_navigation_state(self.pages.currentIndex())
         self.refresh_status()
         self.refresh_buttons()
@@ -346,6 +394,17 @@ class MainWindow(QMainWindow):
         self.active_call_timer.setInterval(1000)
         self.active_call_timer.timeout.connect(self._refresh_active_call_display)
         self.active_call_timer.start()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._resize_start_meeting_overlay()
+
+    def _resize_start_meeting_overlay(self) -> None:
+        if not hasattr(self, "start_meeting_overlay"):
+            return
+        parent = self.start_meeting_overlay.parentWidget()
+        if parent is not None:
+            self.start_meeting_overlay.setGeometry(parent.rect())
 
     def _create_navigation(self) -> QWidget:
         navigation = QWidget()
@@ -1613,10 +1672,9 @@ class MainWindow(QMainWindow):
         self._refresh_after_lifecycle_change()
 
     def start_meeting(self) -> None:
-        title, accepted = StartMeetingDialog.get_title(self, self.recorder)
-        if not accepted:
-            self.status_label.setText("Создание встречи отменено.")
-            return
+        self.start_meeting_overlay.open_for_recorder(self.recorder)
+
+    def _start_meeting_with_title(self, title: str) -> None:
         try:
             meeting_folder = self.storage.start_meeting(title)
         except ValueError as error:

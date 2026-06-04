@@ -9,11 +9,11 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
-from app.ui.main_window import MainWindow, StartMeetingDialog
+from app.ui.main_window import MainWindow, StartMeetingOverlay
 
 
 class EnabledRecorder(NoopRecorder):
@@ -21,34 +21,38 @@ class EnabledRecorder(NoopRecorder):
     status_text = "OBS: подключен"
 
 
-def test_start_meeting_dialog_uses_prototype_style_and_validates_title() -> None:
+def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> None:
     app = QApplication.instance() or QApplication([])
-    dialog = StartMeetingDialog(NoopRecorder())
+    overlay = StartMeetingOverlay(NoopRecorder())
+    submitted_titles: list[str] = []
+    overlay.submitted.connect(submitted_titles.append)
 
-    assert dialog.objectName() == "meetingDialog"
-    assert dialog.title_input.objectName() == "meetingTitleInput"
-    assert dialog.recording_status_label.text() == (
+    assert overlay.objectName() == "meetingOverlay"
+    assert overlay.card.objectName() == "meetingOverlayCard"
+    assert overlay.title_input.objectName() == "meetingTitleInput"
+    assert overlay.recording_status_label.text() == (
         "OBS недоступен или выключен, встреча начнется без записи"
     )
-    assert dialog.recording_status_label.property("state") == "wait"
+    assert overlay.recording_status_label.property("state") == "wait"
 
-    dialog._accept_if_valid()
+    overlay.open_for_recorder(NoopRecorder())
+    overlay._accept_if_valid()
 
-    assert not dialog.error_label.isHidden()
-    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert not overlay.error_label.isHidden()
+    assert submitted_titles == []
 
-    dialog.title_input.setText("Синхронизация по релизу")
-    dialog._accept_if_valid()
+    overlay.title_input.setText("Синхронизация по релизу")
+    overlay._accept_if_valid()
 
-    assert dialog.title_value == "Синхронизация по релизу"
-    assert dialog.result() == QDialog.DialogCode.Accepted
-    dialog.close()
+    assert submitted_titles == ["Синхронизация по релизу"]
+    assert overlay.isHidden()
+    overlay.close()
 
-    enabled_dialog = StartMeetingDialog(EnabledRecorder())
+    enabled_overlay = StartMeetingOverlay(EnabledRecorder())
 
-    assert enabled_dialog.recording_status_label.text() == "OBS будет запущен автоматически"
-    assert enabled_dialog.recording_status_label.property("state") == "ok"
-    enabled_dialog.close()
+    assert enabled_overlay.recording_status_label.text() == "OBS будет запущен автоматически"
+    assert enabled_overlay.recording_status_label.property("state") == "ok"
+    enabled_overlay.close()
     app.processEvents()
 
 
@@ -110,8 +114,7 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     window.start_workday()
 
-    with patch("app.ui.main_window.StartMeetingDialog.get_title", return_value=("Планерка", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Планерка")
 
     assert "Планерка" in window.active_call_title_value.text()
     assert "Создано встреч за день: 1" in window.today_meetings_value.text()
@@ -193,8 +196,14 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert not window.day_status_open_folder_button.isHidden()
     assert not window.start_meeting_button.isHidden()
 
-    with patch("app.ui.main_window.StartMeetingDialog.get_title", return_value=("Карточка созвона", True)):
-        window.start_meeting()
+    window.start_meeting()
+
+    assert not window.start_meeting_overlay.isHidden()
+    window.start_meeting_overlay._cancel()
+    assert window.start_meeting_overlay.isHidden()
+    assert not storage.meeting_active
+
+    window._start_meeting_with_title("Карточка созвона")
 
     assert window.active_call_panel.objectName() == "activeCallInnerPanel"
     assert window.start_meeting_button.isHidden()
@@ -211,8 +220,7 @@ def test_pipeline_steps_are_rendered_as_prototype_cards(tmp_path: Path) -> None:
     window = MainWindow(storage, recorder)
 
     window.start_workday()
-    with patch("app.ui.main_window.StartMeetingDialog.get_title", return_value=("Pipeline", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Pipeline")
 
     window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
 
@@ -245,8 +253,7 @@ def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path
     window = MainWindow(storage, recorder)
 
     window.start_workday()
-    with patch("app.ui.main_window.StartMeetingDialog.get_title", return_value=("Карточка", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Карточка")
     meeting_folder = storage.active_meeting_folder
 
     assert meeting_folder in window.workday_meeting_cards
@@ -511,8 +518,7 @@ def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     assert window.start_meeting_button.isEnabled()
     assert not window.end_workday_button.isEnabled()
 
-    with patch("app.ui.main_window.StartMeetingDialog.get_title", return_value=("Second", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Second")
 
     assert storage.meeting_active
     second_metadata = storage.read_meeting_metadata(storage.active_meeting_folder)
