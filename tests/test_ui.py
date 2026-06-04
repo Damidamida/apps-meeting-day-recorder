@@ -30,7 +30,7 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
         window.check_readiness()
     assert "Генерация итогов выключена" in window.readiness_labels["Summary"].text()
     assert "API key не требуется" in window.readiness_labels["API key"].text()
-    assert "Созвон не начат" in window.pipeline_labels["meeting"].text()
+    assert window.pipeline_labels == {}
 
     window.start_workday()
     assert window.start_meeting_button.isEnabled()
@@ -68,7 +68,7 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
     window = MainWindow(storage, recorder)
 
     assert window.active_call_title_value.text() == "Нет активного созвона"
-    assert "пока нет" in window.today_meetings_value.text()
+    assert "Папка дня еще не создана" in window.today_meetings_value.text()
 
     window.start_workday()
 
@@ -77,6 +77,8 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     assert "Планерка" in window.active_call_title_value.text()
     assert "Создано встреч за день: 1" in window.today_meetings_value.text()
+    assert window.selected_workday_meeting_folder == storage.active_meeting_folder
+    assert "Выполняется" in window.pipeline_labels["recording"].text()
 
     window.close()
     app.processEvents()
@@ -131,6 +133,10 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
+
+    window.start_workday()
+    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Pipeline", True)):
+        window.start_meeting()
 
     assert set(window.pipeline_step_titles) == {
         "meeting",
