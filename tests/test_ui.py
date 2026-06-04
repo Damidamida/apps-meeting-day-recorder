@@ -301,7 +301,7 @@ def test_workday_meetings_are_shown_newest_first(tmp_path: Path) -> None:
     app.processEvents()
 
 
-def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
+def test_review_screen_uses_meeting_summary_transcript_and_day_summary_card(
     tmp_path: Path,
 ) -> None:
     app = QApplication.instance() or QApplication([])
@@ -333,14 +333,19 @@ def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
     assert window.meeting_summary_editor.toPlainText() == "# Итоги встречи\n"
     assert window.meeting_transcript_editor.isReadOnly()
     assert window.meeting_transcript_editor.toPlainText() == "# Транскрипт встречи\n"
-    assert not window.day_summary_editor.isEnabled()
     assert not (day_folder / "00_day_summary_draft.md").exists()
 
     storage.save_day_summary_draft(day_folder, "# Итоги дня\n")
+    storage.ensure_day_summary_metadata(day_folder)
+    window.selected_review_meeting_folder = None
     window.refresh_review()
 
-    assert window.day_summary_editor.isEnabled()
-    assert window.day_summary_editor.toPlainText() == "# Итоги дня\n"
+    assert window.review_day_summary_selected
+    assert window.review_tabs.tabText(0) == "Итоги встреч"
+    assert window.review_tabs.tabText(1) == "Транскрипт"
+    assert window.meeting_summary_editor.toPlainText() == "# Итоги дня\n"
+    assert "Ревью" in window.meeting_transcript_editor.toPlainText()
+    assert "Открыть транскрипт внутри приложения" in window.meeting_transcript_editor.toPlainText()
     assert window.save_final_files_button.isEnabled()
 
     window.close()
@@ -516,7 +521,7 @@ def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     assert window.pipeline_running
     assert not storage.meeting_active
     assert window.start_meeting_button.isEnabled()
-    assert not window.end_workday_button.isEnabled()
+    assert window.end_workday_button.isEnabled()
 
     window._start_meeting_with_title("Second")
 
