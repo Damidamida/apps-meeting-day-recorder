@@ -111,10 +111,7 @@ class MainWindow(QMainWindow):
         self.pages.setObjectName("pages")
         self.pages.addWidget(self._create_workday_page())
         self.pages.addWidget(self._create_review_page())
-        self.pages.addWidget(self._create_placeholder_page(
-            "Архив",
-            "Здесь позже появится read-only просмотр прошлых рабочих дней и встреч.",
-        ))
+        self.pages.addWidget(self._create_archive_page())
         self.pages.addWidget(self._create_settings_page())
         self.pages.addWidget(self._create_help_page())
         self.pages.currentChanged.connect(self._refresh_navigation_state)
@@ -1094,30 +1091,94 @@ class MainWindow(QMainWindow):
         index = combo.findText(value)
         combo.setCurrentIndex(index if index >= 0 else 0)
 
-    @staticmethod
-    def _create_help_page() -> QWidget:
+    def _create_archive_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("Справка")
-        title.setObjectName("pageTitle")
-        help_text = QLabel(
-            "Текущий сценарий MVP:\n\n"
-            "1. Начать рабочий день.\n"
-            "2. Начать встречу.\n"
-            "3. Завершить встречу.\n"
-            "4. Завершить рабочий день.\n"
-            "5. Открыть ревью.\n"
-            "6. Проверить черновики и сохранить финальные файлы.\n\n"
-            "OBS можно включить в локальном config.yaml. По умолчанию запись выключена.\n"
-            "FFmpeg используется локально для извлечения audio.wav из OBS-записи.\n"
-            "Транскрипция может выполняться локально через Whisper CLI, если он доступен в PATH.\n"
-            "Генерация итогов через OpenAI по умолчанию выключена и использует только текстовый транскрипт."
+        layout.setSpacing(14)
+        layout.addWidget(
+            self._create_page_header(
+                "Архив",
+                "Будущий read-only просмотр прошлых рабочих дней и встреч.",
+            )
         )
-        help_text.setWordWrap(True)
-        layout.addWidget(title)
-        layout.addWidget(help_text)
-        layout.addStretch()
+        status_layout = QVBoxLayout()
+        status_layout.setSpacing(8)
+        archive_status = QLabel(
+            "Архив пока не реализован. Текущие локальные файлы уже сохраняются в папке данных, "
+            "но экран поиска и просмотра прошлых дней будет отдельным будущим PR."
+        )
+        archive_status.setObjectName("emptyState")
+        archive_status.setWordWrap(True)
+        status_layout.addWidget(archive_status)
+        layout.addWidget(self._create_card("Статус архива", status_layout))
+
+        planned_layout = QVBoxLayout()
+        planned_layout.setSpacing(8)
+        planned_text = QLabel(
+            "Планируемое поведение:\n"
+            "- список прошлых рабочих дней;\n"
+            "- read-only карточки встреч;\n"
+            "- открытие локальных папок и файлов;\n"
+            "- без отправки аудио, видео или transcript во внешние сервисы."
+        )
+        planned_text.setObjectName("sectionHint")
+        planned_text.setWordWrap(True)
+        planned_layout.addWidget(planned_text)
+        layout.addWidget(self._create_card("Что будет позже", planned_layout))
+        layout.addStretch(1)
+        page.setLayout(layout)
+        return page
+
+    def _create_help_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        layout.addWidget(
+            self._create_page_header(
+                "Справка",
+                "Краткая памятка по локальному рабочему сценарию.",
+            )
+        )
+
+        flow_layout = QVBoxLayout()
+        flow_text = QLabel(
+            "1. Начните рабочий день.\n"
+            "2. Начните встречу в блоке `Активный созвон`.\n"
+            "3. Завершите встречу: запись остановится, а обработка пойдет в фоне.\n"
+            "4. При необходимости сразу начните следующую встречу.\n"
+            "5. Завершите рабочий день.\n"
+            "6. Откройте `Ревью`, проверьте итоги и сохраните финальные файлы."
+        )
+        flow_text.setObjectName("sectionHint")
+        flow_text.setWordWrap(True)
+        flow_layout.addWidget(flow_text)
+        layout.addWidget(self._create_card("Основной сценарий", flow_layout))
+
+        local_layout = QVBoxLayout()
+        local_text = QLabel(
+            "Аудио и видео остаются локально. Для генерации итогов во внешний OpenAI-compatible "
+            "endpoint / ProxyAPI отправляется только текст transcript. `config.yaml`, `.env`, записи, "
+            "аудио, transcript и summary-файлы нельзя добавлять в git."
+        )
+        local_text.setObjectName("sectionHint")
+        local_text.setWordWrap(True)
+        local_layout.addWidget(local_text)
+        layout.addWidget(self._create_card("Local-first и безопасность", local_layout))
+
+        services_layout = QVBoxLayout()
+        services_text = QLabel(
+            "OBS управляет записью, FFmpeg локально извлекает audio.wav, Whisper/faster-whisper "
+            "локально готовит transcript, а Summary generation создает черновик итогов встречи "
+            "из готового текста transcript."
+        )
+        services_text.setObjectName("sectionHint")
+        services_text.setWordWrap(True)
+        services_layout.addWidget(services_text)
+        layout.addWidget(self._create_card("Сервисы", services_layout))
+
+        layout.addStretch(1)
         page.setLayout(layout)
         return page
 

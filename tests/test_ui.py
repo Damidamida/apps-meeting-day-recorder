@@ -9,7 +9,7 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
@@ -240,6 +240,27 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
     assert config["ui"]["theme"] == "dark_later"
     assert "перезапустите приложение" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_and_help_pages_explain_placeholders_and_local_flow(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.nav_buttons[2].click()
+    archive_text = "\n".join(label.text() for label in window.pages.widget(2).findChildren(QLabel))
+    assert "Архив пока не реализован" in archive_text
+    assert "read-only" in archive_text
+
+    window.nav_buttons[4].click()
+    help_text = "\n".join(label.text() for label in window.pages.widget(4).findChildren(QLabel))
+    assert "Основной сценарий" in help_text
+    assert "Local-first" in help_text
+    assert "Аудио и видео остаются локально" in help_text
 
     window.close()
     app.processEvents()
