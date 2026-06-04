@@ -355,6 +355,7 @@ class FloatingMeetingControl(QWidget):
         self._meeting_active = False
         self._recorder_enabled = False
         self._pipeline_running = False
+        self._elapsed_text = "00:00:00"
         self._background_message = ""
 
         layout = QVBoxLayout()
@@ -382,6 +383,9 @@ class FloatingMeetingControl(QWidget):
         self.detail_label = QLabel()
         self.detail_label.setObjectName("floatingDetail")
         self.detail_label.setWordWrap(True)
+        self.timer_label = QLabel("00:00:00")
+        self.timer_label.setObjectName("floatingTimer")
+        self.timer_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.background_label = QLabel()
         self.background_label.setObjectName("floatingBackground")
         self.background_label.setWordWrap(True)
@@ -408,6 +412,7 @@ class FloatingMeetingControl(QWidget):
         layout.addLayout(header_layout)
         layout.addWidget(self.state_label)
         layout.addWidget(self.detail_label)
+        layout.addWidget(self.timer_label)
         layout.addWidget(self.background_label)
         layout.addWidget(self.title_input)
         layout.addWidget(self.error_label)
@@ -430,12 +435,14 @@ class FloatingMeetingControl(QWidget):
         recorder_enabled: bool,
         pipeline_running: bool,
         meeting_title: str = "",
+        elapsed_text: str = "00:00:00",
         background_message: str = "",
     ) -> None:
         self._workday_active = workday_active
         self._meeting_active = meeting_active
         self._recorder_enabled = recorder_enabled
         self._pipeline_running = pipeline_running
+        self._elapsed_text = elapsed_text
         self._background_message = background_message
         self._error_mode = False
 
@@ -472,6 +479,7 @@ class FloatingMeetingControl(QWidget):
         self.state_label.setText("Ошибка")
         self.detail_label.setText(message)
         self.background_label.hide()
+        self.timer_label.hide()
         self.title_input.hide()
         self.error_label.hide()
         self.secondary_button.hide()
@@ -481,6 +489,7 @@ class FloatingMeetingControl(QWidget):
     def _render_day_not_started(self) -> None:
         self.state_label.setText("Рабочий день не начат")
         self.detail_label.setText("Нажмите, чтобы начать рабочий день и подготовиться к созвонам.")
+        self.timer_label.hide()
         self.title_input.hide()
         self.error_label.hide()
         self.secondary_button.hide()
@@ -489,6 +498,7 @@ class FloatingMeetingControl(QWidget):
     def _render_ready_for_meeting(self) -> None:
         self.state_label.setText("Готов к созвону")
         self.detail_label.setText("Можно быстро начать новый созвон.")
+        self.timer_label.hide()
         self.title_input.hide()
         self.error_label.hide()
         self.secondary_button.hide()
@@ -497,6 +507,7 @@ class FloatingMeetingControl(QWidget):
     def _render_title_input(self) -> None:
         self.state_label.setText("Начать созвон")
         self.detail_label.setText("Введите короткое название встречи.")
+        self.timer_label.hide()
         self.title_input.show()
         self.error_label.setVisible(False)
         self.secondary_button.setText("Отмена")
@@ -510,6 +521,8 @@ class FloatingMeetingControl(QWidget):
         if meeting_title:
             details = f"{meeting_title}\n{details}"
         self.detail_label.setText(details)
+        self.timer_label.setText(self._elapsed_text)
+        self.timer_label.show()
         self.title_input.hide()
         self.error_label.hide()
         self.secondary_button.hide()
@@ -518,6 +531,8 @@ class FloatingMeetingControl(QWidget):
     def _render_confirm_end(self) -> None:
         self.state_label.setText("Завершить созвон?")
         self.detail_label.setText("Подтвердите завершение, чтобы избежать случайного клика.")
+        self.timer_label.setText(self._elapsed_text)
+        self.timer_label.show()
         self.title_input.hide()
         self.error_label.hide()
         self.secondary_button.setText("Нет")
@@ -641,6 +656,12 @@ class FloatingMeetingControl(QWidget):
             }
             QLabel#floatingDetail {
                 color: #7b4b35;
+            }
+            QLabel#floatingTimer {
+                color: #d9280f;
+                font-size: 22px;
+                font-weight: 800;
+                padding: 2px 0;
             }
             QLabel#floatingBackground {
                 background: #fff3e6;
@@ -879,15 +900,18 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "floating_control"):
             return
         meeting_title = ""
+        elapsed_text = "00:00:00"
         if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
             metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
             meeting_title = str(metadata.get("title") or self.storage.active_meeting_folder.name)
+            elapsed_text = self._elapsed_text(metadata.get("started_at"))
         self.floating_control.update_state(
             workday_active=self.storage.workday_active,
             meeting_active=self.storage.meeting_active,
             recorder_enabled=bool(getattr(self.recorder, "enabled", False)),
             pipeline_running=self._has_processing_work(),
             meeting_title=meeting_title,
+            elapsed_text=elapsed_text,
             background_message=self.floating_background_message,
         )
 
@@ -3315,6 +3339,7 @@ class MainWindow(QMainWindow):
             badge_text, badge_state = self._meeting_badge(metadata)
             self.active_call_badge.setText(badge_text)
             self._apply_badge_style(self.active_call_badge, badge_state)
+            self._refresh_floating_control()
             return
 
         self._set_widget_object_name(self.active_call_panel, "overviewInnerPanel")

@@ -97,10 +97,13 @@ def test_floating_control_states_validate_title_and_confirm_end() -> None:
         recorder_enabled=True,
         pipeline_running=True,
         meeting_title="Быстрый созвон",
+        elapsed_text="00:01:23",
         background_message="Фоновая обработка выполняется.",
     )
     assert control.state_label.text() == "Созвон идет"
     assert "Быстрый созвон" in control.detail_label.text()
+    assert control.timer_label.text() == "00:01:23"
+    assert not control.timer_label.isHidden()
     assert "Фоновая обработка выполняется." in control.background_label.text()
 
     control.primary_button.click()
@@ -166,6 +169,8 @@ def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
     metadata = storage.read_meeting_metadata(storage.active_meeting_folder)
     assert metadata["title"] == "Созвон из кнопки"
     assert window.floating_control.state_label.text() == "Созвон идет"
+    assert window.floating_control.timer_label.text() == window.active_call_timer_value.text()
+    assert not window.floating_control.timer_label.isHidden()
 
     window.floating_control.primary_button.click()
     assert storage.meeting_active
