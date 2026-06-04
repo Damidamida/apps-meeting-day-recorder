@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QTabWidget,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +58,31 @@ class MeetingPipelineWorker(QObject):
             self.failed.emit(str(error))
             return
         self.finished.emit(str(meeting_folder))
+
+
+class DaySummaryPipelineWorker(QObject):
+    progress = Signal(str, str)
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, storage: StorageService, day_folder: Path, force: bool = False) -> None:
+        super().__init__()
+        self.storage = storage
+        self.day_folder = day_folder
+        self.force = force
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            day_folder = self.storage.process_day_summary_pipeline(
+                self.day_folder,
+                force=self.force,
+                progress_callback=lambda event, message: self.progress.emit(event, message),
+            )
+        except Exception as error:
+            self.failed.emit(str(error))
+            return
+        self.finished.emit(str(day_folder))
 
 
 class ClickableFrame(QFrame):
@@ -313,6 +339,12 @@ class MainWindow(QMainWindow):
         ("transcription", "Транскрипция", "T"),
         ("summary", "Итоги", "Σ"),
     ]
+    DAY_SUMMARY_PIPELINE_STEPS = [
+        ("collect", "Сбор итогов встреч", "1"),
+        ("check", "Проверка summary", "2"),
+        ("generate", "Генерация итогов дня", "Σ"),
+        ("links", "Ссылки на транскрипты", "T"),
+    ]
 
     def __init__(
         self,
@@ -330,6 +362,12 @@ class MainWindow(QMainWindow):
         self.processing_queue: list[Path] = []
         self.pipeline_thread: QThread | None = None
         self.pipeline_worker: MeetingPipelineWorker | None = None
+        self.day_summary_running = False
+        self.day_summary_pending = False
+        self.day_summary_force_pending = False
+        self.day_summary_day_folder: Path | None = None
+        self.day_summary_thread: QThread | None = None
+        self.day_summary_worker: DaySummaryPipelineWorker | None = None
         self.recorder = recorder or (
             storage.recorder if storage else create_recorder(self.config["obs"])
         )
@@ -347,8 +385,13 @@ class MainWindow(QMainWindow):
         self.pipeline_badges: dict[str, QLabel] = {}
         self.pipeline_messages: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
+        self.day_summary_pipeline_labels: dict[str, QLabel] = {}
+        self.day_summary_pipeline_messages: dict[str, QLabel] = {}
+        self.day_summary_pipeline_step_titles: dict[str, QLabel] = {}
         self.selected_workday_meeting_folder: Path | None = None
+        self.workday_day_summary_expanded = False
         self.selected_review_meeting_folder: Path | None = None
+        self.review_day_summary_selected = False
         self.workday_action_mode: str | None = None
         self.workday_meeting_cards: dict[Path, ClickableFrame] = {}
         self.review_meeting_cards: dict[Path, ClickableFrame] = {}
@@ -835,7 +878,15 @@ class MainWindow(QMainWindow):
         self.meetings_body.setVisible(is_collapsed)
         self.toggle_meetings_button.setText("Свернуть" if is_collapsed else "Развернуть")
 
-    def _create_pipeline_step_card(self, key: str, title: str, icon: str) -> QWidget:
+    def _create_pipeline_step_card(
+        self,
+        key: str,
+        title: str,
+        icon: str,
+        labels: dict[str, QLabel] | None = None,
+        messages: dict[str, QLabel] | None = None,
+        titles: dict[str, QLabel] | None = None,
+    ) -> QWidget:
         card = QFrame()
         card.setObjectName("pipelineStepCard")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -874,10 +925,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(status_label, 0, Qt.AlignmentFlag.AlignTop)
         card.setLayout(layout)
 
-        self.pipeline_step_titles[key] = title_label
-        self.pipeline_labels[key] = status_label
-        self.pipeline_badges[key] = status_label
-        self.pipeline_messages[key] = message_label
+        target_titles = titles if titles is not None else self.pipeline_step_titles
+        target_labels = labels if labels is not None else self.pipeline_labels
+        target_messages = messages if messages is not None else self.pipeline_messages
+        target_titles[key] = title_label
+        target_labels[key] = status_label
+        if labels is None:
+            self.pipeline_badges[key] = status_label
+        target_messages[key] = message_label
         return card
 
     def _create_readiness_tile(self, component: str) -> QWidget:
@@ -933,7 +988,16 @@ class MainWindow(QMainWindow):
         self.pipeline_badges = {}
         self.pipeline_messages = {}
         self.pipeline_step_titles = {}
+        self.day_summary_pipeline_labels = {}
+        self.day_summary_pipeline_messages = {}
+        self.day_summary_pipeline_step_titles = {}
         self.workday_meeting_cards = {}
+        day_folder = self.storage.get_today_day_folder()
+        has_day_summary = self.storage.day_summary_exists(day_folder)
+        if has_day_summary and day_folder is not None:
+            self.meetings_cards_layout.addWidget(
+                self._create_day_summary_workday_card(day_folder, self.workday_day_summary_expanded)
+            )
         meeting_folders = self._today_meeting_folders_newest_first()
         if not meeting_folders:
             self.selected_workday_meeting_folder = None
@@ -954,6 +1018,94 @@ class MainWindow(QMainWindow):
             )
         if scroll_bar is not None:
             QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_value))
+
+    def _create_day_summary_workday_card(self, day_folder: Path, expanded: bool) -> QWidget:
+        metadata = self.storage.read_day_summary_metadata(day_folder)
+        card = ClickableFrame()
+        card.setObjectName("activeMeetingCard" if expanded else "meetingCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setToolTip("Нажмите, чтобы раскрыть pipeline итогов дня.")
+        card.clicked.connect(self.select_workday_day_summary)
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(10)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_label = QLabel("Итоги дня")
+        header_label.setObjectName("meetingHeaderLabel")
+        header_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge = QLabel()
+        badge.setObjectName("statusBadge")
+        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge_text, badge_state = self._day_summary_badge(metadata)
+        badge.setText(badge_text)
+        self._apply_badge_style(badge, badge_state)
+        header_layout.addWidget(header_label, 1)
+        header_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+        card_layout.addLayout(header_layout)
+
+        detail = QLabel(self._day_summary_detail_text(metadata))
+        detail.setObjectName("sectionHint")
+        detail.setWordWrap(True)
+        detail.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        card_layout.addWidget(detail)
+
+        if expanded:
+            actions_layout = QHBoxLayout()
+            actions_layout.setSpacing(8)
+            update_button = self._add_button(
+                actions_layout,
+                "Обновить итоги дня",
+                self.update_day_summary,
+                "primaryButton",
+            )
+            open_day_button = self._add_button(
+                actions_layout,
+                "Открыть папку дня",
+                self.open_day_folder,
+            )
+            actions_layout.addStretch(1)
+            update_button.setEnabled(
+                not self.day_summary_running
+                and not self.storage.has_unfinished_meeting_processing(day_folder)
+            )
+            open_day_button.setEnabled(True)
+            card_layout.addLayout(actions_layout)
+
+            pipeline_hint = QLabel(
+                "Pipeline итогов дня: сбор summary встреч, генерация выжимки и ссылки на transcript."
+            )
+            pipeline_hint.setObjectName("sectionHint")
+            pipeline_hint.setWordWrap(True)
+            pipeline_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            card_layout.addWidget(pipeline_hint)
+            pipeline_layout = QVBoxLayout()
+            pipeline_layout.setSpacing(8)
+            pipeline_layout.setContentsMargins(0, 0, 0, 0)
+            for key, title, icon in self.DAY_SUMMARY_PIPELINE_STEPS:
+                pipeline_layout.addWidget(
+                    self._create_pipeline_step_card(
+                        key,
+                        title,
+                        icon,
+                        self.day_summary_pipeline_labels,
+                        self.day_summary_pipeline_messages,
+                        self.day_summary_pipeline_step_titles,
+                    )
+                )
+            card_layout.addLayout(pipeline_layout)
+            self._refresh_day_summary_pipeline_from_metadata(metadata)
+
+        card.setLayout(card_layout)
+        return card
+
+    def select_workday_day_summary(self) -> None:
+        self.workday_day_summary_expanded = not self.workday_day_summary_expanded
+        if self.workday_day_summary_expanded:
+            self.selected_workday_meeting_folder = None
+        self._refresh_workday_meetings()
+        self.refresh_buttons()
 
     def _create_meeting_card(self, meeting_folder: Path, expanded: bool) -> QWidget:
         metadata = self.storage.read_meeting_metadata(meeting_folder)
@@ -1033,6 +1185,8 @@ class MainWindow(QMainWindow):
             if self.selected_workday_meeting_folder == meeting_folder
             else meeting_folder
         )
+        if self.selected_workday_meeting_folder is not None:
+            self.workday_day_summary_expanded = False
         self._refresh_workday_meetings()
         self.refresh_buttons()
 
@@ -1094,6 +1248,119 @@ class MainWindow(QMainWindow):
             return "Итоги готовы", "ok"
         return "Завершена", "ok"
 
+    def _day_summary_detail_text(self, metadata: dict[str, object]) -> str:
+        included = metadata.get("included_meetings")
+        count = len(included) if isinstance(included, list) else 0
+        status = metadata.get("day_summary_status")
+        if status == "waiting_for_meetings":
+            return "Итоги дня ждут завершения обработки встреч."
+        if status == "running":
+            return "Идет сбор итогов встреч и генерация выжимки дня."
+        if status == "draft_created":
+            return f"Итоги дня готовы. Включено встреч: {count}."
+        if status == "up_to_date":
+            return f"Итоги дня актуальны. Включено встреч: {count}."
+        if status in {"failed", "openai_unavailable"}:
+            return str(metadata.get("day_summary_error") or "Итоги дня не удалось подготовить.")
+        if status == "disabled":
+            return "Генерация итогов выключена в настройках."
+        return "Итоги дня будут сформированы после завершения рабочего дня."
+
+    def _day_summary_badge(self, metadata: dict[str, object]) -> tuple[str, str]:
+        status = metadata.get("day_summary_status")
+        if status == "draft_created":
+            return "Итоги готовы", "ok"
+        if status == "up_to_date":
+            return "Актуально", "ok"
+        if status in {"running"}:
+            return "Генерация", "active"
+        if status == "waiting_for_meetings":
+            return "В очереди", "wait"
+        if status in {"failed", "openai_unavailable"}:
+            return "Ошибка", "error"
+        if status == "disabled":
+            return "Пропущено", "skip"
+        return "Ожидает", "wait"
+
+    def _refresh_day_summary_pipeline_from_metadata(self, metadata: dict[str, object]) -> None:
+        pipeline = metadata.get("pipeline")
+        if not isinstance(pipeline, dict):
+            pipeline = {}
+        for step, title, _icon in self.DAY_SUMMARY_PIPELINE_STEPS:
+            state = str(pipeline.get(step) or "wait")
+            label = self._day_summary_pipeline_label(state)
+            self._set_day_summary_pipeline_step(
+                step,
+                label,
+                self._day_summary_step_message(step, metadata, state),
+                state,
+            )
+
+    @staticmethod
+    def _day_summary_pipeline_label(state: str) -> str:
+        return {
+            "ok": "Готово",
+            "active": "Выполняется",
+            "wait": "Ожидает",
+            "skip": "Пропущено",
+            "error": "Ошибка",
+        }.get(state, "Ожидает")
+
+    def _day_summary_step_message(
+        self,
+        step: str,
+        metadata: dict[str, object],
+        state: str,
+    ) -> str:
+        if step == "collect":
+            if state == "ok":
+                return "Итоги встреч собраны."
+            if metadata.get("day_summary_status") == "waiting_for_meetings":
+                return "Ждет завершения pipeline встреч."
+            return "Ждет завершения рабочего дня."
+        if step == "check":
+            included = metadata.get("included_meetings")
+            missing = [
+                item for item in included
+                if isinstance(item, dict) and item.get("summary_missing")
+            ] if isinstance(included, list) else []
+            if state == "ok":
+                return "Summary встреч проверены."
+            if missing:
+                return f"Есть встречи без summary: {len(missing)}."
+            return "Проверка summary еще не выполнялась."
+        if step == "generate":
+            if metadata.get("day_summary_error"):
+                return str(metadata["day_summary_error"])
+            if state == "ok":
+                return "00_day_summary_draft.md готов."
+            if state == "active":
+                return "OpenAI готовит выжимку итогов встреч."
+            if state == "skip":
+                return "Новых встреч нет, обновление не требуется."
+            return "Ждет готовые данные встреч."
+        if step == "links":
+            if state == "ok":
+                return "Список переходов к transcript сформирован."
+            return "Ссылки появятся вместе с карточкой итогов дня."
+        return ""
+
+    def _set_day_summary_pipeline_step(
+        self,
+        step: str,
+        label: str,
+        message: str,
+        state: str,
+    ) -> None:
+        widget = self.day_summary_pipeline_labels.get(step)
+        if widget is None:
+            return
+        widget.setText(label)
+        self._apply_badge_style(widget, state)
+        message_widget = self.day_summary_pipeline_messages.get(step)
+        if message_widget is not None:
+            message_widget.setText(message)
+
     @staticmethod
     def _short_time(value: object) -> str:
         if not value:
@@ -1117,7 +1384,7 @@ class MainWindow(QMainWindow):
         if self._has_processing_work():
             event.ignore()
             self.status_label.setText(
-                "Дождитесь завершения обработки встречи. Сейчас обновляются локальные файлы."
+                "Дождитесь завершения обработки. Сейчас обновляются локальные файлы встречи или итогов дня."
             )
             return
         super().closeEvent(event)
@@ -1382,23 +1649,14 @@ class MainWindow(QMainWindow):
         review_content_layout.setSpacing(12)
         self.review_tabs = QTabWidget()
         self.meeting_summary_editor = QPlainTextEdit()
-        self.meeting_transcript_editor = QPlainTextEdit()
+        self.meeting_transcript_editor = QTextBrowser()
         self.meeting_transcript_editor.setReadOnly(True)
-        self.day_summary_editor = QPlainTextEdit()
+        self.meeting_transcript_editor.setOpenLinks(False)
+        self.meeting_transcript_editor.anchorClicked.connect(self._open_review_transcript_link)
+        self.day_summary_editor = self.meeting_summary_editor
         self.review_tabs.addTab(self.meeting_summary_editor, "Итоги встречи")
         self.review_tabs.addTab(self.meeting_transcript_editor, "Транскрипт")
-        review_content_layout.addWidget(self.review_tabs, 2)
-
-        day_summary_layout = QVBoxLayout()
-        day_summary_layout.setSpacing(8)
-        self.day_summary_status_label = QLabel(
-            "Итоги дня появятся после завершения рабочего дня."
-        )
-        self.day_summary_status_label.setObjectName("sectionHint")
-        self.day_summary_status_label.setWordWrap(True)
-        day_summary_layout.addWidget(self.day_summary_status_label)
-        day_summary_layout.addWidget(self.day_summary_editor)
-        review_content_layout.addWidget(self._create_card("Итоги дня", day_summary_layout), 1)
+        review_content_layout.addWidget(self.review_tabs, 1)
         content_layout.addLayout(review_content_layout, 1)
         layout.addLayout(content_layout, 1)
 
@@ -1841,6 +2099,104 @@ class MainWindow(QMainWindow):
         self.pipeline_thread = None
         self.pipeline_worker = None
         self._start_next_pipeline()
+        self._start_pending_day_summary_if_ready()
+
+    def update_day_summary(self) -> None:
+        day_folder = self.storage.get_today_day_folder()
+        if day_folder is None:
+            self.status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
+            return
+        self._request_day_summary_update(day_folder, force=True)
+
+    def _request_day_summary_update(self, day_folder: Path, force: bool = False) -> None:
+        if self.pipeline_running or self.processing_queue or self.storage.has_unfinished_meeting_processing(day_folder):
+            self.storage.mark_day_summary_waiting(day_folder)
+            self.day_summary_pending = True
+            self.day_summary_force_pending = self.day_summary_force_pending or force
+            self.day_summary_day_folder = day_folder
+            self.status_label.setText(
+                "Итоги дня поставлены в очередь и начнутся после завершения обработки встреч."
+            )
+            self._refresh_after_lifecycle_change()
+            return
+        self._start_day_summary_pipeline(day_folder, force)
+
+    def _start_pending_day_summary_if_ready(self) -> None:
+        if not self.day_summary_pending or self.pipeline_running or self.processing_queue:
+            return
+        day_folder = self.day_summary_day_folder or self.storage.get_today_day_folder()
+        if day_folder is None or self.storage.has_unfinished_meeting_processing(day_folder):
+            return
+        force = self.day_summary_force_pending
+        self.day_summary_pending = False
+        self.day_summary_force_pending = False
+        self._start_day_summary_pipeline(day_folder, force)
+
+    def _start_day_summary_pipeline(self, day_folder: Path, force: bool = False) -> None:
+        if self.day_summary_running or self.day_summary_thread is not None:
+            self.day_summary_pending = True
+            self.day_summary_force_pending = self.day_summary_force_pending or force
+            self.day_summary_day_folder = day_folder
+            return
+        self.day_summary_running = True
+        self.day_summary_day_folder = day_folder
+        self.status_label.setText("Запущено обновление итогов дня.")
+        self.refresh_buttons()
+        self.day_summary_thread = QThread(self)
+        self.day_summary_worker = DaySummaryPipelineWorker(self.storage, day_folder, force)
+        self.day_summary_worker.moveToThread(self.day_summary_thread)
+        self.day_summary_thread.started.connect(self.day_summary_worker.run)
+        self.day_summary_worker.progress.connect(self._on_day_summary_progress)
+        self.day_summary_worker.finished.connect(self._on_day_summary_finished)
+        self.day_summary_worker.failed.connect(self._on_day_summary_failed)
+        self.day_summary_worker.finished.connect(self.day_summary_thread.quit)
+        self.day_summary_worker.failed.connect(self.day_summary_thread.quit)
+        self.day_summary_thread.finished.connect(self.day_summary_worker.deleteLater)
+        self.day_summary_thread.finished.connect(self.day_summary_thread.deleteLater)
+        self.day_summary_thread.finished.connect(self._on_day_summary_thread_finished)
+        self.day_summary_thread.start()
+
+    def _on_day_summary_progress(self, event: str, message: str) -> None:
+        mapping = {
+            "day_summary_waiting": ("collect", "Выполняется", message, "active"),
+            "day_summary_collecting": ("collect", "Выполняется", message, "active"),
+            "day_summary_checking": ("check", "Выполняется", message, "active"),
+            "day_summary_generating": ("generate", "Выполняется", message, "active"),
+            "day_summary_up_to_date": ("generate", "Пропущено", message, "skip"),
+            "day_summary_done": ("links", "Готово", message, "ok"),
+        }
+        item = mapping.get(event)
+        if item is not None:
+            step, label, default_message, state = item
+            self._set_day_summary_pipeline_step(step, label, default_message, state)
+            if event == "day_summary_done":
+                self._set_day_summary_pipeline_step("collect", "Готово", "Итоги встреч собраны.", "ok")
+                self._set_day_summary_pipeline_step("check", "Готово", "Summary встреч проверены.", "ok")
+                self._set_day_summary_pipeline_step("generate", "Готово", "00_day_summary_draft.md готов.", "ok")
+        self.status_label.setText(message)
+
+    def _on_day_summary_finished(self, day_folder_text: str) -> None:
+        day_folder = Path(day_folder_text)
+        metadata = self.storage.read_day_summary_metadata(day_folder)
+        self._refresh_day_summary_pipeline_from_metadata(metadata)
+        self.day_summary_running = False
+        self.day_summary_day_folder = None
+        self.status_label.setText(self.storage.last_day_summary_message or "Итоги дня обновлены.")
+        self._refresh_after_lifecycle_change()
+        if self.review_day_summary_selected:
+            self.load_day_summary_review()
+
+    def _on_day_summary_failed(self, message: str) -> None:
+        self.day_summary_running = False
+        self.day_summary_day_folder = None
+        self._set_day_summary_pipeline_step("generate", "Ошибка", message, "error")
+        self.status_label.setText(f"Итоги дня не обновлены: {message}")
+        self.refresh_buttons()
+
+    def _on_day_summary_thread_finished(self) -> None:
+        self.day_summary_thread = None
+        self.day_summary_worker = None
+        self._start_pending_day_summary_if_ready()
 
     def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
         widget = self.pipeline_labels.get(step)
@@ -2038,8 +2394,9 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.status_label.setText(str(error))
             return
-        self.status_label.setText(f"Рабочий день завершен. Черновики сохранены: {day_folder}")
+        self.status_label.setText(f"Рабочий день завершен. Итоги дня готовятся: {day_folder}")
         self._refresh_after_lifecycle_change()
+        self._request_day_summary_update(day_folder, force=False)
 
     def open_review(self) -> None:
         self.pages.setCurrentIndex(1)
@@ -2054,25 +2411,47 @@ class MainWindow(QMainWindow):
             self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
             self.review_meetings_hint.setText("Папка дня еще не создана.")
             self.selected_review_meeting_folder = None
+            self.review_day_summary_selected = False
             self._refresh_review_buttons()
             return
 
-        self._refresh_day_summary_review(day_folder)
         meeting_folders = self._today_meeting_folders_newest_first()
+        has_day_summary = self.storage.day_summary_exists(day_folder)
+        if not has_day_summary:
+            self.review_day_summary_selected = False
         if (
-            self.selected_review_meeting_folder is None
-            or self.selected_review_meeting_folder not in meeting_folders
+            not self.review_day_summary_selected
+            and (
+                self.selected_review_meeting_folder is None
+                or self.selected_review_meeting_folder not in meeting_folders
+            )
         ):
-            self.selected_review_meeting_folder = meeting_folders[0] if meeting_folders else None
+            if has_day_summary:
+                self.review_day_summary_selected = True
+                self.selected_review_meeting_folder = None
+            else:
+                self.review_day_summary_selected = False
+                self.selected_review_meeting_folder = meeting_folders[0] if meeting_folders else None
+        if has_day_summary:
+            self.review_meeting_cards_layout.addWidget(
+                self._create_review_day_summary_card(day_folder, self.review_day_summary_selected)
+            )
         for meeting_folder in meeting_folders:
             self.review_meeting_cards_layout.addWidget(
                 self._create_review_meeting_card(
                     meeting_folder,
-                    meeting_folder == self.selected_review_meeting_folder,
+                    not self.review_day_summary_selected
+                    and meeting_folder == self.selected_review_meeting_folder,
                 )
             )
 
-        if meeting_folders:
+        if self.review_day_summary_selected and has_day_summary:
+            self.load_day_summary_review()
+            self.review_meetings_hint.setText(
+                "Выберите «Итоги дня» или встречу, чтобы проверить локальные черновики."
+            )
+            self.review_status_label.setText("Итоги дня загружены.")
+        elif meeting_folders:
             self.load_selected_meeting(self.selected_review_meeting_folder)
             self.review_meetings_hint.setText(
                 "Выберите встречу, чтобы проверить итоги и transcript."
@@ -2084,6 +2463,38 @@ class MainWindow(QMainWindow):
             self.review_meetings_hint.setText("За выбранный день пока нет встреч.")
             self.review_status_label.setText("За сегодня пока нет встреч.")
         self._refresh_review_buttons()
+
+    def _create_review_day_summary_card(self, day_folder: Path, selected: bool) -> QWidget:
+        metadata = self.storage.read_day_summary_metadata(day_folder)
+        card = ClickableFrame()
+        card.setObjectName("activeMeetingCard" if selected else "meetingCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setToolTip("Нажмите, чтобы открыть итоги дня в ревью.")
+        card.clicked.connect(self.select_review_day_summary)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_label = QLabel("Итоги дня")
+        header_label.setObjectName("meetingHeaderLabel")
+        header_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge = QLabel()
+        badge.setObjectName("statusBadge")
+        badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        badge_text, badge_state = self._day_summary_badge(metadata)
+        badge.setText(badge_text)
+        self._apply_badge_style(badge, badge_state)
+        header_layout.addWidget(header_label, 1)
+        header_layout.addWidget(badge)
+        layout.addLayout(header_layout)
+        detail = QLabel(self._day_summary_detail_text(metadata))
+        detail.setObjectName("sectionHint")
+        detail.setWordWrap(True)
+        detail.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(detail)
+        card.setLayout(layout)
+        return card
 
     def _create_review_meeting_card(self, meeting_folder: Path, selected: bool) -> QWidget:
         metadata = self.storage.read_meeting_metadata(meeting_folder)
@@ -2119,7 +2530,13 @@ class MainWindow(QMainWindow):
         return card
 
     def select_review_meeting(self, meeting_folder: Path) -> None:
+        self.review_day_summary_selected = False
         self.selected_review_meeting_folder = meeting_folder
+        self.refresh_review()
+
+    def select_review_day_summary(self) -> None:
+        self.review_day_summary_selected = True
+        self.selected_review_meeting_folder = None
         self.refresh_review()
 
     def load_selected_meeting(self, meeting_folder: Path | None = None) -> None:
@@ -2128,26 +2545,73 @@ class MainWindow(QMainWindow):
             self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
             return
+        self.review_tabs.setTabText(0, "Итоги встречи")
+        self.review_tabs.setTabText(1, "Транскрипт")
+        self.meeting_summary_editor.setReadOnly(False)
         self.meeting_summary_editor.setPlainText(
             self.storage.read_meeting_summary_draft(meeting_folder)
         )
         self.meeting_transcript_editor.setPlainText(self._read_meeting_transcript(meeting_folder))
         self._refresh_review_buttons()
 
-    def _refresh_day_summary_review(self, day_folder: Path) -> None:
-        day_summary_path = day_folder / "00_day_summary_draft.md"
-        if day_summary_path.is_file():
-            self.day_summary_editor.setEnabled(True)
-            self.day_summary_editor.setPlainText(day_summary_path.read_text(encoding="utf-8"))
-            self.day_summary_status_label.setText(
-                "Итоги дня загружены из локального черновика."
-            )
+    def load_day_summary_review(self) -> None:
+        day_folder = self.storage.get_today_day_folder()
+        self.review_tabs.setTabText(0, "Итоги встреч")
+        self.review_tabs.setTabText(1, "Транскрипт")
+        if day_folder is None:
+            self.meeting_summary_editor.clear()
+            self.meeting_transcript_editor.clear()
+            self._refresh_review_buttons()
             return
-        self.day_summary_editor.clear()
-        self.day_summary_editor.setEnabled(False)
-        self.day_summary_status_label.setText(
-            "Итоги дня появятся после завершения рабочего дня. AI-выжимка из всех встреч будет отдельным будущим PR."
+        self.meeting_summary_editor.setReadOnly(False)
+        self.meeting_summary_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
+        self.meeting_transcript_editor.setHtml(self._day_transcript_links_html(day_folder))
+        self._refresh_review_buttons()
+
+    def _day_transcript_links_html(self, day_folder: Path) -> str:
+        meeting_folders = self._today_meeting_folders_newest_first()
+        if not meeting_folders:
+            return "<p>За выбранный день пока нет встреч.</p>"
+        rows = ["<h2>Транскрипты встреч за день</h2>"]
+        for index, meeting_folder in enumerate(meeting_folders):
+            metadata = self.storage.read_meeting_metadata(meeting_folder)
+            title = str(metadata.get("title") or meeting_folder.name)
+            started_at = self._short_time(metadata.get("started_at"))
+            rows.append(
+                "<p>"
+                f"<b>{started_at} · {self._html_escape(title)}</b><br>"
+                f"<a href=\"meeting-index://{index}\">"
+                "Открыть транскрипт внутри приложения"
+                "</a>"
+                "</p>"
+            )
+        return "\n".join(rows)
+
+    def _open_review_transcript_link(self, url: QUrl) -> None:
+        if url.scheme() != "meeting-index":
+            return
+        try:
+            index = int(url.host() or url.path().strip("/"))
+        except ValueError:
+            return
+        meeting_folders = self._today_meeting_folders_newest_first()
+        if index < 0 or index >= len(meeting_folders):
+            return
+        self.select_review_meeting(meeting_folders[index])
+        self.review_tabs.setCurrentIndex(1)
+
+    @staticmethod
+    def _html_escape(value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
         )
+
+    def _refresh_day_summary_review(self, day_folder: Path) -> None:
+        del day_folder
+        self.load_day_summary_review()
 
     @staticmethod
     def _read_meeting_transcript(meeting_folder: Path) -> str:
@@ -2162,6 +2626,10 @@ class MainWindow(QMainWindow):
         if day_folder is None:
             self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
             return
+        if self.review_day_summary_selected:
+            self.storage.save_day_summary_draft(day_folder, self.meeting_summary_editor.toPlainText())
+            self.review_status_label.setText("Черновик итогов дня сохранен локально.")
+            return
         if selected_meeting is None:
             self.review_status_label.setText("Выберите встречу для сохранения черновиков.")
             return
@@ -2174,6 +2642,14 @@ class MainWindow(QMainWindow):
 
     def save_final_files(self) -> None:
         selected_meeting = self._selected_meeting_folder()
+        day_folder = self.storage.get_today_day_folder()
+        if self.review_day_summary_selected:
+            if day_folder is None:
+                self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
+                return
+            self.storage.save_day_summary_final(day_folder, self.meeting_summary_editor.toPlainText())
+            self.review_status_label.setText("Финальные итоги дня сохранены локально. Черновик не удален.")
+            return
         if selected_meeting is None:
             self.review_status_label.setText("Выберите встречу для сохранения финальных файлов.")
             return
@@ -2271,6 +2747,8 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Не удалось открыть папку встречи: {meeting_folder}")
 
     def _selected_meeting_folder(self) -> Path | None:
+        if self.review_day_summary_selected:
+            return None
         return self.selected_review_meeting_folder
 
     def _startup_status(self) -> str:
@@ -2405,7 +2883,7 @@ class MainWindow(QMainWindow):
         has_day_folder = day_folder is not None
         has_today_meetings = bool(self.storage.list_today_meeting_folders()) if has_day_folder else False
 
-        self.check_readiness_button.setEnabled(not self.pipeline_running)
+        self.check_readiness_button.setEnabled(not self.pipeline_running and not self.day_summary_running)
         self._configure_workday_action_button()
         self.start_meeting_button.setEnabled(
             self.storage.workday_active and not self.storage.meeting_active
@@ -2440,11 +2918,8 @@ class MainWindow(QMainWindow):
             self.workday_action_button.style().polish(self.workday_action_button)
             self.workday_action_mode = mode
         self.workday_action_button.setEnabled(
-            not self._has_processing_work()
-            and (
-                not self.storage.workday_active
-                or (self.storage.workday_active and not self.storage.meeting_active)
-            )
+            not self.storage.meeting_active
+            and not self.day_summary_running
         )
 
     def refresh_status(self) -> None:
@@ -2482,19 +2957,25 @@ class MainWindow(QMainWindow):
             day_folder is not None
             and (day_folder / "00_day_summary_draft.md").is_file()
         )
+        has_review_content = has_selected_meeting or (self.review_day_summary_selected and has_day_summary)
         self.review_open_folder_button.setEnabled(has_day_folder)
         self.save_drafts_button.setEnabled(
-            has_day_folder and has_selected_meeting and not self._has_processing_work()
+            has_day_folder and has_review_content and not self._has_processing_work()
         )
         self.save_final_files_button.setEnabled(
             has_day_folder
-            and has_selected_meeting
+            and has_review_content
             and has_day_summary
             and not self._has_processing_work()
         )
 
     def _has_processing_work(self) -> bool:
-        return self.pipeline_running or bool(self.processing_queue)
+        return (
+            self.pipeline_running
+            or bool(self.processing_queue)
+            or self.day_summary_running
+            or self.day_summary_pending
+        )
 
     def _clear_review_editors(self) -> None:
         self.meeting_summary_editor.clear()

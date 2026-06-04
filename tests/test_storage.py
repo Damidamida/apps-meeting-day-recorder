@@ -451,6 +451,85 @@ def test_read_and_save_day_summary_and_tasks_drafts(tmp_path) -> None:
     assert storage.read_tasks_draft(day_folder) == "# Задачи\n"
 
 
+def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_meetings(
+    tmp_path,
+) -> None:
+    class FakeDaySummarizer:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def summarize_meeting(self, meeting_folder, metadata):
+            del meeting_folder, metadata
+            return {"summary_status": "disabled"}
+
+        def summarize_day(self, day_folder, current_summary, meeting_summaries):
+            self.calls.append(meeting_summaries)
+            assert "# Черновик итогов дня" in current_summary
+            assert meeting_summaries[0]["summary_source"] == "draft"
+            assert meeting_summaries[1]["summary_source"] == "missing"
+            (day_folder / "00_day_summary_draft.md").write_text(
+                "# Итоги встреч\n\nСводка дня.\n",
+                encoding="utf-8",
+            )
+            return {
+                "day_summary_status": "draft_created",
+                "day_summary_provider": "openai",
+                "day_summary_model": "gpt-5.4-mini",
+                "day_summary_path": str(day_folder / "00_day_summary_draft.md"),
+                "day_summary_generated_at": "2026-06-01T18:10:00",
+            }
+
+    summarizer = FakeDaySummarizer()
+    storage = StorageService(tmp_path, summarizer=summarizer)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    first = storage.create_meeting_folder(
+        "С summary",
+        datetime(2026, 6, 1, 10, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+    storage.save_meeting_summary_draft(first, "# Итоги встречи\n\nГотовый summary.\n")
+    storage.create_meeting_folder(
+        "Без summary",
+        datetime(2026, 6, 1, 11, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+
+    storage.process_day_summary_pipeline(day_folder)
+
+    metadata = storage.read_day_summary_metadata(day_folder)
+    assert metadata["day_summary_status"] == "draft_created"
+    assert len(metadata["included_meetings"]) == 2
+    assert metadata["included_meetings"][1]["summary_missing"] is True
+    assert len(summarizer.calls) == 1
+
+    storage.process_day_summary_pipeline(day_folder)
+
+    metadata = storage.read_day_summary_metadata(day_folder)
+    assert metadata["day_summary_status"] == "up_to_date"
+    assert len(summarizer.calls) == 1
+
+
+def test_day_summary_waits_for_unfinished_meeting_processing(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    storage.create_meeting_folder(
+        "В очереди",
+        datetime(2026, 6, 1, 10, 0),
+        {"status": "ended", "processing_status": "pending"},
+    )
+    events = []
+
+    storage.process_day_summary_pipeline(
+        day_folder,
+        progress_callback=lambda event, message: events.append((event, message)),
+    )
+
+    metadata = storage.read_day_summary_metadata(day_folder)
+    assert metadata["day_summary_status"] == "waiting_for_meetings"
+    assert metadata["pipeline"]["collect"] == "active"
+    assert events[0][0] == "day_summary_waiting"
+
+
 def test_save_final_files_preserves_drafts(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 1))

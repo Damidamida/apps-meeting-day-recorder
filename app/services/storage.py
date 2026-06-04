@@ -15,6 +15,7 @@ from app.services.transcription import (
 from app.services.summarization import (
     NoopSummarizer,
     Summarizer,
+    day_summary_message,
     summary_message,
 )
 
@@ -62,6 +63,7 @@ class StorageService:
         self.last_audio_message: str | None = None
         self.last_transcription_message: str | None = None
         self.last_summary_message: str | None = None
+        self.last_day_summary_message: str | None = None
 
     def create_day_folder(self, workday: date | None = None) -> Path:
         workday = workday or date.today()
@@ -367,12 +369,179 @@ class StorageService:
             day_folder / "00_day_summary_draft.md",
             self._day_summary_placeholder(),
         )
+        self.ensure_day_summary_metadata(day_folder, created_at=ended_at)
         self._read_or_create_text(
             day_folder / "00_tasks_draft.md",
             self._tasks_placeholder(),
         )
         self.active_day_folder = None
         return day_folder
+
+    def ensure_day_summary_metadata(
+        self,
+        day_folder: Path,
+        created_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        created_at = created_at or datetime.now()
+        metadata_path = self.day_summary_metadata_path(day_folder)
+        if metadata_path.exists():
+            metadata = self._read_json(metadata_path)
+            metadata.setdefault("title", "Итоги дня")
+            metadata.setdefault("kind", "day_summary")
+            metadata.setdefault("day_folder", day_folder.name)
+            metadata.setdefault("created_at", created_at.isoformat())
+            metadata.setdefault("day_summary_status", "pending")
+            metadata.setdefault("included_meetings", [])
+            metadata.setdefault("pipeline", self._default_day_summary_pipeline())
+            self._write_json(metadata_path, metadata)
+            return metadata
+
+        metadata = {
+            "kind": "day_summary",
+            "title": "Итоги дня",
+            "day_folder": day_folder.name,
+            "created_at": created_at.isoformat(),
+            "updated_at": created_at.isoformat(),
+            "day_summary_status": "pending",
+            "included_meetings": [],
+            "pipeline": self._default_day_summary_pipeline(),
+        }
+        self._write_json(metadata_path, metadata)
+        return metadata
+
+    def process_day_summary_pipeline(
+        self,
+        day_folder: Path,
+        force: bool = False,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> Path:
+        self.ensure_day_summary_metadata(day_folder)
+        if self.has_unfinished_meeting_processing(day_folder):
+            metadata = self.mark_day_summary_waiting(day_folder)
+            self.last_day_summary_message = day_summary_message(metadata)
+            self._emit_pipeline(
+                progress_callback,
+                "day_summary_waiting",
+                self.last_day_summary_message,
+            )
+            return day_folder
+
+        self._emit_pipeline(progress_callback, "day_summary_collecting", "Собираем итоги встреч.")
+        meeting_summaries = self.collect_day_meeting_summaries(day_folder)
+        metadata = self.read_day_summary_metadata(day_folder)
+        included_folders = {
+            str(item.get("folder") or "")
+            for item in metadata.get("included_meetings", [])
+        }
+        current_folders = {
+            str(item.get("folder") or "")
+            for item in meeting_summaries
+        }
+        has_new_meetings = bool(current_folders - included_folders)
+        if not force and metadata.get("day_summary_status") in {"draft_created", "up_to_date"} and not has_new_meetings:
+            metadata.update(
+                {
+                    "day_summary_status": "up_to_date",
+                    "updated_at": datetime.now().isoformat(),
+                    "pipeline": self._day_summary_pipeline_state("ok", "ok", "skip", "ok"),
+                }
+            )
+            self._write_json(self.day_summary_metadata_path(day_folder), metadata)
+            self.last_day_summary_message = day_summary_message(metadata)
+            self._emit_pipeline(progress_callback, "day_summary_up_to_date", self.last_day_summary_message)
+            return day_folder
+
+        self._emit_pipeline(progress_callback, "day_summary_checking", "Проверяем наличие summary у встреч.")
+        metadata.update(
+            {
+                "day_summary_status": "running",
+                "updated_at": datetime.now().isoformat(),
+                "pipeline": self._day_summary_pipeline_state("ok", "active", "wait", "wait"),
+            }
+        )
+        self._write_json(self.day_summary_metadata_path(day_folder), metadata)
+
+        self._emit_pipeline(progress_callback, "day_summary_generating", "Готовим итоги дня через OpenAI.")
+        current_summary = self.read_day_summary_draft(day_folder)
+        summary_metadata = self.summarizer.summarize_day(
+            day_folder,
+            current_summary,
+            meeting_summaries,
+        )
+        metadata.update(summary_metadata)
+        metadata.update(
+            {
+                "updated_at": datetime.now().isoformat(),
+                "included_meetings": self._included_day_summary_meetings(meeting_summaries),
+            }
+        )
+        status = metadata.get("day_summary_status")
+        if status == "draft_created":
+            metadata["pipeline"] = self._day_summary_pipeline_state("ok", "ok", "ok", "ok")
+        elif status in {"disabled", "openai_unavailable", "failed"}:
+            metadata["pipeline"] = self._day_summary_pipeline_state("ok", "ok", "error", "wait")
+        else:
+            metadata["pipeline"] = self._day_summary_pipeline_state("ok", "ok", "skip", "wait")
+        self._write_json(self.day_summary_metadata_path(day_folder), metadata)
+        self.last_day_summary_message = day_summary_message(metadata)
+        self._emit_pipeline(progress_callback, "day_summary_done", self.last_day_summary_message)
+        return day_folder
+
+    def mark_day_summary_waiting(self, day_folder: Path) -> dict[str, Any]:
+        metadata = self.ensure_day_summary_metadata(day_folder)
+        metadata.update(
+            {
+                "day_summary_status": "waiting_for_meetings",
+                "updated_at": datetime.now().isoformat(),
+                "pipeline": self._day_summary_pipeline_state("active", "wait", "wait", "wait"),
+            }
+        )
+        self._write_json(self.day_summary_metadata_path(day_folder), metadata)
+        return metadata
+
+    def collect_day_meeting_summaries(self, day_folder: Path) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for meeting_folder in self.list_meeting_folders(day_folder):
+            metadata = self.read_meeting_metadata(meeting_folder)
+            source, text = self._meeting_summary_source_and_text(meeting_folder)
+            items.append(
+                {
+                    "folder": meeting_folder.name,
+                    "title": str(metadata.get("title") or meeting_folder.name),
+                    "started_at": str(metadata.get("started_at") or ""),
+                    "summary_source": source,
+                    "summary_text": text,
+                    "summary_missing": source == "missing",
+                }
+            )
+        return items
+
+    def has_unfinished_meeting_processing(self, day_folder: Path) -> bool:
+        for meeting_folder in self.list_meeting_folders(day_folder):
+            metadata = self.read_meeting_metadata(meeting_folder)
+            if metadata.get("status") == "active":
+                return True
+            if metadata.get("processing_status") in {"pending", "running"}:
+                return True
+        return False
+
+    def day_summary_exists(self, day_folder: Path | None) -> bool:
+        return bool(
+            day_folder
+            and (
+                self.day_summary_metadata_path(day_folder).is_file()
+                or (day_folder / "00_day_summary_draft.md").is_file()
+            )
+        )
+
+    def day_summary_metadata_path(self, day_folder: Path) -> Path:
+        return day_folder / "00_day_summary_metadata.json"
+
+    def read_day_summary_metadata(self, day_folder: Path) -> dict[str, Any]:
+        metadata_path = self.day_summary_metadata_path(day_folder)
+        if metadata_path.exists():
+            return self._read_json(metadata_path)
+        return self.ensure_day_summary_metadata(day_folder)
 
     def create_meeting_folder(
         self,
@@ -425,6 +594,10 @@ class StorageService:
         day_folder = self.get_today_day_folder(now)
         if day_folder is None:
             return []
+        return self.list_meeting_folders(day_folder)
+
+    @staticmethod
+    def list_meeting_folders(day_folder: Path) -> list[Path]:
         return sorted(
             folder
             for folder in day_folder.iterdir()
@@ -452,6 +625,9 @@ class StorageService:
 
     def save_day_summary_draft(self, day_folder: Path, content: str) -> Path:
         return self._write_text(day_folder / "00_day_summary_draft.md", content)
+
+    def save_day_summary_final(self, day_folder: Path, content: str) -> Path:
+        return self._write_text(day_folder / "00_day_summary_final.md", content)
 
     def read_tasks_draft(self, day_folder: Path) -> str:
         return self._read_or_create_text(
@@ -486,6 +662,57 @@ class StorageService:
         meeting_folder.mkdir(parents=True)
         return meeting_folder
 
+    def _meeting_summary_source_and_text(self, meeting_folder: Path) -> tuple[str, str]:
+        final_path = meeting_folder / "summary_final.md"
+        if final_path.is_file():
+            text = final_path.read_text(encoding="utf-8").strip()
+            if text and not self._is_meeting_summary_placeholder(text):
+                return "final", text
+
+        draft_path = meeting_folder / "summary_draft.md"
+        if draft_path.is_file():
+            text = draft_path.read_text(encoding="utf-8").strip()
+            if text and not self._is_meeting_summary_placeholder(text):
+                return "draft", text
+
+        return "missing", ""
+
+    @staticmethod
+    def _included_day_summary_meetings(meeting_summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "folder": item.get("folder"),
+                "title": item.get("title"),
+                "started_at": item.get("started_at"),
+                "summary_source": item.get("summary_source"),
+                "summary_missing": item.get("summary_missing", False),
+            }
+            for item in meeting_summaries
+        ]
+
+    @staticmethod
+    def _default_day_summary_pipeline() -> dict[str, str]:
+        return {
+            "collect": "wait",
+            "check": "wait",
+            "generate": "wait",
+            "links": "wait",
+        }
+
+    @staticmethod
+    def _day_summary_pipeline_state(
+        collect: str,
+        check: str,
+        generate: str,
+        links: str,
+    ) -> dict[str, str]:
+        return {
+            "collect": collect,
+            "check": check,
+            "generate": generate,
+            "links": links,
+        }
+
     @classmethod
     def _meeting_has_status(cls, meeting_folder: Path, status: str) -> bool:
         metadata_path = meeting_folder / "meeting_metadata.json"
@@ -496,6 +723,10 @@ class StorageService:
     @staticmethod
     def _meeting_summary_placeholder() -> str:
         return "# Черновик итогов встречи\n\n_Итоги встречи пока не заполнены._\n"
+
+    @staticmethod
+    def _is_meeting_summary_placeholder(text: str) -> bool:
+        return "Итоги встречи пока не заполнены" in text or "Черновик итогов встречи" in text
 
     @staticmethod
     def _day_summary_placeholder() -> str:
