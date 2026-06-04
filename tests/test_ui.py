@@ -210,6 +210,29 @@ def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path
     app.processEvents()
 
 
+def test_workday_meetings_are_shown_newest_first(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    first = storage.create_meeting_folder(
+        "Первая",
+        started_at=datetime(2026, 6, 4, 10, 0, 0),
+        metadata={"status": "ended"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая",
+        started_at=datetime(2026, 6, 4, 11, 0, 0),
+        metadata={"status": "ended"},
+    )
+    window = MainWindow(storage, recorder)
+
+    assert list(window.workday_meeting_cards) == [second, first]
+
+    window.close()
+    app.processEvents()
+
+
 def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
     tmp_path: Path,
 ) -> None:
@@ -274,11 +297,12 @@ def test_review_meeting_card_click_selects_whole_card(tmp_path: Path) -> None:
     window = MainWindow(storage, recorder)
     window.open_review()
 
-    assert window.selected_review_meeting_folder == first
-
-    window.review_meeting_cards[second].clicked.emit()
-
     assert window.selected_review_meeting_folder == second
+    assert list(window.review_meeting_cards) == [second, first]
+
+    window.review_meeting_cards[first].clicked.emit()
+
+    assert window.selected_review_meeting_folder == first
 
     window.close()
     app.processEvents()

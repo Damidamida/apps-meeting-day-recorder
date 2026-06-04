@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
         self.pipeline_labels = {}
         self.pipeline_step_titles = {}
         self.workday_meeting_cards = {}
-        meeting_folders = self.storage.list_today_meeting_folders()
+        meeting_folders = self._today_meeting_folders_newest_first()
         if not meeting_folders:
             self.selected_workday_meeting_folder = None
             if scroll_bar is not None:
@@ -717,6 +717,18 @@ class MainWindow(QMainWindow):
         self.selected_workday_meeting_folder = meeting_folder
         self._refresh_workday_meetings()
         self.refresh_buttons()
+
+    def _today_meeting_folders_newest_first(self) -> list[Path]:
+        return sorted(
+            self.storage.list_today_meeting_folders(),
+            key=self._meeting_sort_key,
+            reverse=True,
+        )
+
+    def _meeting_sort_key(self, meeting_folder: Path) -> tuple[str, str]:
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        started_at = str(metadata.get("started_at") or "")
+        return started_at, meeting_folder.name
 
     @staticmethod
     def _clear_layout(layout) -> None:
@@ -1638,7 +1650,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_day_summary_review(day_folder)
-        meeting_folders = self.storage.list_today_meeting_folders()
+        meeting_folders = self._today_meeting_folders_newest_first()
         if (
             self.selected_review_meeting_folder is None
             or self.selected_review_meeting_folder not in meeting_folders
