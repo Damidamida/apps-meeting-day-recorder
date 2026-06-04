@@ -1,8 +1,8 @@
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -59,6 +59,14 @@ class MainWindow(QMainWindow):
     READINESS_CARD_EXPANDED_HEIGHT = 276
     READINESS_CARD_COLLAPSED_HEIGHT = 86
     READINESS_GRID_HEIGHT = 182
+    PIPELINE_STEPS = [
+        ("meeting", "Созвон"),
+        ("recording", "OBS запись"),
+        ("audio", "Извлечение аудио"),
+        ("transcription", "Транскрипция"),
+        ("summary", "Генерация итогов"),
+        ("done", "Готово"),
+    ]
 
     def __init__(
         self,
@@ -91,6 +99,7 @@ class MainWindow(QMainWindow):
         self.readiness_tiles: dict[str, QWidget] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
+        self.selected_workday_meeting_folder: Path | None = None
         self._apply_app_style()
 
         self.pages = QStackedWidget()
@@ -127,8 +136,12 @@ class MainWindow(QMainWindow):
         container.setLayout(root_layout)
         self.setCentralWidget(container)
         self._refresh_navigation_state(self.pages.currentIndex())
-        self.refresh_buttons()
         self.refresh_status()
+        self.refresh_buttons()
+        self.active_call_timer = QTimer(self)
+        self.active_call_timer.setInterval(1000)
+        self.active_call_timer.timeout.connect(self._refresh_active_call_display)
+        self.active_call_timer.start()
 
     def _create_navigation(self) -> QWidget:
         navigation = QWidget()
@@ -291,6 +304,34 @@ class MainWindow(QMainWindow):
                 font-size: 18px;
                 font-weight: 800;
             }
+            QLabel#callTimer {
+                color: #d9280f;
+                font-size: 28px;
+                font-weight: 800;
+            }
+            QFrame#meetingCard {
+                background: #fffdf8;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+            }
+            QFrame#activeMeetingCard {
+                background: #fff3e6;
+                border: 1px solid #ffb98a;
+                border-radius: 8px;
+            }
+            QPushButton#meetingHeaderButton {
+                background: transparent;
+                border: 0;
+                color: #3a1408;
+                font-size: 14px;
+                font-weight: 800;
+                text-align: left;
+                padding: 0;
+                min-height: 22px;
+            }
+            QPushButton#meetingHeaderButton:hover {
+                color: #ff6f1a;
+            }
             QFrame#readinessTile {
                 background: #fffdf8;
                 border: 1px solid #ead8c6;
@@ -409,16 +450,23 @@ class MainWindow(QMainWindow):
         )
 
     @staticmethod
-    def _create_card(title: str, body_layout) -> QWidget:
+    def _create_card(title: str, body_layout, header_actions: list[QWidget] | None = None) -> QWidget:
         card = QWidget()
         card.setObjectName("card")
         layout = QVBoxLayout()
         layout.setContentsMargins(18, 14, 18, 16)
         layout.setSpacing(12)
 
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
         title_label = QLabel(title)
         title_label.setObjectName("cardTitle")
-        layout.addWidget(title_label)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch(1)
+        for action in header_actions or []:
+            header_layout.addWidget(action, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header_layout)
         layout.addLayout(body_layout)
 
         card.setLayout(layout)
@@ -545,6 +593,155 @@ class MainWindow(QMainWindow):
         tile.setLayout(tile_layout)
         return tile
 
+    def _refresh_workday_meetings(self) -> None:
+        self._clear_layout(self.meetings_cards_layout)
+        self.pipeline_labels = {}
+        self.pipeline_step_titles = {}
+        meeting_folders = self.storage.list_today_meeting_folders()
+        if not meeting_folders:
+            self.selected_workday_meeting_folder = None
+            return
+
+        if (
+            self.selected_workday_meeting_folder is None
+            or self.selected_workday_meeting_folder not in meeting_folders
+        ):
+            if self.storage.meeting_active and self.storage.active_meeting_folder in meeting_folders:
+                self.selected_workday_meeting_folder = self.storage.active_meeting_folder
+            elif self.pipeline_meeting_folder in meeting_folders:
+                self.selected_workday_meeting_folder = self.pipeline_meeting_folder
+            else:
+                self.selected_workday_meeting_folder = meeting_folders[-1]
+
+        for meeting_folder in meeting_folders:
+            expanded = meeting_folder == self.selected_workday_meeting_folder
+            self.meetings_cards_layout.addWidget(
+                self._create_meeting_card(meeting_folder, expanded)
+            )
+
+    def _create_meeting_card(self, meeting_folder: Path, expanded: bool) -> QWidget:
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        card = QFrame()
+        card.setObjectName(
+            "activeMeetingCard"
+            if metadata.get("status") == "active"
+            else "meetingCard"
+        )
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(10)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_button = QPushButton(self._meeting_header_text(meeting_folder, metadata))
+        header_button.setObjectName("meetingHeaderButton")
+        header_button.clicked.connect(
+            lambda checked=False, folder=meeting_folder: self.select_workday_meeting(folder)
+        )
+        badge = QLabel()
+        badge.setObjectName("statusBadge")
+        badge_text, badge_state = self._meeting_badge(metadata)
+        badge.setText(badge_text)
+        self._apply_badge_style(badge, badge_state)
+        header_layout.addWidget(header_button, 1)
+        header_layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+        card_layout.addLayout(header_layout)
+
+        detail = QLabel(self._meeting_detail_text(metadata))
+        detail.setObjectName("sectionHint")
+        detail.setWordWrap(True)
+        card_layout.addWidget(detail)
+
+        if expanded:
+            pipeline_hint = QLabel(
+                "Pipeline этой встречи: запись, audio.wav, transcript и итоги."
+            )
+            pipeline_hint.setObjectName("sectionHint")
+            pipeline_hint.setWordWrap(True)
+            card_layout.addWidget(pipeline_hint)
+            pipeline_layout = QFormLayout()
+            pipeline_layout.setHorizontalSpacing(18)
+            pipeline_layout.setVerticalSpacing(8)
+            for key, title in self.PIPELINE_STEPS:
+                title_label, status_label = self._create_pipeline_step_labels(key, title)
+                pipeline_layout.addRow(title_label, status_label)
+            card_layout.addLayout(pipeline_layout)
+            self._refresh_pipeline_from_metadata(metadata)
+
+        card.setLayout(card_layout)
+        return card
+
+    def select_workday_meeting(self, meeting_folder: Path) -> None:
+        self.selected_workday_meeting_folder = meeting_folder
+        self._refresh_workday_meetings()
+        self.refresh_buttons()
+
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            child_layout = item.layout()
+            if child_layout is not None:
+                MainWindow._clear_layout(child_layout)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _meeting_header_text(self, meeting_folder: Path, metadata: dict[str, object]) -> str:
+        title = str(metadata.get("title") or meeting_folder.name)
+        started_at = self._short_time(metadata.get("started_at"))
+        duration = self._duration_text(metadata)
+        return f"{started_at}   {title}   {duration}"
+
+    def _meeting_detail_text(self, metadata: dict[str, object]) -> str:
+        parts = []
+        if metadata.get("summary_status") == "draft_created":
+            parts.append("итоги готовы")
+        elif metadata.get("summary_status") in {"disabled", "skipped"}:
+            parts.append("итоги пропущены")
+        elif metadata.get("processing_status") == "running":
+            parts.append("обработка выполняется")
+        elif metadata.get("processing_status") == "pending":
+            parts.append("ожидает обработки")
+        if metadata.get("transcription_status") == "completed":
+            parts.append("transcript готов")
+        elif metadata.get("transcription_status") == "skipped":
+            parts.append("transcript пропущен")
+        return " · ".join(parts) if parts else "Детали встречи доступны после раскрытия карточки."
+
+    def _meeting_badge(self, metadata: dict[str, object]) -> tuple[str, str]:
+        if metadata.get("status") == "active":
+            if metadata.get("recording_status") == "recording":
+                return "Идет запись", "active"
+            return "Активна", "active"
+        if metadata.get("processing_status") == "running":
+            return "Обработка", "active"
+        if metadata.get("processing_status") == "pending":
+            return "В очереди", "wait"
+        if metadata.get("summary_status") == "draft_created":
+            return "Итоги готовы", "ok"
+        return "Завершена", "ok"
+
+    @staticmethod
+    def _short_time(value: object) -> str:
+        if not value:
+            return "--:--"
+        try:
+            return datetime.fromisoformat(str(value)).strftime("%H:%M")
+        except ValueError:
+            return "--:--"
+
+    @staticmethod
+    def _duration_text(metadata: dict[str, object]) -> str:
+        duration = metadata.get("duration_seconds")
+        if isinstance(duration, int):
+            minutes = max(1, duration // 60)
+            return f"{minutes} мин."
+        if metadata.get("status") == "active":
+            return "идет сейчас"
+        return "без длительности"
+
     def closeEvent(self, event) -> None:
         if self._has_processing_work():
             event.ignore()
@@ -595,30 +792,64 @@ class MainWindow(QMainWindow):
             readiness_layout.setRowMinimumHeight(row, 82)
         layout.addWidget(self._create_readiness_card(readiness_layout))
 
-        status_layout = QFormLayout()
-        status_layout.setHorizontalSpacing(18)
-        status_layout.setVerticalSpacing(8)
+        status_layout = QVBoxLayout()
+        status_layout.setSpacing(12)
+        status_form = QFormLayout()
+        status_form.setHorizontalSpacing(18)
+        status_form.setVerticalSpacing(8)
         self.workday_status_value = QLabel()
         self.meeting_status_value = QLabel()
         self.day_folder_value = QLabel()
         self.active_meeting_value = QLabel()
         self.obs_status_value = QLabel(self.recorder.status_text)
-        status_layout.addRow("Статус рабочего дня:", self.workday_status_value)
-        status_layout.addRow("Статус встречи:", self.meeting_status_value)
-        status_layout.addRow("Папка дня:", self.day_folder_value)
-        status_layout.addRow("Активная встреча:", self.active_meeting_value)
-        status_layout.addRow("Статус OBS:", self.obs_status_value)
+        status_form.addRow("Статус рабочего дня:", self.workday_status_value)
+        status_form.addRow("Статус встречи:", self.meeting_status_value)
+        status_form.addRow("Папка дня:", self.day_folder_value)
+        status_form.addRow("Активная встреча:", self.active_meeting_value)
+        status_form.addRow("Статус OBS:", self.obs_status_value)
+        status_layout.addLayout(status_form)
+        day_actions_layout = QHBoxLayout()
+        day_actions_layout.setSpacing(8)
+        self.start_workday_button = self._add_button(
+            day_actions_layout, "Начать рабочий день", self.start_workday, "primaryButton"
+        )
+        self.end_workday_button = self._add_button(
+            day_actions_layout, "Завершить рабочий день", self.end_workday, "dangerButton"
+        )
+        day_actions_layout.addStretch(1)
+        status_layout.addLayout(day_actions_layout)
 
         active_call_layout = QVBoxLayout()
-        active_call_layout.setSpacing(8)
+        active_call_layout.setSpacing(10)
+        active_call_header = QHBoxLayout()
+        active_call_header.setContentsMargins(0, 0, 0, 0)
         self.active_call_title_value = QLabel()
         self.active_call_title_value.setObjectName("heroValue")
+        self.active_call_badge = QLabel("Ожидает")
+        self.active_call_badge.setObjectName("statusBadge")
+        self._apply_badge_style(self.active_call_badge, "wait")
+        active_call_header.addWidget(self.active_call_title_value)
+        active_call_header.addStretch(1)
+        active_call_header.addWidget(self.active_call_badge)
         self.active_call_detail_value = QLabel()
         self.active_call_detail_value.setObjectName("sectionHint")
         self.active_call_detail_value.setWordWrap(True)
-        active_call_layout.addWidget(self.active_call_title_value)
+        self.active_call_timer_value = QLabel("00:00:00")
+        self.active_call_timer_value.setObjectName("callTimer")
+        active_call_buttons = QHBoxLayout()
+        active_call_buttons.setSpacing(8)
+        self.start_meeting_button = self._add_button(
+            active_call_buttons, "Начать встречу", self.start_meeting, "primaryButton"
+        )
+        self.end_meeting_button = self._add_button(
+            active_call_buttons, "Завершить встречу", self.end_meeting, "dangerButton"
+        )
+        active_call_buttons.addStretch(1)
+        active_call_layout.addLayout(active_call_header)
         active_call_layout.addWidget(self.active_call_detail_value)
-        active_call_layout.addStretch()
+        active_call_layout.addWidget(self.active_call_timer_value, 0, Qt.AlignmentFlag.AlignRight)
+        active_call_layout.addLayout(active_call_buttons)
+        active_call_layout.addStretch(1)
 
         day_overview_layout = QHBoxLayout()
         day_overview_layout.setSpacing(14)
@@ -627,54 +858,25 @@ class MainWindow(QMainWindow):
         layout.addLayout(day_overview_layout)
 
         meetings_layout = QVBoxLayout()
-        meetings_layout.setSpacing(8)
+        meetings_layout.setSpacing(10)
         self.today_meetings_value = QLabel()
         self.today_meetings_value.setObjectName("sectionHint")
         self.today_meetings_value.setWordWrap(True)
         meetings_layout.addWidget(self.today_meetings_value)
-        layout.addWidget(self._create_card("Встречи за день", meetings_layout))
-
-        pipeline_layout = QFormLayout()
-        pipeline_layout.setHorizontalSpacing(18)
-        pipeline_layout.setVerticalSpacing(8)
-        pipeline_hint = QLabel(
-            "Показывает локальную обработку последней завершенной встречи: запись, аудио, transcript и итоги."
-        )
-        pipeline_hint.setObjectName("sectionHint")
-        pipeline_hint.setWordWrap(True)
-        pipeline_layout.addRow(pipeline_hint)
-        for key, title in [
-            ("meeting", "Созвон"),
-            ("recording", "OBS запись"),
-            ("audio", "Извлечение аудио"),
-            ("transcription", "Транскрипция"),
-            ("summary", "Генерация итогов"),
-            ("done", "Готово"),
-        ]:
-            title_label, status_label = self._create_pipeline_step_labels(key, title)
-            pipeline_layout.addRow(title_label, status_label)
-        layout.addWidget(self._create_card("Pipeline встречи", pipeline_layout))
-
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(8)
-        self.start_workday_button = self._add_button(
-            actions_layout, "Начать рабочий день", self.start_workday, "primaryButton"
-        )
-        self.start_meeting_button = self._add_button(
-            actions_layout, "Начать встречу", self.start_meeting, "primaryButton"
-        )
-        self.end_meeting_button = self._add_button(
-            actions_layout, "Завершить встречу", self.end_meeting, "dangerButton"
-        )
-        self.end_workday_button = self._add_button(
-            actions_layout, "Завершить рабочий день", self.end_workday, "dangerButton"
+        self.meetings_cards_layout = QVBoxLayout()
+        self.meetings_cards_layout.setSpacing(10)
+        meetings_layout.addLayout(self.meetings_cards_layout)
+        meeting_folder_actions = QHBoxLayout()
+        meeting_folder_actions.setSpacing(8)
+        self.open_selected_meeting_folder_button = self._add_button(
+            meeting_folder_actions, "Открыть папку встречи", self.open_selected_meeting_folder
         )
         self.open_day_folder_button = self._add_button(
-            actions_layout, "Открыть папку дня", self.open_day_folder
+            meeting_folder_actions, "Открыть папку дня", self.open_day_folder
         )
-        self._add_button(actions_layout, "Проверить OBS", self.check_obs)
-        actions_layout.addStretch()
-        layout.addWidget(self._create_card("Действия", actions_layout))
+        meeting_folder_actions.addStretch(1)
+        meetings_layout.addLayout(meeting_folder_actions)
+        layout.addWidget(self._create_card("Встречи за день", meetings_layout))
 
         self.status_label = QLabel(self._startup_status())
         self.status_label.setWordWrap(True)
@@ -810,6 +1012,8 @@ class MainWindow(QMainWindow):
         if self.storage.last_recorder_message:
             message = f"{message} {self.storage.last_recorder_message}"
         self.pipeline_completed = False
+        self.selected_workday_meeting_folder = meeting_folder
+        self._refresh_after_lifecycle_change()
         if self.pipeline_running:
             message = f"{message} Предыдущая встреча еще обрабатывается в фоне."
         else:
@@ -820,13 +1024,13 @@ class MainWindow(QMainWindow):
             self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
             self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
         self.status_label.setText(message)
-        self._refresh_after_lifecycle_change()
 
     def end_meeting(self) -> None:
         if not self.storage.meeting_active:
             self.status_label.setText("Нет активной встречи для завершения.")
             return
         finishing_meeting_folder = self.storage.active_meeting_folder
+        self.selected_workday_meeting_folder = finishing_meeting_folder
         processing_already_running = self.pipeline_running
         if not self.pipeline_running:
             self.pipeline_meeting_folder = finishing_meeting_folder
@@ -865,6 +1069,8 @@ class MainWindow(QMainWindow):
         if self.pipeline_running or self.pipeline_thread is not None or not self.processing_queue:
             return
         self.pipeline_meeting_folder = self.processing_queue.pop(0)
+        if self.selected_workday_meeting_folder is None:
+            self.selected_workday_meeting_folder = self.pipeline_meeting_folder
         self.pipeline_running = True
         self.pipeline_completed = False
         metadata = self.storage.read_meeting_metadata(self.pipeline_meeting_folder)
@@ -964,7 +1170,9 @@ class MainWindow(QMainWindow):
         self._start_next_pipeline()
 
     def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
-        widget = self.pipeline_labels[step]
+        widget = self.pipeline_labels.get(step)
+        if widget is None:
+            return
         widget.setText(f"{label}: {message}")
         self._apply_status_style(widget, state)
 
@@ -974,11 +1182,26 @@ class MainWindow(QMainWindow):
         return self.storage.read_meeting_metadata(self.pipeline_meeting_folder)
 
     def _refresh_pipeline_from_metadata(self, metadata: dict[str, object]) -> None:
-        self._set_pipeline_step("meeting", "Готово", "Созвон завершен.", "ok")
+        if metadata.get("status") == "active":
+            self._set_pipeline_step("meeting", "Выполняется", "Созвон идет.", "active")
+        elif metadata:
+            self._set_pipeline_step("meeting", "Готово", "Созвон завершен.", "ok")
+        else:
+            self._set_pipeline_step("meeting", "Ожидает", "Созвон не начат.", "wait")
         for step in ["recording", "audio", "transcription", "summary"]:
             label, state = self._step_status_from_metadata(step, metadata)
             self._set_pipeline_step(step, label, self._step_message(step, metadata), state)
-        self._set_pipeline_step("done", "Готово", "Metadata обновлена.", "ok")
+        processing_status = metadata.get("processing_status")
+        if metadata.get("status") == "active":
+            self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
+        elif processing_status == "completed":
+            self._set_pipeline_step("done", "Готово", "Metadata обновлена.", "ok")
+        elif processing_status == "running":
+            self._set_pipeline_step("done", "Выполняется", "Pipeline выполняется.", "active")
+        elif processing_status == "pending":
+            self._set_pipeline_step("done", "Ожидает", "Pipeline ожидает обработки.", "wait")
+        else:
+            self._set_pipeline_step("done", "Ожидает", "Pipeline не запускался.", "wait")
 
     def _step_status_from_metadata(
         self,
@@ -988,6 +1211,8 @@ class MainWindow(QMainWindow):
         status = str(metadata.get(f"{step}_status") or "")
         if step == "recording":
             status = str(metadata.get("recording_status") or "")
+            if status == "recording":
+                return "Выполняется", "active"
             if status in {"stopped", "disabled"}:
                 return ("Готово" if status == "stopped" else "Пропущено", "ok" if status == "stopped" else "skip")
             if status.endswith("failed"):
@@ -1202,6 +1427,14 @@ class MainWindow(QMainWindow):
             self.status_label.setText(message)
             self.review_status_label.setText(message)
 
+    def open_selected_meeting_folder(self) -> None:
+        meeting_folder = self.selected_workday_meeting_folder
+        if meeting_folder is None:
+            self.status_label.setText("Выберите встречу, чтобы открыть ее папку.")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(meeting_folder.resolve()))):
+            self.status_label.setText(f"Не удалось открыть папку встречи: {meeting_folder}")
+
     def _selected_meeting_folder(self) -> Path | None:
         current = self.meeting_list.currentItem()
         if current is None:
@@ -1219,10 +1452,58 @@ class MainWindow(QMainWindow):
         return "Готово. Начните рабочий день, когда потребуется."
 
     def _refresh_after_lifecycle_change(self) -> None:
-        self.refresh_buttons()
         self.refresh_status()
+        self.refresh_buttons()
         if self.pages.currentIndex() == 1:
             self.refresh_review()
+
+    def _refresh_active_call_display(self) -> None:
+        if not hasattr(self, "active_call_title_value"):
+            return
+        if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
+            metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
+            self.active_call_title_value.setText(
+                str(metadata.get("title") or self.storage.active_meeting_folder.name)
+            )
+            self.active_call_detail_value.setText(
+                "OBS записывает встречу. После завершения начнется локальная обработка."
+                if metadata.get("recording_status") == "recording"
+                else "Встреча идет сейчас. Запись может быть отключена или недоступна."
+            )
+            self.active_call_timer_value.setText(self._elapsed_text(metadata.get("started_at")))
+            badge_text, badge_state = self._meeting_badge(metadata)
+            self.active_call_badge.setText(badge_text)
+            self._apply_badge_style(self.active_call_badge, badge_state)
+            return
+
+        self.active_call_timer_value.setText("00:00:00")
+        if self.storage.workday_active:
+            self.active_call_title_value.setText("Нет активного созвона")
+            self.active_call_detail_value.setText(
+                "Можно начать новую встречу. Если предыдущая еще обрабатывается, она продолжит выполняться в фоне."
+            )
+            self.active_call_badge.setText("Ожидает")
+            self._apply_badge_style(self.active_call_badge, "wait")
+        else:
+            self.active_call_title_value.setText("Нет активного созвона")
+            self.active_call_detail_value.setText(
+                "Сначала начните рабочий день, затем можно будет запустить встречу."
+            )
+            self.active_call_badge.setText("Не начат")
+            self._apply_badge_style(self.active_call_badge, "wait")
+
+    @staticmethod
+    def _elapsed_text(started_at: object) -> str:
+        if not started_at:
+            return "00:00:00"
+        try:
+            started = datetime.fromisoformat(str(started_at))
+        except ValueError:
+            return "00:00:00"
+        total_seconds = max(0, int((datetime.now() - started).total_seconds()))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def refresh_buttons(self) -> None:
         self.check_readiness_button.setEnabled(not self.pipeline_running)
@@ -1233,6 +1514,8 @@ class MainWindow(QMainWindow):
             self.storage.workday_active and not self.storage.meeting_active
         )
         self.end_meeting_button.setEnabled(self.storage.meeting_active)
+        self.start_meeting_button.setVisible(not self.storage.meeting_active)
+        self.end_meeting_button.setVisible(self.storage.meeting_active)
         self.end_workday_button.setEnabled(
             not self._has_processing_work()
             and self.storage.workday_active
@@ -1240,6 +1523,9 @@ class MainWindow(QMainWindow):
         )
         self.open_day_folder_button.setEnabled(
             self.storage.get_today_day_folder() is not None
+        )
+        self.open_selected_meeting_folder_button.setEnabled(
+            self.selected_workday_meeting_folder is not None
         )
         self._refresh_review_buttons()
 
@@ -1252,35 +1538,22 @@ class MainWindow(QMainWindow):
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
         self.obs_status_value.setText(self.recorder.status_text)
-        if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
-            self.active_call_title_value.setText(self.storage.active_meeting_folder.name)
-            self.active_call_detail_value.setText(
-                "Встреча идет сейчас. Управление записью доступно в блоке действий."
-            )
-        elif self.pipeline_running:
-            self.active_call_title_value.setText("Нет активного созвона")
-            self.active_call_detail_value.setText(
-                "Можно начать следующую встречу, пока предыдущая обрабатывается в фоне."
-            )
-        else:
-            self.active_call_title_value.setText("Нет активного созвона")
-            self.active_call_detail_value.setText(
-                "Когда рабочий день активен, нажмите «Начать встречу» в блоке действий."
-            )
+        self._refresh_active_call_display()
         meeting_count = len(self.storage.list_today_meeting_folders()) if day_folder else 0
         if meeting_count == 0:
-            self.today_meetings_value.setText("За выбранный день пока нет созданных встреч.")
+            if day_folder:
+                self.today_meetings_value.setText(
+                    "За выбранный день пока нет созданных встреч. Папку дня можно открыть кнопкой ниже."
+                )
+            else:
+                self.today_meetings_value.setText(
+                    "Папка дня еще не создана. Начните рабочий день, чтобы встречи появились здесь."
+                )
         else:
             self.today_meetings_value.setText(
-                f"Создано встреч за день: {meeting_count}. Детали доступны на экране ревью."
+                f"Создано встреч за день: {meeting_count}. Нажмите на карточку, чтобы раскрыть pipeline конкретной встречи."
             )
-        if not self.storage.meeting_active and not self.pipeline_running and not self.pipeline_completed:
-            self._set_pipeline_step("meeting", "Ожидает", "Созвон не начат.", "wait")
-            self._set_pipeline_step("recording", "Ожидает", "Созвон не начат.", "wait")
-            self._set_pipeline_step("audio", "Ожидает", "Созвон не начат.", "wait")
-            self._set_pipeline_step("transcription", "Ожидает", "Созвон не начат.", "wait")
-            self._set_pipeline_step("summary", "Ожидает", "Созвон не начат.", "wait")
-            self._set_pipeline_step("done", "Ожидает", "Созвон не начат.", "wait")
+        self._refresh_workday_meetings()
 
     def _refresh_review_buttons(self) -> None:
         has_day_folder = self.storage.get_today_day_folder() is not None
