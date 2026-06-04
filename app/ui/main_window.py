@@ -328,6 +328,378 @@ class StartMeetingOverlay(QWidget):
         super().keyPressEvent(event)
 
 
+class FloatingMeetingControl(QWidget):
+    start_workday_requested = Signal()
+    start_meeting_requested = Signal(str)
+    end_meeting_requested = Signal()
+    open_main_requested = Signal()
+    visibility_changed = Signal(bool)
+
+    def __init__(self) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.FramelessWindowHint,
+        )
+        self.setObjectName("floatingMeetingControl")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumWidth(280)
+
+        self._drag_offset = None
+        self._input_mode = False
+        self._confirm_mode = False
+        self._error_mode = False
+        self._closing_from_app = False
+        self._workday_active = False
+        self._meeting_active = False
+        self._recorder_enabled = False
+        self._pipeline_running = False
+        self._background_message = ""
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+        self.title_label = QLabel("Быстрый созвон")
+        self.title_label.setObjectName("floatingTitle")
+        self.open_button = QPushButton("Открыть")
+        self.open_button.setObjectName("floatingLinkButton")
+        self.open_button.clicked.connect(self.open_main_requested.emit)
+        self.close_button = QPushButton("×")
+        self.close_button.setObjectName("floatingCloseButton")
+        self.close_button.clicked.connect(self.hide)
+        header_layout.addWidget(self.title_label, 1)
+        header_layout.addWidget(self.open_button)
+        header_layout.addWidget(self.close_button)
+
+        self.state_label = QLabel()
+        self.state_label.setObjectName("floatingState")
+        self.state_label.setWordWrap(True)
+        self.detail_label = QLabel()
+        self.detail_label.setObjectName("floatingDetail")
+        self.detail_label.setWordWrap(True)
+        self.background_label = QLabel()
+        self.background_label.setObjectName("floatingBackground")
+        self.background_label.setWordWrap(True)
+
+        self.title_input = QLineEdit()
+        self.title_input.setObjectName("floatingInput")
+        self.title_input.setPlaceholderText("Название встречи")
+        self.title_input.returnPressed.connect(self._start_from_input)
+        self.error_label = QLabel("Введите название встречи.")
+        self.error_label.setObjectName("floatingError")
+        self.error_label.setWordWrap(True)
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(8)
+        self.secondary_button = QPushButton("Отмена")
+        self.secondary_button.setObjectName("floatingSecondaryButton")
+        self.secondary_button.clicked.connect(self._handle_secondary)
+        self.primary_button = QPushButton()
+        self.primary_button.clicked.connect(self._handle_primary)
+        buttons_layout.addWidget(self.secondary_button)
+        buttons_layout.addWidget(self.primary_button, 1)
+
+        layout.addLayout(header_layout)
+        layout.addWidget(self.state_label)
+        layout.addWidget(self.detail_label)
+        layout.addWidget(self.background_label)
+        layout.addWidget(self.title_input)
+        layout.addWidget(self.error_label)
+        layout.addLayout(buttons_layout)
+        self.setLayout(layout)
+        self.setStyleSheet(self._style())
+        self.update_state(
+            workday_active=False,
+            meeting_active=False,
+            recorder_enabled=False,
+            pipeline_running=False,
+            background_message="",
+        )
+
+    def update_state(
+        self,
+        *,
+        workday_active: bool,
+        meeting_active: bool,
+        recorder_enabled: bool,
+        pipeline_running: bool,
+        meeting_title: str = "",
+        background_message: str = "",
+    ) -> None:
+        self._workday_active = workday_active
+        self._meeting_active = meeting_active
+        self._recorder_enabled = recorder_enabled
+        self._pipeline_running = pipeline_running
+        self._background_message = background_message
+        self._error_mode = False
+
+        if meeting_active:
+            self._input_mode = False
+        else:
+            self._confirm_mode = False
+
+        if not workday_active:
+            self._input_mode = False
+            self._confirm_mode = False
+            self._render_day_not_started()
+        elif meeting_active:
+            if self._confirm_mode:
+                self._render_confirm_end()
+            else:
+                self._render_meeting_active(meeting_title)
+        elif self._input_mode:
+            self._render_title_input()
+        else:
+            self._render_ready_for_meeting()
+
+        self._update_background_label()
+        self.adjustSize()
+
+    def close_from_app(self) -> None:
+        self._closing_from_app = True
+        self.close()
+
+    def show_error(self, message: str) -> None:
+        self._input_mode = False
+        self._confirm_mode = False
+        self._error_mode = True
+        self.state_label.setText("Ошибка")
+        self.detail_label.setText(message)
+        self.background_label.hide()
+        self.title_input.hide()
+        self.error_label.hide()
+        self.secondary_button.hide()
+        self._set_primary_button("Открыть приложение", "floatingPrimaryButton")
+        self.adjustSize()
+
+    def _render_day_not_started(self) -> None:
+        self.state_label.setText("Рабочий день не начат")
+        self.detail_label.setText("Нажмите, чтобы начать рабочий день и подготовиться к созвонам.")
+        self.title_input.hide()
+        self.error_label.hide()
+        self.secondary_button.hide()
+        self._set_primary_button("Начать рабочий день", "floatingPrimaryButton")
+
+    def _render_ready_for_meeting(self) -> None:
+        self.state_label.setText("Готов к созвону")
+        self.detail_label.setText("Можно быстро начать новый созвон.")
+        self.title_input.hide()
+        self.error_label.hide()
+        self.secondary_button.hide()
+        self._set_primary_button("Начать созвон", "floatingPrimaryButton")
+
+    def _render_title_input(self) -> None:
+        self.state_label.setText("Начать созвон")
+        self.detail_label.setText("Введите короткое название встречи.")
+        self.title_input.show()
+        self.error_label.setVisible(False)
+        self.secondary_button.setText("Отмена")
+        self.secondary_button.show()
+        self._set_primary_button("Начать", "floatingPrimaryButton")
+        self.title_input.setFocus()
+
+    def _render_meeting_active(self, meeting_title: str) -> None:
+        self.state_label.setText("Созвон идет")
+        details = "OBS пишет." if self._recorder_enabled else "OBS выключен или недоступен."
+        if meeting_title:
+            details = f"{meeting_title}\n{details}"
+        self.detail_label.setText(details)
+        self.title_input.hide()
+        self.error_label.hide()
+        self.secondary_button.hide()
+        self._set_primary_button("Завершить созвон", "floatingDangerButton")
+
+    def _render_confirm_end(self) -> None:
+        self.state_label.setText("Завершить созвон?")
+        self.detail_label.setText("Подтвердите завершение, чтобы избежать случайного клика.")
+        self.title_input.hide()
+        self.error_label.hide()
+        self.secondary_button.setText("Нет")
+        self.secondary_button.show()
+        self._set_primary_button("Да", "floatingDangerButton")
+
+    def _update_background_label(self) -> None:
+        if self._pipeline_running:
+            self.background_label.setText(
+                self._background_message or "Обработка прошлой встречи выполняется в фоне."
+            )
+            self.background_label.show()
+        else:
+            self.background_label.hide()
+
+    def _set_primary_button(self, text: str, object_name: str) -> None:
+        self.primary_button.setText(text)
+        if self.primary_button.objectName() != object_name:
+            self.primary_button.setObjectName(object_name)
+            self.primary_button.style().unpolish(self.primary_button)
+            self.primary_button.style().polish(self.primary_button)
+
+    def _handle_primary(self) -> None:
+        if self._error_mode:
+            self.open_main_requested.emit()
+            return
+        if not self._workday_active:
+            self.start_workday_requested.emit()
+            return
+        if self._meeting_active:
+            if self._confirm_mode:
+                self._confirm_mode = False
+                self.end_meeting_requested.emit()
+            else:
+                self._confirm_mode = True
+                self._render_confirm_end()
+                self._update_background_label()
+                self.adjustSize()
+            return
+        if self._input_mode:
+            self._start_from_input()
+            return
+        self._input_mode = True
+        self._render_title_input()
+        self._update_background_label()
+        self.adjustSize()
+
+    def _handle_secondary(self) -> None:
+        if self._confirm_mode:
+            self._confirm_mode = False
+            self._render_meeting_active("")
+        elif self._input_mode:
+            self._input_mode = False
+            self.title_input.clear()
+            self._render_ready_for_meeting()
+        self._update_background_label()
+        self.adjustSize()
+
+    def _start_from_input(self) -> None:
+        title = self.title_input.text().strip()
+        if not title:
+            self.error_label.show()
+            return
+        self.title_input.clear()
+        self._input_mode = False
+        self.start_meeting_requested.emit(title)
+
+    def hideEvent(self, event) -> None:
+        self.visibility_changed.emit(False)
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        self.visibility_changed.emit(True)
+        super().showEvent(event)
+
+    def closeEvent(self, event) -> None:
+        if self._closing_from_app:
+            super().closeEvent(event)
+            return
+        event.ignore()
+        self.hide()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    @staticmethod
+    def _style() -> str:
+        return """
+            QWidget#floatingMeetingControl {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #ead8c6;
+                border-radius: 12px;
+                font-family: "Segoe UI";
+                font-size: 12px;
+            }
+            QLabel#floatingTitle {
+                color: #ff6f1a;
+                font-weight: 800;
+                font-size: 13px;
+            }
+            QLabel#floatingState {
+                color: #3a1408;
+                font-weight: 800;
+                font-size: 15px;
+            }
+            QLabel#floatingDetail {
+                color: #7b4b35;
+            }
+            QLabel#floatingBackground {
+                background: #fff3e6;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                padding: 6px 8px;
+            }
+            QLabel#floatingError {
+                color: #991b1b;
+                font-weight: 700;
+            }
+            QLineEdit#floatingInput {
+                background: #fffdf8;
+                color: #3a1408;
+                border: 1px solid #d9bfa8;
+                border-radius: 6px;
+                padding: 7px 9px;
+                min-height: 30px;
+            }
+            QPushButton#floatingPrimaryButton {
+                background: #ff6f1a;
+                color: #ffffff;
+                border: 1px solid #ff6f1a;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-weight: 800;
+            }
+            QPushButton#floatingDangerButton {
+                background: #d9280f;
+                color: #ffffff;
+                border: 1px solid #d9280f;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-weight: 800;
+            }
+            QPushButton#floatingSecondaryButton,
+            QPushButton#floatingLinkButton {
+                background: #fffdf8;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-weight: 700;
+            }
+            QPushButton#floatingCloseButton {
+                background: #fffdf8;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 9px;
+                min-width: 24px;
+                min-height: 24px;
+                max-width: 24px;
+                max-height: 24px;
+                font-weight: 900;
+            }
+        """
+
+
 class MainWindow(QMainWindow):
     READINESS_CARD_EXPANDED_HEIGHT = 276
     READINESS_CARD_COLLAPSED_HEIGHT = 86
@@ -359,6 +731,8 @@ class MainWindow(QMainWindow):
         self.pipeline_running = False
         self.pipeline_completed = False
         self.pipeline_meeting_folder: Path | None = None
+        self.floating_background_message = ""
+        self._floating_control_positioned = False
         self.processing_queue: list[Path] = []
         self.pipeline_thread: QThread | None = None
         self.pipeline_worker: MeetingPipelineWorker | None = None
@@ -430,6 +804,12 @@ class MainWindow(QMainWindow):
             lambda: self.status_label.setText("Создание встречи отменено.")
         )
         self._resize_start_meeting_overlay()
+        self.floating_control = FloatingMeetingControl()
+        self.floating_control.start_workday_requested.connect(self.start_workday)
+        self.floating_control.start_meeting_requested.connect(self._start_meeting_from_floating)
+        self.floating_control.end_meeting_requested.connect(self.end_meeting)
+        self.floating_control.open_main_requested.connect(self._show_main_window_from_floating)
+        self.floating_control.visibility_changed.connect(self._on_floating_visibility_changed)
         self._refresh_navigation_state(self.pages.currentIndex())
         self.refresh_status()
         self.refresh_buttons()
@@ -437,6 +817,7 @@ class MainWindow(QMainWindow):
         self.active_call_timer.setInterval(1000)
         self.active_call_timer.timeout.connect(self._refresh_active_call_display)
         self.active_call_timer.start()
+        self.show_floating_control()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -448,6 +829,67 @@ class MainWindow(QMainWindow):
         parent = self.start_meeting_overlay.parentWidget()
         if parent is not None:
             self.start_meeting_overlay.setGeometry(parent.rect())
+
+    def show_floating_control(self) -> None:
+        if not hasattr(self, "floating_control"):
+            return
+        self._refresh_floating_control()
+        if not self._floating_control_positioned:
+            screen = self.screen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                self.floating_control.adjustSize()
+                self.floating_control.move(
+                    max(available.left(), available.right() - self.floating_control.width() - 24),
+                    available.top() + 80,
+                )
+            self._floating_control_positioned = True
+        self.floating_control.show()
+        self.floating_control.raise_()
+
+    def hide_floating_control(self) -> None:
+        if hasattr(self, "floating_control"):
+            self.floating_control.hide()
+
+    def toggle_floating_control(self) -> None:
+        if not hasattr(self, "floating_control"):
+            return
+        if self.floating_control.isVisible():
+            self.hide_floating_control()
+        else:
+            self.show_floating_control()
+
+    def _on_floating_visibility_changed(self, visible: bool) -> None:
+        if hasattr(self, "toggle_floating_button"):
+            self.toggle_floating_button.setText(
+                "Скрыть плавающую кнопку" if visible else "Показать плавающую кнопку"
+            )
+
+    def _show_main_window_from_floating(self) -> None:
+        self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _start_meeting_from_floating(self, title: str) -> None:
+        self._start_meeting_with_title(title)
+        self._refresh_floating_control()
+
+    def _refresh_floating_control(self) -> None:
+        if not hasattr(self, "floating_control"):
+            return
+        meeting_title = ""
+        if self.storage.meeting_active and self.storage.active_meeting_folder is not None:
+            metadata = self.storage.read_meeting_metadata(self.storage.active_meeting_folder)
+            meeting_title = str(metadata.get("title") or self.storage.active_meeting_folder.name)
+        self.floating_control.update_state(
+            workday_active=self.storage.workday_active,
+            meeting_active=self.storage.meeting_active,
+            recorder_enabled=bool(getattr(self.recorder, "enabled", False)),
+            pipeline_running=self._has_processing_work(),
+            meeting_title=meeting_title,
+            background_message=self.floating_background_message,
+        )
 
     def _create_navigation(self) -> QWidget:
         navigation = QWidget()
@@ -467,6 +909,10 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
         self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
         layout.addStretch()
+        self.toggle_floating_button = QPushButton("Скрыть плавающую кнопку")
+        self.toggle_floating_button.setObjectName("sidebarActionButton")
+        self.toggle_floating_button.clicked.connect(self.toggle_floating_control)
+        layout.addWidget(self.toggle_floating_button)
         navigation.setLayout(layout)
         return navigation
 
@@ -576,6 +1022,20 @@ class MainWindow(QMainWindow):
                 color: #ff6f1a;
                 border-left: 3px solid #ff6f1a;
                 padding-left: 15px;
+            }
+            QPushButton#sidebarActionButton {
+                background: #fff8ef;
+                color: #7b4b35;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                padding: 8px 12px;
+                margin: 12px 14px 0 14px;
+                font-weight: 700;
+                text-align: left;
+            }
+            QPushButton#sidebarActionButton:hover {
+                color: #ff6f1a;
+                border-color: #ff6f1a;
             }
             QLabel#pageTitle {
                 color: #3a1408;
@@ -1387,6 +1847,8 @@ class MainWindow(QMainWindow):
                 "Дождитесь завершения обработки. Сейчас обновляются локальные файлы встречи или итогов дня."
             )
             return
+        if hasattr(self, "floating_control"):
+            self.floating_control.close_from_app()
         super().closeEvent(event)
 
     def _create_workday_page(self) -> QWidget:
@@ -1999,6 +2461,7 @@ class MainWindow(QMainWindow):
         self.pipeline_meeting_folder = self.processing_queue.pop(0)
         self.pipeline_running = True
         self.pipeline_completed = False
+        self.floating_background_message = "Фоновая обработка встречи запущена."
         metadata = self.storage.read_meeting_metadata(self.pipeline_meeting_folder)
         if self._is_workday_pipeline_visible(self.pipeline_meeting_folder):
             self._refresh_pipeline_from_metadata(metadata)
@@ -2065,6 +2528,8 @@ class MainWindow(QMainWindow):
         if self._is_workday_pipeline_visible(self.pipeline_meeting_folder):
             self._set_pipeline_step(step, label, default_message, state)
         self.status_label.setText(default_message)
+        self.floating_background_message = default_message
+        self._refresh_floating_control()
 
     def _on_pipeline_finished(self, meeting_folder_text: str) -> None:
         meeting_folder = self.pipeline_meeting_folder or Path(meeting_folder_text)
@@ -2084,16 +2549,20 @@ class MainWindow(QMainWindow):
         self.pipeline_running = False
         self.pipeline_completed = True
         self.pipeline_meeting_folder = None
+        self.floating_background_message = ""
         self._refresh_after_lifecycle_change()
 
     def _on_pipeline_failed(self, message: str) -> None:
         self.pipeline_running = False
         failed_meeting_folder = self.pipeline_meeting_folder
         self.pipeline_meeting_folder = None
+        self.floating_background_message = f"Ошибка фоновой обработки: {message}"
         if self._is_workday_pipeline_visible(failed_meeting_folder):
             self._set_pipeline_step("done", "Ошибка", message, "error")
         self.status_label.setText(f"Фоновая обработка встречи не выполнена: {message}")
         self.refresh_buttons()
+        if hasattr(self, "floating_control") and self.floating_control.isVisible():
+            self.floating_control.show_error("Ошибка фоновой обработки. Откройте приложение для деталей.")
 
     def _on_pipeline_thread_finished(self) -> None:
         self.pipeline_thread = None
@@ -2968,6 +3437,7 @@ class MainWindow(QMainWindow):
             and has_day_summary
             and not self._has_processing_work()
         )
+        self._refresh_floating_control()
 
     def _has_processing_work(self) -> bool:
         return (
