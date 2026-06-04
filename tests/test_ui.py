@@ -5,13 +5,55 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
+import yaml
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
-from app.ui.main_window import MainWindow
+from app.ui.main_window import MainWindow, StartMeetingOverlay
+
+
+class EnabledRecorder(NoopRecorder):
+    enabled = True
+    status_text = "OBS: подключен"
+
+
+def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = StartMeetingOverlay(NoopRecorder())
+    submitted_titles: list[str] = []
+    overlay.submitted.connect(submitted_titles.append)
+
+    assert overlay.objectName() == "meetingOverlay"
+    assert overlay.card.objectName() == "meetingOverlayCard"
+    assert overlay.title_input.objectName() == "meetingTitleInput"
+    assert overlay.recording_status_label.text() == (
+        "OBS недоступен или выключен, встреча начнется без записи"
+    )
+    assert overlay.recording_status_label.property("state") == "wait"
+
+    overlay.open_for_recorder(NoopRecorder())
+    overlay._accept_if_valid()
+
+    assert not overlay.error_label.isHidden()
+    assert submitted_titles == []
+
+    overlay.title_input.setText("Синхронизация по релизу")
+    overlay._accept_if_valid()
+
+    assert submitted_titles == ["Синхронизация по релизу"]
+    assert overlay.isHidden()
+    overlay.close()
+
+    enabled_overlay = StartMeetingOverlay(EnabledRecorder())
+
+    assert enabled_overlay.recording_status_label.text() == "OBS будет запущен автоматически"
+    assert enabled_overlay.recording_status_label.property("state") == "ok"
+    enabled_overlay.close()
+    app.processEvents()
 
 
 def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path) -> None:
@@ -72,13 +114,17 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     window.start_workday()
 
-    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Планерка", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Планерка")
 
     assert "Планерка" in window.active_call_title_value.text()
     assert "Создано встреч за день: 1" in window.today_meetings_value.text()
+    assert window.selected_workday_meeting_folder is None
+    assert storage.active_meeting_folder in window.workday_meeting_cards
+
+    window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
+
     assert window.selected_workday_meeting_folder == storage.active_meeting_folder
-    assert "Выполняется" in window.pipeline_labels["recording"].text()
+    assert "Пропущено" in window.pipeline_labels["recording"].text()
 
     window.close()
     app.processEvents()
@@ -113,47 +159,278 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.readiness_card.height() == window.READINESS_CARD_EXPANDED_HEIGHT
     assert window.readiness_body.height() == window.READINESS_GRID_HEIGHT
     assert not window.readiness_body.isHidden()
+    assert window.toggle_meetings_button.text() == "Свернуть"
+    assert not window.meetings_body.isHidden()
 
     window.toggle_readiness_button.click()
+    window.toggle_meetings_button.click()
 
     assert window.readiness_body.isHidden()
     assert window.readiness_card.height() == window.READINESS_CARD_COLLAPSED_HEIGHT
     assert window.toggle_readiness_button.text() == "Развернуть"
-    assert window.start_workday_button.objectName() == "primaryButton"
-    assert window.start_meeting_button.objectName() == "primaryButton"
+    assert window.meetings_body.isHidden()
+    assert window.toggle_meetings_button.text() == "Развернуть"
+    assert window.day_status_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert window.active_call_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert window.day_status_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
+    assert window.active_call_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
+    assert window.day_status_panel.objectName() == "overviewInnerPanel"
+    assert window.active_call_panel.objectName() == "overviewInnerPanel"
+    assert window.day_status_badge.text() == "Не активен"
+    assert window.day_folder_badge.text() == "Папка не создана"
+    assert window.day_status_open_folder_button.text() == "Открыть папку дня"
+    assert window.day_status_open_folder_button.isHidden()
+    assert window.active_call_badge.parent() is not window.active_call_panel
+    assert window.start_workday_button is window.end_workday_button
+    assert window.workday_action_button.text() == "Начать рабочий день"
+    assert window.workday_action_button.objectName() == "primaryButton"
+    assert window.start_meeting_button.isHidden()
     assert window.end_meeting_button.objectName() == "dangerButton"
-    assert window.end_workday_button.objectName() == "dangerButton"
+
+    window.start_workday()
+
+    assert window.workday_action_button.text() == "Завершить рабочий день"
+    assert window.workday_action_button.objectName() == "dangerButton"
+    assert window.day_status_badge.text() == "Активен"
+    assert window.day_folder_badge.text() == "Папка создана"
+    assert not window.day_status_open_folder_button.isHidden()
+    assert not window.start_meeting_button.isHidden()
+
+    window.start_meeting()
+
+    assert not window.start_meeting_overlay.isHidden()
+    window.start_meeting_overlay._cancel()
+    assert window.start_meeting_overlay.isHidden()
+    assert not storage.meeting_active
+
+    window._start_meeting_with_title("Карточка созвона")
+
+    assert window.active_call_panel.objectName() == "activeCallInnerPanel"
+    assert window.start_meeting_button.isHidden()
+    assert not window.end_meeting_button.isHidden()
 
     window.close()
     app.processEvents()
 
 
-def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
+def test_pipeline_steps_are_rendered_as_prototype_cards(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
     window.start_workday()
-    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Pipeline", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Pipeline")
+
+    window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
 
     assert set(window.pipeline_step_titles) == {
-        "meeting",
         "recording",
         "audio",
         "transcription",
         "summary",
-        "done",
     }
+    assert window.pipeline_step_titles["recording"].text() == "OBS запись"
+    assert window.pipeline_step_titles["audio"].text() == "Аудио"
+    assert window.pipeline_step_titles["summary"].text() == "Итоги"
+    assert window.pipeline_labels["recording"].objectName() == "statusBadge"
+    assert window.pipeline_messages["recording"].objectName() == "pipelineMessage"
 
     window._set_pipeline_step("audio", "Выполняется", "Тестовая обработка audio.wav.", "active")
 
-    assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
-    assert window.pipeline_labels["audio"].maximumWidth() == 900
-    assert window.pipeline_labels["audio"].minimumWidth() == 420
-    assert window.pipeline_labels["audio"].minimumHeight() == 28
-    assert not window.pipeline_labels["audio"].wordWrap()
+    assert window.pipeline_labels["audio"].text() == "Выполняется"
+    assert window.pipeline_messages["audio"].text() == "Тестовая обработка audio.wav."
+    assert window.pipeline_messages["audio"].wordWrap()
+
+    window.close()
+    app.processEvents()
+
+
+def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.start_workday()
+    window._start_meeting_with_title("Карточка")
+    meeting_folder = storage.active_meeting_folder
+
+    assert meeting_folder in window.workday_meeting_cards
+    assert window.open_day_folder_button.isHidden()
+
+    window.workday_meeting_cards[meeting_folder].clicked.emit()
+
+    meeting_card = window.workday_meeting_cards[meeting_folder]
+    meeting_buttons = {
+        button.text()
+        for button in meeting_card.findChildren(type(window.workday_action_button))
+    }
+    assert "Открыть папку встречи" in meeting_buttons
+    assert "Открыть папку дня" in meeting_buttons
+
+    window.workday_meeting_cards[meeting_folder].clicked.emit()
+
+    assert window.selected_workday_meeting_folder is None
+    assert window.pipeline_labels == {}
+
+    window.close()
+    app.processEvents()
+
+
+def test_workday_meetings_are_shown_newest_first(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    first = storage.create_meeting_folder(
+        "Первая",
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=10),
+        metadata={"status": "ended"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая",
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=11),
+        metadata={"status": "ended"},
+    )
+    window = MainWindow(storage, recorder)
+
+    assert list(window.workday_meeting_cards) == [second, first]
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Ревью",
+        metadata={
+            "status": "ended",
+            "recording_status": "disabled",
+            "audio_status": "skipped",
+            "transcription_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
+    storage.save_meeting_summary_draft(meeting_folder, "# Итоги встречи\n")
+    (meeting_folder / "transcript.md").write_text("# Транскрипт встречи\n", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_review()
+
+    assert window.review_tabs.count() == 2
+    assert window.review_tabs.tabText(0) == "Итоги встречи"
+    assert window.review_tabs.tabText(1) == "Транскрипт"
+    assert not hasattr(window, "tasks_editor")
+    assert window.selected_review_meeting_folder == meeting_folder
+    assert meeting_folder in window.review_meeting_cards
+    assert window.meeting_summary_editor.toPlainText() == "# Итоги встречи\n"
+    assert window.meeting_transcript_editor.isReadOnly()
+    assert window.meeting_transcript_editor.toPlainText() == "# Транскрипт встречи\n"
+    assert not window.day_summary_editor.isEnabled()
+    assert not (day_folder / "00_day_summary_draft.md").exists()
+
+    storage.save_day_summary_draft(day_folder, "# Итоги дня\n")
+    window.refresh_review()
+
+    assert window.day_summary_editor.isEnabled()
+    assert window.day_summary_editor.toPlainText() == "# Итоги дня\n"
+    assert window.save_final_files_button.isEnabled()
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_meeting_card_click_selects_whole_card(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    first = storage.create_meeting_folder(
+        "Первая",
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=10),
+        metadata={"status": "ended"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая",
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=11),
+        metadata={"status": "ended"},
+    )
+    window = MainWindow(storage, recorder)
+    window.open_review()
+
+    assert window.selected_review_meeting_folder == second
+    assert list(window.review_meeting_cards) == [second, first]
+
+    window.review_meeting_cards[first].clicked.emit()
+
+    assert window.selected_review_meeting_folder == first
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_storage_root_input.setText("MeetingSummariesCustom")
+    window.settings_obs_enabled_checkbox.setChecked(True)
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
+    window.settings_transcription_model_input.setText("small")
+    window.settings_summary_enabled_checkbox.setChecked(True)
+    window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
+    window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
+    window.settings_theme_select.setCurrentText("dark_later")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == "MeetingSummariesCustom"
+    assert config["obs"]["enabled"] is True
+    assert config["obs"]["websocket_host"] == "127.0.0.1"
+    assert config["obs"]["websocket_port"] == 4456
+    assert config["obs"]["websocket_password"] == "secret"
+    assert config["transcription"]["backend"] == "faster_whisper"
+    assert config["transcription"]["model"] == "small"
+    assert config["summary"]["enabled"] is True
+    assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
+    assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert config["ui"]["theme"] == "dark_later"
+    assert "перезапустите приложение" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_and_help_pages_explain_placeholders_and_local_flow(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.nav_buttons[2].click()
+    archive_text = "\n".join(label.text() for label in window.pages.widget(2).findChildren(QLabel))
+    assert "Архив пока не реализован" in archive_text
+    assert "read-only" in archive_text
+
+    window.nav_buttons[4].click()
+    help_text = "\n".join(label.text() for label in window.pages.widget(4).findChildren(QLabel))
+    assert "Основной сценарий" in help_text
+    assert "Local-first" in help_text
+    assert "Аудио и видео остаются локально" in help_text
 
     window.close()
     app.processEvents()
@@ -241,8 +518,7 @@ def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     assert window.start_meeting_button.isEnabled()
     assert not window.end_workday_button.isEnabled()
 
-    with patch("app.ui.main_window.QInputDialog.getText", return_value=("Second", True)):
-        window.start_meeting()
+    window._start_meeting_with_title("Second")
 
     assert storage.meeting_active
     second_metadata = storage.read_meeting_metadata(storage.active_meeting_folder)
@@ -283,11 +559,14 @@ def test_late_pipeline_progress_uses_saved_meeting_folder(tmp_path: Path) -> Non
     storage.active_meeting_folder = meeting_folder
     window = MainWindow(storage, recorder)
     window.pipeline_meeting_folder = meeting_folder
+    window.selected_workday_meeting_folder = meeting_folder
+    window._refresh_workday_meetings()
 
     storage.active_meeting_folder = None
     window._on_pipeline_progress("audio_done", "Поздний сигнал audio_done.")
 
-    assert "Готово" in window.pipeline_labels["audio"].text()
+    assert window.pipeline_labels["audio"].text() == "Готово"
+    assert window.pipeline_messages["audio"].text() == "Поздний сигнал audio_done."
 
     window.close()
     app.processEvents()
