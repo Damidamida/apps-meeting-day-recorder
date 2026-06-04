@@ -2,20 +2,26 @@ from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 
+import yaml
+
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -109,10 +115,7 @@ class MainWindow(QMainWindow):
             "Архив",
             "Здесь позже появится read-only просмотр прошлых рабочих дней и встреч.",
         ))
-        self.pages.addWidget(self._create_placeholder_page(
-            "Настройки",
-            "Здесь позже будут собраны безопасные локальные настройки и диагностика.",
-        ))
+        self.pages.addWidget(self._create_settings_page())
         self.pages.addWidget(self._create_help_page())
         self.pages.currentChanged.connect(self._refresh_navigation_state)
 
@@ -961,6 +964,136 @@ class MainWindow(QMainWindow):
         page.setLayout(layout)
         return page
 
+    def _create_settings_page(self) -> QWidget:
+        page = QWidget()
+        page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        layout.addWidget(
+            self._create_page_header(
+                "Настройки",
+                "Безопасные локальные настройки приложения. Секреты не сохраняйте в git.",
+            )
+        )
+
+        storage_layout = QFormLayout()
+        storage_layout.setHorizontalSpacing(18)
+        storage_layout.setVerticalSpacing(8)
+        self.settings_storage_root_input = QLineEdit(str(self.config["storage"]["root"]))
+        storage_layout.addRow("Папка данных:", self.settings_storage_root_input)
+        layout.addWidget(self._create_card("Хранение", storage_layout))
+
+        obs_layout = QFormLayout()
+        obs_layout.setHorizontalSpacing(18)
+        obs_layout.setVerticalSpacing(8)
+        self.settings_obs_enabled_checkbox = QCheckBox("OBS включен")
+        self.settings_obs_enabled_checkbox.setChecked(bool(self.config["obs"]["enabled"]))
+        self.settings_obs_host_input = QLineEdit(str(self.config["obs"]["websocket_host"]))
+        self.settings_obs_port_input = QSpinBox()
+        self.settings_obs_port_input.setRange(1, 65535)
+        self.settings_obs_port_input.setValue(int(self.config["obs"]["websocket_port"]))
+        self.settings_obs_password_input = QLineEdit(str(self.config["obs"]["websocket_password"]))
+        self.settings_obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        obs_layout.addRow("", self.settings_obs_enabled_checkbox)
+        obs_layout.addRow("WebSocket host:", self.settings_obs_host_input)
+        obs_layout.addRow("WebSocket port:", self.settings_obs_port_input)
+        obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
+        layout.addWidget(self._create_card("OBS", obs_layout))
+
+        transcription_layout = QFormLayout()
+        transcription_layout.setHorizontalSpacing(18)
+        transcription_layout.setVerticalSpacing(8)
+        self.settings_transcription_backend_select = QComboBox()
+        self.settings_transcription_backend_select.addItems(["whisper_cli", "faster_whisper"])
+        self._set_combo_value(
+            self.settings_transcription_backend_select,
+            str(self.config["transcription"]["backend"]),
+        )
+        self.settings_transcription_model_input = QLineEdit(str(self.config["transcription"]["model"]))
+        self.settings_transcription_language_input = QLineEdit(str(self.config["transcription"]["language"]))
+        self.settings_transcription_device_input = QLineEdit(str(self.config["transcription"]["device"]))
+        self.settings_transcription_compute_type_input = QLineEdit(
+            str(self.config["transcription"]["compute_type"])
+        )
+        self.settings_transcription_command_input = QLineEdit(
+            str(self.config["transcription"]["whisper_command"])
+        )
+        transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
+        transcription_layout.addRow("Модель:", self.settings_transcription_model_input)
+        transcription_layout.addRow("Язык:", self.settings_transcription_language_input)
+        transcription_layout.addRow("Устройство:", self.settings_transcription_device_input)
+        transcription_layout.addRow("Compute type:", self.settings_transcription_compute_type_input)
+        transcription_layout.addRow("Whisper command:", self.settings_transcription_command_input)
+        layout.addWidget(self._create_card("Транскрипция", transcription_layout))
+
+        summary_layout = QFormLayout()
+        summary_layout.setHorizontalSpacing(18)
+        summary_layout.setVerticalSpacing(8)
+        self.settings_summary_enabled_checkbox = QCheckBox("Генерация итогов включена")
+        self.settings_summary_enabled_checkbox.setChecked(bool(self.config["summary"]["enabled"]))
+        self.settings_summary_model_input = QLineEdit(str(self.config["summary"]["model"]))
+        self.settings_summary_api_key_env_input = QLineEdit(str(self.config["summary"]["api_key_env"]))
+        self.settings_summary_base_url_input = QLineEdit(str(self.config["summary"]["base_url"]))
+        self.settings_summary_env_file_input = QLineEdit(str(self.config["summary"]["env_file"]))
+        self.settings_summary_timeout_input = QSpinBox()
+        self.settings_summary_timeout_input.setRange(1, 3600)
+        self.settings_summary_timeout_input.setValue(int(self.config["summary"]["timeout_seconds"]))
+        self.settings_summary_chunk_input = QSpinBox()
+        self.settings_summary_chunk_input.setRange(1000, 200000)
+        self.settings_summary_chunk_input.setValue(int(self.config["summary"]["max_chars_per_chunk"]))
+        summary_layout.addRow("", self.settings_summary_enabled_checkbox)
+        summary_layout.addRow("Модель:", self.settings_summary_model_input)
+        summary_layout.addRow("Переменная API key:", self.settings_summary_api_key_env_input)
+        summary_layout.addRow("Base URL:", self.settings_summary_base_url_input)
+        summary_layout.addRow(".env файл:", self.settings_summary_env_file_input)
+        summary_layout.addRow("Timeout, секунд:", self.settings_summary_timeout_input)
+        summary_layout.addRow("Символов на chunk:", self.settings_summary_chunk_input)
+        layout.addWidget(self._create_card("Summary", summary_layout))
+
+        ui_layout = QFormLayout()
+        ui_layout.setHorizontalSpacing(18)
+        ui_layout.setVerticalSpacing(8)
+        self.settings_theme_select = QComboBox()
+        self.settings_theme_select.addItems(["light", "dark_later"])
+        self._set_combo_value(
+            self.settings_theme_select,
+            str(self.config.get("ui", {}).get("theme", "light")),
+        )
+        theme_hint = QLabel("Темная тема зарезервирована для будущей реализации.")
+        theme_hint.setObjectName("sectionHint")
+        theme_hint.setWordWrap(True)
+        ui_layout.addRow("Тема:", self.settings_theme_select)
+        ui_layout.addRow("", theme_hint)
+        layout.addWidget(self._create_card("Интерфейс", ui_layout))
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(8)
+        self.save_settings_button = self._add_button(
+            actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
+        )
+        actions_layout.addStretch(1)
+        layout.addLayout(actions_layout)
+        self.settings_status_label = QLabel(
+            "Настройки сохраняются в локальный config.yaml. Файл не должен попадать в git."
+        )
+        self.settings_status_label.setWordWrap(True)
+        self.settings_status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
+        layout.addWidget(self.settings_status_label)
+
+        page.setLayout(layout)
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("settingsScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setWidget(page)
+        return scroll_area
+
+    @staticmethod
+    def _set_combo_value(combo: QComboBox, value: str) -> None:
+        index = combo.findText(value)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+
     @staticmethod
     def _create_help_page() -> QWidget:
         page = QWidget()
@@ -1501,6 +1634,62 @@ class MainWindow(QMainWindow):
 
     def save_final_summaries(self) -> None:
         self.save_final_files()
+
+    def save_settings(self) -> None:
+        config_path = Path("config.yaml")
+        config_to_save = self._settings_config_from_ui()
+        config_path.write_text(
+            yaml.safe_dump(
+                config_to_save,
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        self.config = load_config(config_path)
+        self.settings_status_label.setText(
+            "Настройки сохранены в config.yaml. "
+            "Для OBS, transcription, summary и папки данных перезапустите приложение, "
+            "чтобы все сервисы точно использовали новые значения."
+        )
+
+    def _settings_config_from_ui(self) -> dict[str, object]:
+        return {
+            "storage": {
+                "root": self.settings_storage_root_input.text().strip() or "MeetingSummaries",
+            },
+            "obs": {
+                "enabled": self.settings_obs_enabled_checkbox.isChecked(),
+                "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
+                "websocket_port": self.settings_obs_port_input.value(),
+                "websocket_password": self.settings_obs_password_input.text(),
+            },
+            "transcription": {
+                "backend": self.settings_transcription_backend_select.currentText(),
+                "model": self.settings_transcription_model_input.text().strip() or "base",
+                "language": self.settings_transcription_language_input.text().strip() or "ru",
+                "device": self.settings_transcription_device_input.text().strip() or "cpu",
+                "compute_type": self.settings_transcription_compute_type_input.text().strip() or "int8",
+                "whisper_command": (
+                    self.settings_transcription_command_input.text().strip() or "whisper"
+                ),
+            },
+            "summary": {
+                "enabled": self.settings_summary_enabled_checkbox.isChecked(),
+                "provider": "openai",
+                "model": self.settings_summary_model_input.text().strip() or "gpt-5.4-mini",
+                "api_key_env": (
+                    self.settings_summary_api_key_env_input.text().strip() or "OPENAI_API_KEY"
+                ),
+                "base_url": self.settings_summary_base_url_input.text().strip(),
+                "env_file": self.settings_summary_env_file_input.text().strip(),
+                "timeout_seconds": self.settings_summary_timeout_input.value(),
+                "max_chars_per_chunk": self.settings_summary_chunk_input.value(),
+            },
+            "ui": {
+                "theme": self.settings_theme_select.currentText(),
+            },
+        }
 
     def open_day_folder(self) -> None:
         day_folder = self.storage.get_today_day_folder()

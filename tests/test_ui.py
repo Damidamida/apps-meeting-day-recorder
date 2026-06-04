@@ -5,6 +5,8 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
+import yaml
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QScrollArea
@@ -199,6 +201,45 @@ def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
     assert window.day_summary_editor.isEnabled()
     assert window.day_summary_editor.toPlainText() == "# Итоги дня\n"
     assert window.save_final_files_button.isEnabled()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_storage_root_input.setText("MeetingSummariesCustom")
+    window.settings_obs_enabled_checkbox.setChecked(True)
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
+    window.settings_transcription_model_input.setText("small")
+    window.settings_summary_enabled_checkbox.setChecked(True)
+    window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
+    window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
+    window.settings_theme_select.setCurrentText("dark_later")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == "MeetingSummariesCustom"
+    assert config["obs"]["enabled"] is True
+    assert config["obs"]["websocket_host"] == "127.0.0.1"
+    assert config["obs"]["websocket_port"] == 4456
+    assert config["obs"]["websocket_password"] == "secret"
+    assert config["transcription"]["backend"] == "faster_whisper"
+    assert config["transcription"]["model"] == "small"
+    assert config["summary"]["enabled"] is True
+    assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
+    assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert config["ui"]["theme"] == "dark_later"
+    assert "перезапустите приложение" in window.settings_status_label.text()
 
     window.close()
     app.processEvents()
