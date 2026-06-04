@@ -151,7 +151,7 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     app.processEvents()
 
 
-def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
+def test_pipeline_steps_are_rendered_as_prototype_cards(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
@@ -164,21 +164,22 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
 
     assert set(window.pipeline_step_titles) == {
-        "meeting",
         "recording",
         "audio",
         "transcription",
         "summary",
-        "done",
     }
+    assert window.pipeline_step_titles["recording"].text() == "OBS запись"
+    assert window.pipeline_step_titles["audio"].text() == "Аудио"
+    assert window.pipeline_step_titles["summary"].text() == "Итоги"
+    assert window.pipeline_labels["recording"].objectName() == "statusBadge"
+    assert window.pipeline_messages["recording"].objectName() == "pipelineMessage"
 
     window._set_pipeline_step("audio", "Выполняется", "Тестовая обработка audio.wav.", "active")
 
-    assert "Тестовая обработка audio.wav." in window.pipeline_labels["audio"].text()
-    assert window.pipeline_labels["audio"].maximumWidth() == 900
-    assert window.pipeline_labels["audio"].minimumWidth() == 420
-    assert window.pipeline_labels["audio"].minimumHeight() == 28
-    assert not window.pipeline_labels["audio"].wordWrap()
+    assert window.pipeline_labels["audio"].text() == "Выполняется"
+    assert window.pipeline_messages["audio"].text() == "Тестовая обработка audio.wav."
+    assert window.pipeline_messages["audio"].wordWrap()
 
     window.close()
     app.processEvents()
@@ -224,12 +225,12 @@ def test_workday_meetings_are_shown_newest_first(tmp_path: Path) -> None:
     storage.create_day_folder()
     first = storage.create_meeting_folder(
         "Первая",
-        started_at=datetime(2026, 6, 4, 10, 0, 0),
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=10),
         metadata={"status": "ended"},
     )
     second = storage.create_meeting_folder(
         "Вторая",
-        started_at=datetime(2026, 6, 4, 11, 0, 0),
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=11),
         metadata={"status": "ended"},
     )
     window = MainWindow(storage, recorder)
@@ -293,12 +294,12 @@ def test_review_meeting_card_click_selects_whole_card(tmp_path: Path) -> None:
     storage.create_day_folder()
     first = storage.create_meeting_folder(
         "Первая",
-        started_at=datetime(2026, 6, 4, 10, 0, 0),
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=10),
         metadata={"status": "ended"},
     )
     second = storage.create_meeting_folder(
         "Вторая",
-        started_at=datetime(2026, 6, 4, 11, 0, 0),
+        started_at=datetime.combine(datetime.now().date(), datetime.min.time()).replace(hour=11),
         metadata={"status": "ended"},
     )
     window = MainWindow(storage, recorder)
@@ -505,7 +506,8 @@ def test_late_pipeline_progress_uses_saved_meeting_folder(tmp_path: Path) -> Non
     storage.active_meeting_folder = None
     window._on_pipeline_progress("audio_done", "Поздний сигнал audio_done.")
 
-    assert "Готово" in window.pipeline_labels["audio"].text()
+    assert window.pipeline_labels["audio"].text() == "Готово"
+    assert window.pipeline_messages["audio"].text() == "Поздний сигнал audio_done."
 
     window.close()
     app.processEvents()

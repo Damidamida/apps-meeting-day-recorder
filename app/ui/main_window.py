@@ -78,12 +78,10 @@ class MainWindow(QMainWindow):
     READINESS_GRID_HEIGHT = 182
     DAY_OVERVIEW_CARD_MIN_HEIGHT = 226
     PIPELINE_STEPS = [
-        ("meeting", "Созвон"),
-        ("recording", "OBS запись"),
-        ("audio", "Извлечение аудио"),
-        ("transcription", "Транскрипция"),
-        ("summary", "Генерация итогов"),
-        ("done", "Готово"),
+        ("recording", "OBS запись", "✓"),
+        ("audio", "Аудио", "A"),
+        ("transcription", "Транскрипция", "T"),
+        ("summary", "Итоги", "Σ"),
     ]
 
     def __init__(
@@ -116,6 +114,8 @@ class MainWindow(QMainWindow):
         self.readiness_badges: dict[str, QLabel] = {}
         self.readiness_tiles: dict[str, QWidget] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
+        self.pipeline_badges: dict[str, QLabel] = {}
+        self.pipeline_messages: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
         self.selected_workday_meeting_folder: Path | None = None
         self.selected_review_meeting_folder: Path | None = None
@@ -370,6 +370,21 @@ class MainWindow(QMainWindow):
                 color: #3a1408;
                 font-weight: 800;
             }
+            QFrame#pipelineStepCard {
+                background: #fffdf8;
+                border: 1px solid #ead8c6;
+                border-radius: 8px;
+                min-height: 58px;
+            }
+            QLabel#pipelineIcon {
+                background: #f3e8dc;
+                color: #7b4b35;
+                border-radius: 8px;
+                font-weight: 700;
+            }
+            QLabel#pipelineMessage {
+                color: #8a6a58;
+            }
             QPushButton {
                 background: #fffdf8;
                 color: #3a1408;
@@ -554,19 +569,50 @@ class MainWindow(QMainWindow):
         self.meetings_body.setVisible(is_collapsed)
         self.toggle_meetings_button.setText("Свернуть" if is_collapsed else "Развернуть")
 
-    def _create_pipeline_step_labels(self, key: str, title: str) -> tuple[QLabel, QLabel]:
+    def _create_pipeline_step_card(self, key: str, title: str, icon: str) -> QWidget:
+        card = QFrame()
+        card.setObjectName("pipelineStepCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setFrameShape(QFrame.Shape.StyledPanel)
+        card.setFrameShadow(QFrame.Shadow.Plain)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+
+        icon_label = QLabel(icon)
+        icon_label.setObjectName("pipelineIcon")
+        icon_label.setFixedSize(28, 28)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        text_block = QWidget()
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(3)
         title_label = QLabel(title)
         title_label.setObjectName("pipelineStepTitle")
-        status_label = QLabel()
-        status_label.setObjectName("pipelineStatus")
-        status_label.setWordWrap(False)
-        status_label.setMinimumHeight(28)
-        status_label.setMinimumWidth(420)
-        status_label.setMaximumWidth(900)
+        message_label = QLabel()
+        message_label.setObjectName("pipelineMessage")
+        message_label.setWordWrap(True)
+        text_layout.addWidget(title_label)
+        text_layout.addWidget(message_label)
+        text_block.setLayout(text_layout)
+
+        status_label = QLabel("Ожидает")
+        status_label.setObjectName("statusBadge")
+        status_label.setMinimumWidth(72)
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._apply_badge_style(status_label, "wait")
+
+        layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(text_block, 1)
+        layout.addWidget(status_label, 0, Qt.AlignmentFlag.AlignTop)
+        card.setLayout(layout)
 
         self.pipeline_step_titles[key] = title_label
         self.pipeline_labels[key] = status_label
-        return title_label, status_label
+        self.pipeline_badges[key] = status_label
+        self.pipeline_messages[key] = message_label
+        return card
 
     def _create_readiness_tile(self, component: str) -> QWidget:
         tile = QFrame()
@@ -618,6 +664,8 @@ class MainWindow(QMainWindow):
         scroll_value = scroll_bar.value() if scroll_bar is not None else 0
         self._clear_layout(self.meetings_cards_layout)
         self.pipeline_labels = {}
+        self.pipeline_badges = {}
+        self.pipeline_messages = {}
         self.pipeline_step_titles = {}
         self.workday_meeting_cards = {}
         meeting_folders = self._today_meeting_folders_newest_first()
@@ -702,12 +750,11 @@ class MainWindow(QMainWindow):
             pipeline_hint.setWordWrap(True)
             pipeline_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             card_layout.addWidget(pipeline_hint)
-            pipeline_layout = QFormLayout()
-            pipeline_layout.setHorizontalSpacing(18)
-            pipeline_layout.setVerticalSpacing(8)
-            for key, title in self.PIPELINE_STEPS:
-                title_label, status_label = self._create_pipeline_step_labels(key, title)
-                pipeline_layout.addRow(title_label, status_label)
+            pipeline_layout = QVBoxLayout()
+            pipeline_layout.setSpacing(8)
+            pipeline_layout.setContentsMargins(0, 0, 0, 0)
+            for key, title, icon in self.PIPELINE_STEPS:
+                pipeline_layout.addWidget(self._create_pipeline_step_card(key, title, icon))
             card_layout.addLayout(pipeline_layout)
             self._refresh_pipeline_from_metadata(metadata)
 
@@ -1469,8 +1516,11 @@ class MainWindow(QMainWindow):
         widget = self.pipeline_labels.get(step)
         if widget is None:
             return
-        widget.setText(f"{label}: {message}")
-        self._apply_status_style(widget, state)
+        widget.setText(label)
+        self._apply_badge_style(widget, state)
+        message_widget = self.pipeline_messages.get(step)
+        if message_widget is not None:
+            message_widget.setText(message)
 
     def _is_workday_pipeline_visible(self, meeting_folder: Path | None) -> bool:
         return (
@@ -1545,17 +1595,39 @@ class MainWindow(QMainWindow):
 
     def _step_message(self, step: str, metadata: dict[str, object]) -> str:
         if step == "recording":
-            return str(metadata.get("recording_note") or metadata.get("recording_path") or "OBS запись обработана.")
+            if metadata.get("recording_status") == "recording":
+                return "OBS ведет запись."
+            if metadata.get("recording_status") == "stopped":
+                return "Запись остановлена."
+            if metadata.get("recording_status") == "disabled":
+                return "OBS запись не активна."
+            return str(metadata.get("recording_note") or "OBS запись ожидает обработки.")
         if step == "audio":
-            return str(metadata.get("audio_error") or metadata.get("audio_path") or "Аудио обработано.")
+            if metadata.get("audio_error"):
+                return str(metadata["audio_error"])
+            if metadata.get("audio_status") == "extracted":
+                return "audio.wav извлечен через FFmpeg."
+            if metadata.get("audio_status") == "skipped":
+                return "Аудио не извлекалось."
+            return "Ждет завершения записи."
         if step == "transcription":
-            return str(
-                metadata.get("transcription_error")
-                or metadata.get("transcript_path")
-                or "Транскрипция обработана."
-            )
+            if metadata.get("transcription_error"):
+                return str(metadata["transcription_error"])
+            if metadata.get("transcription_status") == "completed":
+                provider = metadata.get("transcription_provider")
+                suffix = f" через {provider}" if provider else ""
+                return f"transcript.md создан локально{suffix}."
+            if metadata.get("transcription_status") == "skipped":
+                return "Транскрипция пропущена."
+            return "Ждет audio.wav."
         if step == "summary":
-            return str(metadata.get("summary_error") or metadata.get("summary_path") or "Итоги обработаны.")
+            if metadata.get("summary_error"):
+                return str(metadata["summary_error"])
+            if metadata.get("summary_status") == "draft_created":
+                return "summary_draft.md готов к ревью."
+            if metadata.get("summary_status") in {"disabled", "skipped"}:
+                return "Генерация итогов выключена или пропущена."
+            return "Ждет transcript."
         return ""
 
     @staticmethod
