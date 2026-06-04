@@ -894,8 +894,15 @@ class MainWindow(QMainWindow):
 
         day_overview_layout = QHBoxLayout()
         day_overview_layout.setSpacing(14)
-        day_overview_layout.addWidget(self._create_card("Состояние дня", status_layout), 1)
-        day_overview_layout.addWidget(self._create_card("Активный созвон", active_call_layout), 1)
+        self.day_status_card = self._create_card("Состояние дня", status_layout)
+        self.active_call_card = self._create_card("Активный созвон", active_call_layout)
+        for overview_card in [self.day_status_card, self.active_call_card]:
+            overview_card.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Maximum,
+            )
+        day_overview_layout.addWidget(self.day_status_card, 1)
+        day_overview_layout.addWidget(self.active_call_card, 1)
         layout.addLayout(day_overview_layout)
 
         meetings_layout = QVBoxLayout()
@@ -935,6 +942,7 @@ class MainWindow(QMainWindow):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
         layout.addWidget(self.status_label)
+        layout.addStretch(1)
         page.setLayout(layout)
 
         scroll_area = QScrollArea()
