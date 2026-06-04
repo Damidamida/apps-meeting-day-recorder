@@ -133,6 +133,8 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.toggle_meetings_button.text() == "Развернуть"
     assert window.day_status_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
     assert window.active_call_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert window.day_status_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
+    assert window.active_call_card.minimumHeight() == window.DAY_OVERVIEW_CARD_MIN_HEIGHT
     assert window.start_workday_button is window.end_workday_button
     assert window.workday_action_button.text() == "Начать рабочий день"
     assert window.workday_action_button.objectName() == "primaryButton"

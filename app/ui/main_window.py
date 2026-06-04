@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
     READINESS_CARD_EXPANDED_HEIGHT = 276
     READINESS_CARD_COLLAPSED_HEIGHT = 86
     READINESS_GRID_HEIGHT = 182
+    DAY_OVERVIEW_CARD_MIN_HEIGHT = 226
     PIPELINE_STEPS = [
         ("meeting", "Созвон"),
         ("recording", "OBS запись"),
@@ -913,6 +914,7 @@ class MainWindow(QMainWindow):
         self.day_status_card = self._create_card("Состояние дня", status_layout)
         self.active_call_card = self._create_card("Активный созвон", active_call_layout)
         for overview_card in [self.day_status_card, self.active_call_card]:
+            overview_card.setMinimumHeight(self.DAY_OVERVIEW_CARD_MIN_HEIGHT)
             overview_card.setSizePolicy(
                 QSizePolicy.Policy.Expanding,
                 QSizePolicy.Policy.Maximum,
