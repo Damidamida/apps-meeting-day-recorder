@@ -159,6 +159,51 @@ def test_pipeline_steps_are_rendered_as_status_rows(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_review_screen_uses_meeting_summary_transcript_and_separate_day_summary(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Ревью",
+        metadata={
+            "status": "ended",
+            "recording_status": "disabled",
+            "audio_status": "skipped",
+            "transcription_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
+    storage.save_meeting_summary_draft(meeting_folder, "# Итоги встречи\n")
+    (meeting_folder / "transcript.md").write_text("# Транскрипт встречи\n", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_review()
+
+    assert window.review_tabs.count() == 2
+    assert window.review_tabs.tabText(0) == "Итоги встречи"
+    assert window.review_tabs.tabText(1) == "Транскрипт"
+    assert not hasattr(window, "tasks_editor")
+    assert window.selected_review_meeting_folder == meeting_folder
+    assert window.meeting_summary_editor.toPlainText() == "# Итоги встречи\n"
+    assert window.meeting_transcript_editor.isReadOnly()
+    assert window.meeting_transcript_editor.toPlainText() == "# Транскрипт встречи\n"
+    assert not window.day_summary_editor.isEnabled()
+    assert not (day_folder / "00_day_summary_draft.md").exists()
+
+    storage.save_day_summary_draft(day_folder, "# Итоги дня\n")
+    window.refresh_review()
+
+    assert window.day_summary_editor.isEnabled()
+    assert window.day_summary_editor.toPlainText() == "# Итоги дня\n"
+    assert window.save_final_files_button.isEnabled()
+
+    window.close()
+    app.processEvents()
+
+
 def test_end_meeting_starts_background_processing_and_allows_next_meeting(
     tmp_path: Path,
 ) -> None:

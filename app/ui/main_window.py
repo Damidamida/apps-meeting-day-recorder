@@ -11,8 +11,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
@@ -100,6 +98,7 @@ class MainWindow(QMainWindow):
         self.pipeline_labels: dict[str, QLabel] = {}
         self.pipeline_step_titles: dict[str, QLabel] = {}
         self.selected_workday_meeting_folder: Path | None = None
+        self.selected_review_meeting_folder: Path | None = None
         self._apply_app_style()
 
         self.pages = QStackedWidget()
@@ -421,7 +420,6 @@ class MainWindow(QMainWindow):
                 max-height: 34px;
                 font-weight: 600;
             }
-            QListWidget,
             QPlainTextEdit {
                 background: #fffdf8;
                 color: #3a1408;
@@ -895,32 +893,53 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         layout.addWidget(
             self._create_page_header(
                 "Ревью",
-                "Проверьте черновики итогов встреч, итогов дня и задач перед сохранением финальных файлов.",
+                "Проверьте итоги выбранной встречи и итог дня перед сохранением финальных файлов.",
             )
         )
 
         content_layout = QHBoxLayout()
+        content_layout.setSpacing(14)
         meetings_layout = QVBoxLayout()
-        self.meeting_list = QListWidget()
-        self.meeting_list.currentItemChanged.connect(self.load_selected_meeting)
-        meetings_layout.addWidget(self.meeting_list)
-        meetings_group = self._create_card("Встречи за сегодня", meetings_layout)
+        meetings_layout.setSpacing(10)
+        self.review_meetings_hint = QLabel("Откройте ревью, чтобы загрузить встречи выбранного дня.")
+        self.review_meetings_hint.setObjectName("sectionHint")
+        self.review_meetings_hint.setWordWrap(True)
+        meetings_layout.addWidget(self.review_meetings_hint)
+        self.review_meeting_cards_layout = QVBoxLayout()
+        self.review_meeting_cards_layout.setSpacing(10)
+        meetings_layout.addLayout(self.review_meeting_cards_layout)
+        meetings_layout.addStretch(1)
+        meetings_group = self._create_card("Встречи за день", meetings_layout)
         meetings_group.setMinimumWidth(260)
         content_layout.addWidget(meetings_group)
 
+        review_content_layout = QVBoxLayout()
+        review_content_layout.setSpacing(12)
         self.review_tabs = QTabWidget()
         self.meeting_summary_editor = QPlainTextEdit()
+        self.meeting_transcript_editor = QPlainTextEdit()
+        self.meeting_transcript_editor.setReadOnly(True)
         self.day_summary_editor = QPlainTextEdit()
-        self.tasks_editor = QPlainTextEdit()
         self.review_tabs.addTab(self.meeting_summary_editor, "Итоги встречи")
-        self.review_tabs.addTab(self.day_summary_editor, "Итоги дня")
-        self.review_tabs.addTab(self.tasks_editor, "Задачи")
-        content_layout.addWidget(self.review_tabs, 1)
+        self.review_tabs.addTab(self.meeting_transcript_editor, "Транскрипт")
+        review_content_layout.addWidget(self.review_tabs, 2)
+
+        day_summary_layout = QVBoxLayout()
+        day_summary_layout.setSpacing(8)
+        self.day_summary_status_label = QLabel(
+            "Итоги дня появятся после завершения рабочего дня."
+        )
+        self.day_summary_status_label.setObjectName("sectionHint")
+        self.day_summary_status_label.setWordWrap(True)
+        day_summary_layout.addWidget(self.day_summary_status_label)
+        day_summary_layout.addWidget(self.day_summary_editor)
+        review_content_layout.addWidget(self._create_card("Итоги дня", day_summary_layout), 1)
+        content_layout.addLayout(review_content_layout, 1)
         layout.addLayout(content_layout, 1)
 
         actions_layout = QHBoxLayout()
@@ -1342,46 +1361,111 @@ class MainWindow(QMainWindow):
         self.refresh_review()
 
     def refresh_review(self) -> None:
-        self.meeting_list.clear()
+        self._clear_layout(self.review_meeting_cards_layout)
         day_folder = self.storage.get_today_day_folder()
         if day_folder is None:
             self._clear_review_editors()
             self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
+            self.review_meetings_hint.setText("Папка дня еще не создана.")
+            self.selected_review_meeting_folder = None
             self._refresh_review_buttons()
             return
 
-        self.day_summary_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
-        self.tasks_editor.setPlainText(self.storage.read_tasks_draft(day_folder))
+        self._refresh_day_summary_review(day_folder)
         meeting_folders = self.storage.list_today_meeting_folders()
+        if (
+            self.selected_review_meeting_folder is None
+            or self.selected_review_meeting_folder not in meeting_folders
+        ):
+            self.selected_review_meeting_folder = meeting_folders[0] if meeting_folders else None
         for meeting_folder in meeting_folders:
-            metadata = self.storage.read_meeting_metadata(meeting_folder)
-            item = QListWidgetItem(metadata.get("title") or meeting_folder.name)
-            item.setData(Qt.ItemDataRole.UserRole, str(meeting_folder))
-            self.meeting_list.addItem(item)
+            self.review_meeting_cards_layout.addWidget(
+                self._create_review_meeting_card(
+                    meeting_folder,
+                    meeting_folder == self.selected_review_meeting_folder,
+                )
+            )
 
         if meeting_folders:
-            self.meeting_list.setCurrentRow(0)
+            self.load_selected_meeting(self.selected_review_meeting_folder)
+            self.review_meetings_hint.setText(
+                "Выберите встречу, чтобы проверить итоги и transcript."
+            )
             self.review_status_label.setText("Локальные файлы ревью загружены.")
         else:
             self.meeting_summary_editor.clear()
+            self.meeting_transcript_editor.clear()
+            self.review_meetings_hint.setText("За выбранный день пока нет встреч.")
             self.review_status_label.setText("За сегодня пока нет встреч.")
         self._refresh_review_buttons()
 
-    def load_selected_meeting(
-        self,
-        current: QListWidgetItem | None,
-        previous: QListWidgetItem | None = None,
-    ) -> None:
-        del previous
-        if current is None:
+    def _create_review_meeting_card(self, meeting_folder: Path, selected: bool) -> QWidget:
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        card = QFrame()
+        card.setObjectName("activeMeetingCard" if selected else "meetingCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        button = QPushButton(self._meeting_header_text(meeting_folder, metadata))
+        button.setObjectName("meetingHeaderButton")
+        button.clicked.connect(
+            lambda checked=False, folder=meeting_folder: self.select_review_meeting(folder)
+        )
+        badge = QLabel()
+        badge.setObjectName("statusBadge")
+        badge_text, badge_state = self._meeting_badge(metadata)
+        badge.setText(badge_text)
+        self._apply_badge_style(badge, badge_state)
+        header_layout.addWidget(button, 1)
+        header_layout.addWidget(badge)
+        layout.addLayout(header_layout)
+        detail = QLabel(self._meeting_detail_text(metadata))
+        detail.setObjectName("sectionHint")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+        card.setLayout(layout)
+        return card
+
+    def select_review_meeting(self, meeting_folder: Path) -> None:
+        self.selected_review_meeting_folder = meeting_folder
+        self.refresh_review()
+
+    def load_selected_meeting(self, meeting_folder: Path | None = None) -> None:
+        if meeting_folder is None:
             self.meeting_summary_editor.clear()
+            self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
             return
-        meeting_folder = Path(current.data(Qt.ItemDataRole.UserRole))
         self.meeting_summary_editor.setPlainText(
             self.storage.read_meeting_summary_draft(meeting_folder)
         )
+        self.meeting_transcript_editor.setPlainText(self._read_meeting_transcript(meeting_folder))
         self._refresh_review_buttons()
+
+    def _refresh_day_summary_review(self, day_folder: Path) -> None:
+        day_summary_path = day_folder / "00_day_summary_draft.md"
+        if day_summary_path.is_file():
+            self.day_summary_editor.setEnabled(True)
+            self.day_summary_editor.setPlainText(day_summary_path.read_text(encoding="utf-8"))
+            self.day_summary_status_label.setText(
+                "Итоги дня загружены из локального черновика."
+            )
+            return
+        self.day_summary_editor.clear()
+        self.day_summary_editor.setEnabled(False)
+        self.day_summary_status_label.setText(
+            "Итоги дня появятся после завершения рабочего дня. AI-выжимка из всех встреч будет отдельным будущим PR."
+        )
+
+    @staticmethod
+    def _read_meeting_transcript(meeting_folder: Path) -> str:
+        transcript_path = meeting_folder / "transcript.md"
+        if not transcript_path.is_file():
+            return "# Транскрипт\n\n_Файл transcript.md пока не создан._\n"
+        return transcript_path.read_text(encoding="utf-8")
 
     def save_drafts(self) -> None:
         selected_meeting = self._selected_meeting_folder()
@@ -1395,8 +1479,8 @@ class MainWindow(QMainWindow):
         self.storage.save_meeting_summary_draft(
             selected_meeting, self.meeting_summary_editor.toPlainText()
         )
-        self.storage.save_day_summary_draft(day_folder, self.day_summary_editor.toPlainText())
-        self.storage.save_tasks_draft(day_folder, self.tasks_editor.toPlainText())
+        if self.day_summary_editor.isEnabled():
+            self.storage.save_day_summary_draft(day_folder, self.day_summary_editor.toPlainText())
         self.review_status_label.setText("Черновики сохранены локально.")
 
     def save_final_files(self) -> None:
@@ -1404,11 +1488,14 @@ class MainWindow(QMainWindow):
         if selected_meeting is None:
             self.review_status_label.setText("Выберите встречу для сохранения финальных файлов.")
             return
+        day_folder = selected_meeting.parent
+        tasks_path = day_folder / "00_tasks_draft.md"
+        tasks_text = tasks_path.read_text(encoding="utf-8") if tasks_path.is_file() else ""
         self.storage.save_final_files(
             selected_meeting,
             self.meeting_summary_editor.toPlainText(),
             self.day_summary_editor.toPlainText(),
-            self.tasks_editor.toPlainText(),
+            tasks_text,
         )
         self.review_status_label.setText("Финальные файлы сохранены локально. Черновики не удалены.")
 
@@ -1436,10 +1523,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Не удалось открыть папку встречи: {meeting_folder}")
 
     def _selected_meeting_folder(self) -> Path | None:
-        current = self.meeting_list.currentItem()
-        if current is None:
-            return None
-        return Path(current.data(Qt.ItemDataRole.UserRole))
+        return self.selected_review_meeting_folder
 
     def _startup_status(self) -> str:
         warnings = self.config.get("_warnings") or []
@@ -1556,14 +1640,22 @@ class MainWindow(QMainWindow):
         self._refresh_workday_meetings()
 
     def _refresh_review_buttons(self) -> None:
-        has_day_folder = self.storage.get_today_day_folder() is not None
+        day_folder = self.storage.get_today_day_folder()
+        has_day_folder = day_folder is not None
         has_selected_meeting = self._selected_meeting_folder() is not None
+        has_day_summary = (
+            day_folder is not None
+            and (day_folder / "00_day_summary_draft.md").is_file()
+        )
         self.review_open_folder_button.setEnabled(has_day_folder)
         self.save_drafts_button.setEnabled(
             has_day_folder and has_selected_meeting and not self._has_processing_work()
         )
         self.save_final_files_button.setEnabled(
-            has_day_folder and has_selected_meeting and not self._has_processing_work()
+            has_day_folder
+            and has_selected_meeting
+            and has_day_summary
+            and not self._has_processing_work()
         )
 
     def _has_processing_work(self) -> bool:
@@ -1572,4 +1664,4 @@ class MainWindow(QMainWindow):
     def _clear_review_editors(self) -> None:
         self.meeting_summary_editor.clear()
         self.day_summary_editor.clear()
-        self.tasks_editor.clear()
+        self.meeting_transcript_editor.clear()
