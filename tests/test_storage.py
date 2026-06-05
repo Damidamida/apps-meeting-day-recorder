@@ -509,6 +509,38 @@ def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_m
     assert len(summarizer.calls) == 1
 
 
+def test_day_summary_does_not_use_suspect_transcript_summary(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    meeting_folder = storage.create_meeting_folder(
+        "Плохая транскрипция",
+        datetime(2026, 6, 1, 9, 0),
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "transcription_quality": "suspect",
+            "summary_status": "skipped",
+        },
+    )
+    storage.save_meeting_summary_draft(
+        meeting_folder,
+        "# Итоги встречи\n\nТранскрипция требует проверки.\n",
+    )
+
+    items = storage.collect_day_meeting_summaries(day_folder)
+
+    assert items == [
+        {
+            "folder": meeting_folder.name,
+            "title": "Плохая транскрипция",
+            "started_at": "2026-06-01T09:00:00",
+            "summary_source": "missing",
+            "summary_text": "",
+            "summary_missing": True,
+        }
+    ]
+
+
 def test_day_summary_waits_for_unfinished_meeting_processing(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 1))

@@ -14,6 +14,7 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["transcription"]["backend"] == "whisper_cli"
     assert config["transcription"]["model"] == "base"
     assert config["transcription"]["compute_type"] == "int8"
+    assert config["transcription"]["vad_filter"] is True
     assert config["ui"]["theme"] == "light"
     assert config["ui"]["floating_theme"] == "inherit"
 
@@ -59,6 +60,7 @@ def test_transcription_config_supports_faster_whisper_backend(tmp_path) -> None:
     assert config["transcription"]["model"] == "small"
     assert config["transcription"]["device"] == "cpu"
     assert config["transcription"]["compute_type"] == "int8"
+    assert config["transcription"]["vad_filter"] is True
 
 
 def test_unknown_transcription_backend_falls_back_to_whisper_cli(tmp_path) -> None:

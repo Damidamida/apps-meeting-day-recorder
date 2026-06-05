@@ -16,6 +16,8 @@ transcription:
   language: "ru"
   device: "cpu"
   compute_type: "int8"
+  # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
+  vad_filter: true
   whisper_command: "whisper"
 
 summary:

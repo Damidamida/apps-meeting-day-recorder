@@ -259,6 +259,19 @@ class StorageService:
         self._emit_pipeline(progress_callback, "meeting_done", "Обработка встречи завершена.")
         return meeting_folder
 
+    def mark_meeting_for_reprocessing(self, meeting_folder: Path) -> dict[str, Any]:
+        metadata = self.read_meeting_metadata(meeting_folder)
+        metadata.update(
+            {
+                "processing_status": "pending",
+                "reprocess_requested_at": datetime.now().isoformat(),
+            }
+        )
+        metadata.pop("processing_error", None)
+        self.write_metadata(meeting_folder, metadata)
+        self._sync_day_meeting_metadata(meeting_folder, metadata)
+        return metadata
+
     @staticmethod
     def _emit_pipeline(
         progress_callback: Callable[[str, str], None] | None,
@@ -668,6 +681,10 @@ class StorageService:
             text = final_path.read_text(encoding="utf-8").strip()
             if text and not self._is_meeting_summary_placeholder(text):
                 return "final", text
+
+        metadata = self.read_meeting_metadata(meeting_folder)
+        if metadata.get("transcription_quality") == "suspect":
+            return "missing", ""
 
         draft_path = meeting_folder / "summary_draft.md"
         if draft_path.is_file():

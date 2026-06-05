@@ -1814,6 +1814,12 @@ class MainWindow(QMainWindow):
         if expanded:
             actions_layout = QHBoxLayout()
             actions_layout.setSpacing(8)
+            reprocess_button = self._add_button(
+                actions_layout,
+                "Повторить обработку",
+                lambda checked=False, folder=meeting_folder: self.reprocess_meeting(folder),
+                "primaryButton",
+            )
             open_meeting_button = self._add_button(
                 actions_layout,
                 "Открыть папку встречи",
@@ -1825,6 +1831,7 @@ class MainWindow(QMainWindow):
                 self.open_day_folder,
             )
             actions_layout.addStretch(1)
+            reprocess_button.setEnabled(self._can_reprocess_meeting(meeting_folder, metadata))
             open_meeting_button.setEnabled(True)
             open_day_button.setEnabled(self.storage.get_today_day_folder() is not None)
             card_layout.addLayout(actions_layout)
@@ -1857,6 +1864,32 @@ class MainWindow(QMainWindow):
         self._refresh_workday_meetings()
         self.refresh_buttons()
 
+    def _can_reprocess_meeting(
+        self,
+        meeting_folder: Path,
+        metadata: dict[str, object] | None = None,
+    ) -> bool:
+        metadata = metadata or self.storage.read_meeting_metadata(meeting_folder)
+        return (
+            metadata.get("status") == "ended"
+            and not self.day_summary_running
+            and meeting_folder != self.pipeline_meeting_folder
+            and meeting_folder not in self.processing_queue
+        )
+
+    def reprocess_meeting(self, meeting_folder: Path) -> None:
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        if not self._can_reprocess_meeting(meeting_folder, metadata):
+            self.status_label.setText(
+                "Эту встречу сейчас нельзя повторно обработать: она активна, уже находится в очереди "
+                "или сейчас обновляются итоги дня."
+            )
+            return
+        self.storage.mark_meeting_for_reprocessing(meeting_folder)
+        self._enqueue_meeting_processing(meeting_folder)
+        self.status_label.setText(f"Повторная обработка встречи добавлена в очередь: {meeting_folder.name}")
+        self._refresh_after_lifecycle_change()
+
     def _today_meeting_folders_newest_first(self) -> list[Path]:
         return sorted(
             self.storage.list_today_meeting_folders(),
@@ -1888,6 +1921,8 @@ class MainWindow(QMainWindow):
 
     def _meeting_detail_text(self, metadata: dict[str, object]) -> str:
         parts = []
+        if metadata.get("transcription_quality") == "suspect":
+            parts.append("транскрипция требует проверки")
         if metadata.get("summary_status") == "draft_created":
             parts.append("итоги готовы")
         elif metadata.get("summary_status") in {"disabled", "skipped"}:
@@ -1911,6 +1946,8 @@ class MainWindow(QMainWindow):
             return "Обработка", "active"
         if metadata.get("processing_status") == "pending":
             return "В очереди", "wait"
+        if metadata.get("transcription_quality") == "suspect":
+            return "Требует проверки", "error"
         if metadata.get("summary_status") == "draft_created":
             return "Итоги готовы", "ok"
         return "Завершена", "ok"
@@ -2403,11 +2440,18 @@ class MainWindow(QMainWindow):
         self.settings_transcription_command_input = QLineEdit(
             str(self.config["transcription"]["whisper_command"])
         )
+        self.settings_transcription_vad_checkbox = QCheckBox(
+            "Для faster-whisper отсекать тишину и неречевой шум"
+        )
+        self.settings_transcription_vad_checkbox.setChecked(
+            bool(self.config["transcription"].get("vad_filter", True))
+        )
         transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
         transcription_layout.addRow("Модель:", self.settings_transcription_model_input)
         transcription_layout.addRow("Язык:", self.settings_transcription_language_input)
         transcription_layout.addRow("Устройство:", self.settings_transcription_device_input)
         transcription_layout.addRow("Compute type:", self.settings_transcription_compute_type_input)
+        transcription_layout.addRow("", self.settings_transcription_vad_checkbox)
         transcription_layout.addRow("Whisper command:", self.settings_transcription_command_input)
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
 
@@ -2963,6 +3007,8 @@ class MainWindow(QMainWindow):
                 return "Ошибка", "error"
         if step == "transcription":
             if status == "completed":
+                if metadata.get("transcription_quality") == "suspect":
+                    return "Проверить", "error"
                 return "Готово", "ok"
             if status == "skipped":
                 return "Пропущено", "skip"
@@ -2997,6 +3043,10 @@ class MainWindow(QMainWindow):
         if step == "transcription":
             if metadata.get("transcription_error"):
                 return str(metadata["transcription_error"])
+            if metadata.get("transcription_quality") == "suspect":
+                warnings = metadata.get("transcription_quality_warnings") or []
+                warning_text = " ".join(str(warning) for warning in warnings)
+                return f"Транскрипция требует проверки. {warning_text}".strip()
             if metadata.get("transcription_status") == "completed":
                 provider = metadata.get("transcription_provider")
                 suffix = f" через {provider}" if provider else ""
@@ -3421,6 +3471,7 @@ class MainWindow(QMainWindow):
                 "language": self.settings_transcription_language_input.text().strip() or "ru",
                 "device": self.settings_transcription_device_input.text().strip() or "cpu",
                 "compute_type": self.settings_transcription_compute_type_input.text().strip() or "int8",
+                "vad_filter": self.settings_transcription_vad_checkbox.isChecked(),
                 "whisper_command": (
                     self.settings_transcription_command_input.text().strip() or "whisper"
                 ),

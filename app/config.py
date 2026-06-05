@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "device": "cpu",
         "compute_type": "int8",
         "whisper_command": "whisper",
+        "vad_filter": True,
     },
     "ui": {
         "theme": "light",
@@ -162,6 +163,10 @@ def _normalize_transcription(
         transcription.get("whisper_command")
         or DEFAULT_CONFIG["transcription"]["whisper_command"]
     ).strip()
+    transcription["vad_filter"] = _safe_bool(
+        transcription.get("vad_filter"),
+        bool(DEFAULT_CONFIG["transcription"]["vad_filter"]),
+    )
     return transcription
 
 
