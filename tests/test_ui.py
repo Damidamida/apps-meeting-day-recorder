@@ -547,7 +547,10 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_summary_enabled_checkbox.setChecked(True)
     window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
     window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
-    window.settings_theme_select.setCurrentText("dark_later")
+    window.settings_theme_select.setCurrentIndex(window.settings_theme_select.findData("dark"))
+    window.settings_floating_theme_select.setCurrentIndex(
+        window.settings_floating_theme_select.findData("dark")
+    )
 
     window.save_settings()
 
@@ -562,7 +565,13 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["summary"]["enabled"] is True
     assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
     assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
-    assert config["ui"]["theme"] == "dark_later"
+    assert config["ui"]["theme"] == "dark"
+    assert config["ui"]["floating_theme"] == "dark"
+    assert window.config["ui"]["theme"] == "dark"
+    assert window.config["ui"]["floating_theme"] == "dark"
+    assert "#0f172a" in window.styleSheet()
+    assert "#111827" in window.floating_control.styleSheet()
+    assert "Тема интерфейса применена сразу" in window.settings_status_label.text()
     assert "перезапустите приложение" in window.settings_status_label.text()
 
     window.close()

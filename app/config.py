@@ -32,6 +32,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "compute_type": "int8",
         "whisper_command": "whisper",
     },
+    "ui": {
+        "theme": "light",
+        "floating_theme": "inherit",
+    },
 }
 
 
@@ -42,6 +46,7 @@ def _default_config() -> dict[str, Any]:
         "obs": dict(DEFAULT_CONFIG["obs"]),
         "summary": dict(DEFAULT_CONFIG["summary"]),
         "transcription": dict(DEFAULT_CONFIG["transcription"]),
+        "ui": dict(DEFAULT_CONFIG["ui"]),
         "_warnings": [],
     }
 
@@ -70,6 +75,7 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     obs = _section(loaded, "obs", config)
     summary = _section(loaded, "summary", config)
     transcription = _section(loaded, "transcription", config)
+    ui = _section(loaded, "ui", config)
     config.update(loaded)
     config["storage"] = {**DEFAULT_CONFIG["storage"], **storage}
     config["obs"] = _normalize_obs({**DEFAULT_CONFIG["obs"], **obs}, config)
@@ -78,6 +84,7 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
         {**DEFAULT_CONFIG["transcription"], **transcription},
         config,
     )
+    config["ui"] = _normalize_ui({**DEFAULT_CONFIG["ui"], **ui})
     return config
 
 
@@ -156,6 +163,20 @@ def _normalize_transcription(
         or DEFAULT_CONFIG["transcription"]["whisper_command"]
     ).strip()
     return transcription
+
+
+def _normalize_ui(ui: dict[str, Any]) -> dict[str, Any]:
+    theme = str(ui.get("theme") or DEFAULT_CONFIG["ui"]["theme"]).strip().lower()
+    if theme not in {"light", "dark"}:
+        theme = "light"
+    floating_theme = str(
+        ui.get("floating_theme") or DEFAULT_CONFIG["ui"]["floating_theme"]
+    ).strip().lower()
+    if floating_theme not in {"inherit", "light", "dark"}:
+        floating_theme = "inherit"
+    ui["theme"] = theme
+    ui["floating_theme"] = floating_theme
+    return ui
 
 
 def _safe_bool(value: Any, default: bool) -> bool:

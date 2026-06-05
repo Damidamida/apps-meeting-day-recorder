@@ -31,3 +31,9 @@ summary:
   timeout_seconds: 120
   max_chars_per_chunk: 20000
 
+ui:
+  # Тема основного окна: "light" или "dark".
+  theme: "light"
+  # Тема маленького floating control: "inherit", "light" или "dark".
+  floating_theme: "inherit"
+

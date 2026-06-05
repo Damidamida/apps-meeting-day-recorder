@@ -14,6 +14,8 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["transcription"]["backend"] == "whisper_cli"
     assert config["transcription"]["model"] == "base"
     assert config["transcription"]["compute_type"] == "int8"
+    assert config["ui"]["theme"] == "light"
+    assert config["ui"]["floating_theme"] == "inherit"
 
 
 def test_partial_obs_config_uses_safe_defaults(tmp_path) -> None:
@@ -70,6 +72,36 @@ def test_unknown_transcription_backend_falls_back_to_whisper_cli(tmp_path) -> No
     config = load_config(config_path)
 
     assert config["transcription"]["backend"] == "whisper_cli"
+
+
+def test_ui_config_supports_main_and_floating_themes(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "ui:\n"
+        "  theme: dark\n"
+        "  floating_theme: light\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["ui"]["theme"] == "dark"
+    assert config["ui"]["floating_theme"] == "light"
+
+
+def test_unknown_ui_theme_values_fall_back_to_safe_defaults(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "ui:\n"
+        "  theme: neon\n"
+        "  floating_theme: system\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["ui"]["theme"] == "light"
+    assert config["ui"]["floating_theme"] == "inherit"
 
 
 def test_invalid_yaml_uses_safe_defaults(tmp_path) -> None:

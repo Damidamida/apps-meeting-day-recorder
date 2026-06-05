@@ -106,6 +106,7 @@ class StartMeetingOverlay(QWidget):
         super().__init__(parent)
         self.setObjectName("meetingOverlay")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._theme = "light"
         self.hide()
 
         root_layout = QVBoxLayout()
@@ -191,7 +192,7 @@ class StartMeetingOverlay(QWidget):
         root_layout.addLayout(center_row)
         root_layout.addStretch(1)
         self.setLayout(root_layout)
-        self.setStyleSheet(self._overlay_style())
+        self.apply_theme("light")
         self.update_recorder_state(recorder)
 
     def open_for_recorder(self, recorder: Recorder) -> None:
@@ -211,6 +212,10 @@ class StartMeetingOverlay(QWidget):
         self.recording_status_label.style().unpolish(self.recording_status_label)
         self.recording_status_label.style().polish(self.recording_status_label)
 
+    def apply_theme(self, theme: str) -> None:
+        self._theme = "dark" if theme == "dark" else "light"
+        self.setStyleSheet(self._overlay_style(self._theme))
+
     @staticmethod
     def _recording_status_text(recorder: Recorder) -> str:
         if getattr(recorder, "enabled", False):
@@ -218,44 +223,78 @@ class StartMeetingOverlay(QWidget):
         return "OBS недоступен или выключен, встреча начнется без записи"
 
     @staticmethod
-    def _overlay_style() -> str:
+    def _overlay_style(theme: str) -> str:
+        colors = {
+            "light": {
+                "overlay": "rgba(48, 52, 60, 150)",
+                "surface": "#fffdf8",
+                "footer": "#f6efe6",
+                "border": "#ead8c6",
+                "input_border": "#d9bfa8",
+                "input_focus": "#ffffff",
+                "text": "#3a1408",
+                "muted": "#7b4b35",
+                "accent": "#ff6f1a",
+                "accent_hover": "#f45a00",
+                "danger": "#d9280f",
+                "ok_bg": "#d7f8df",
+                "ok_text": "#007a32",
+                "wait_bg": "#f3e8dc",
+            },
+            "dark": {
+                "overlay": "rgba(2, 6, 23, 180)",
+                "surface": "#111827",
+                "footer": "#0f172a",
+                "border": "#374151",
+                "input_border": "#4b5563",
+                "input_focus": "#0b1220",
+                "text": "#f9fafb",
+                "muted": "#d1d5db",
+                "accent": "#f97316",
+                "accent_hover": "#ea580c",
+                "danger": "#ef4444",
+                "ok_bg": "#064e3b",
+                "ok_text": "#bbf7d0",
+                "wait_bg": "#1f2937",
+            },
+        }["dark" if theme == "dark" else "light"]
         return """
             QWidget#meetingOverlay {
-                background: rgba(48, 52, 60, 150);
+                background: %(overlay)s;
                 font-family: "Segoe UI";
                 font-size: 13px;
-                color: #3a1408;
+                color: %(text)s;
             }
             QFrame#meetingOverlayCard {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 10px;
             }
             QWidget#meetingOverlayBody {
-                background: #fffdf8;
+                background: %(surface)s;
                 border-top-left-radius: 10px;
                 border-top-right-radius: 10px;
             }
             QLabel#overlayTitle {
-                color: #3a1408;
+                color: %(text)s;
                 font-size: 17px;
                 font-weight: 800;
             }
             QLabel#overlayLabel {
-                color: #7b4b35;
+                color: %(muted)s;
                 font-weight: 500;
             }
             QLineEdit#meetingTitleInput {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #d9bfa8;
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(input_border)s;
                 border-radius: 6px;
                 padding: 8px 10px;
                 min-height: 34px;
             }
             QLineEdit#meetingTitleInput:focus {
-                background: #ffffff;
-                border-color: #ff6f1a;
+                background: %(input_focus)s;
+                border-color: %(accent)s;
             }
             QLabel#overlayRecordingStatus {
                 border-radius: 11px;
@@ -263,50 +302,50 @@ class StartMeetingOverlay(QWidget):
                 font-weight: 800;
             }
             QLabel#overlayRecordingStatus[state="ok"] {
-                background: #d7f8df;
-                color: #007a32;
+                background: %(ok_bg)s;
+                color: %(ok_text)s;
             }
             QLabel#overlayRecordingStatus[state="wait"] {
-                background: #f3e8dc;
-                color: #7b4b35;
+                background: %(wait_bg)s;
+                color: %(muted)s;
             }
             QLabel#overlayError {
-                color: #d9280f;
+                color: %(danger)s;
                 font-weight: 600;
             }
             QWidget#meetingOverlayFooter {
-                background: #f6efe6;
-                border-top: 1px solid #ead8c6;
+                background: %(footer)s;
+                border-top: 1px solid %(border)s;
                 border-bottom-left-radius: 10px;
                 border-bottom-right-radius: 10px;
             }
             QPushButton#dialogButton {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(border)s;
                 border-radius: 6px;
                 padding: 8px 14px;
                 min-height: 30px;
                 font-weight: 600;
             }
             QPushButton#dialogButton:hover {
-                border-color: #ff6f1a;
-                color: #ff6f1a;
+                border-color: %(accent)s;
+                color: %(accent)s;
             }
             QPushButton#dialogPrimaryButton {
-                background: #ff6f1a;
+                background: %(accent)s;
                 color: #ffffff;
-                border: 1px solid #ff6f1a;
+                border: 1px solid %(accent)s;
                 border-radius: 6px;
                 padding: 8px 14px;
                 min-height: 30px;
                 font-weight: 800;
             }
             QPushButton#dialogPrimaryButton:hover {
-                background: #f45a00;
-                border-color: #f45a00;
+                background: %(accent_hover)s;
+                border-color: %(accent_hover)s;
             }
-        """
+        """ % colors
 
     def _cancel(self) -> None:
         self.hide()
@@ -357,6 +396,7 @@ class FloatingMeetingControl(QWidget):
         self._pipeline_running = False
         self._elapsed_text = "00:00:00"
         self._background_message = ""
+        self._theme = "light"
 
         layout = QVBoxLayout()
         layout.setContentsMargins(12, 10, 12, 12)
@@ -418,7 +458,7 @@ class FloatingMeetingControl(QWidget):
         layout.addWidget(self.error_label)
         layout.addLayout(buttons_layout)
         self.setLayout(layout)
-        self.setStyleSheet(self._style())
+        self.apply_theme("light")
         self.update_state(
             workday_active=False,
             meeting_active=False,
@@ -600,6 +640,10 @@ class FloatingMeetingControl(QWidget):
         self._input_mode = False
         self.start_meeting_requested.emit(title)
 
+    def apply_theme(self, theme: str) -> None:
+        self._theme = "dark" if theme == "dark" else "light"
+        self.setStyleSheet(self._style(self._theme))
+
     def hideEvent(self, event) -> None:
         self.visibility_changed.emit(False)
         super().hideEvent(event)
@@ -634,83 +678,107 @@ class FloatingMeetingControl(QWidget):
         super().mouseReleaseEvent(event)
 
     @staticmethod
-    def _style() -> str:
+    def _style(theme: str) -> str:
+        colors = {
+            "light": {
+                "surface": "#fffdf8",
+                "surface_alt": "#fff3e6",
+                "border": "#ead8c6",
+                "input_border": "#d9bfa8",
+                "text": "#3a1408",
+                "muted": "#7b4b35",
+                "accent": "#ff6f1a",
+                "danger": "#d9280f",
+                "danger_text": "#991b1b",
+            },
+            "dark": {
+                "surface": "#111827",
+                "surface_alt": "#1f2937",
+                "border": "#374151",
+                "input_border": "#4b5563",
+                "text": "#f9fafb",
+                "muted": "#d1d5db",
+                "accent": "#f97316",
+                "danger": "#ef4444",
+                "danger_text": "#fecaca",
+            },
+        }["dark" if theme == "dark" else "light"]
         return """
             QWidget#floatingMeetingControl {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(border)s;
                 border-radius: 12px;
                 font-family: "Segoe UI";
                 font-size: 12px;
             }
             QLabel#floatingTitle {
-                color: #ff6f1a;
+                color: %(accent)s;
                 font-weight: 800;
                 font-size: 13px;
             }
             QLabel#floatingState {
-                color: #3a1408;
+                color: %(text)s;
                 font-weight: 800;
                 font-size: 15px;
             }
             QLabel#floatingDetail {
-                color: #7b4b35;
+                color: %(muted)s;
             }
             QLabel#floatingTimer {
-                color: #d9280f;
+                color: %(danger)s;
                 font-size: 22px;
                 font-weight: 800;
                 padding: 2px 0;
             }
             QLabel#floatingBackground {
-                background: #fff3e6;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface_alt)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 padding: 6px 8px;
             }
             QLabel#floatingError {
-                color: #991b1b;
+                color: %(danger_text)s;
                 font-weight: 700;
             }
             QLineEdit#floatingInput {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #d9bfa8;
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(input_border)s;
                 border-radius: 6px;
                 padding: 7px 9px;
                 min-height: 30px;
             }
             QPushButton#floatingPrimaryButton {
-                background: #ff6f1a;
+                background: %(accent)s;
                 color: #ffffff;
-                border: 1px solid #ff6f1a;
+                border: 1px solid %(accent)s;
                 border-radius: 8px;
                 padding: 8px 12px;
                 font-weight: 800;
             }
             QPushButton#floatingDangerButton {
-                background: #d9280f;
+                background: %(danger)s;
                 color: #ffffff;
-                border: 1px solid #d9280f;
+                border: 1px solid %(danger)s;
                 border-radius: 8px;
                 padding: 8px 12px;
                 font-weight: 800;
             }
             QPushButton#floatingSecondaryButton,
             QPushButton#floatingLinkButton {
-                background: #fffdf8;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 padding: 6px 10px;
                 font-weight: 700;
             }
             QPushButton#floatingCloseButton {
-                background: #fffdf8;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 9px;
                 min-width: 24px;
                 min-height: 24px;
@@ -718,7 +786,7 @@ class FloatingMeetingControl(QWidget):
                 max-height: 24px;
                 font-weight: 900;
             }
-        """
+        """ % colors
 
 
 class MainWindow(QMainWindow):
@@ -748,6 +816,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Meeting Day Recorder")
         self.resize(1100, 720)
         self.config = load_config()
+        self.current_theme = self._configured_theme()
         self.nav_buttons: dict[int, QPushButton] = {}
         self.pipeline_running = False
         self.pipeline_completed = False
@@ -820,12 +889,14 @@ class MainWindow(QMainWindow):
         container.setLayout(root_layout)
         self.setCentralWidget(container)
         self.start_meeting_overlay = StartMeetingOverlay(self.recorder, container)
+        self.start_meeting_overlay.apply_theme(self.current_theme)
         self.start_meeting_overlay.submitted.connect(self._start_meeting_with_title)
         self.start_meeting_overlay.canceled.connect(
             lambda: self.status_label.setText("Создание встречи отменено.")
         )
         self._resize_start_meeting_overlay()
         self.floating_control = FloatingMeetingControl()
+        self.floating_control.apply_theme(self._effective_floating_theme())
         self.floating_control.start_workday_requested.connect(self.start_workday)
         self.floating_control.start_meeting_requested.connect(self._start_meeting_from_floating)
         self.floating_control.end_meeting_requested.connect(self.end_meeting)
@@ -1002,55 +1073,120 @@ class MainWindow(QMainWindow):
         page.setLayout(layout)
         return page
 
+    def _configured_theme(self) -> str:
+        theme = str(self.config.get("ui", {}).get("theme", "light")).strip().lower()
+        return "dark" if theme == "dark" else "light"
+
+    def _configured_floating_theme(self) -> str:
+        theme = str(self.config.get("ui", {}).get("floating_theme", "inherit")).strip().lower()
+        if theme not in {"inherit", "light", "dark"}:
+            return "inherit"
+        return theme
+
+    def _effective_floating_theme(self) -> str:
+        floating_theme = self._configured_floating_theme()
+        if floating_theme == "inherit":
+            return self._configured_theme()
+        return floating_theme
+
+    def _theme_palette(self) -> dict[str, str]:
+        if getattr(self, "current_theme", "light") == "dark":
+            return {
+                "bg": "#0f172a",
+                "surface": "#111827",
+                "surface_alt": "#1f2937",
+                "surface_soft": "#182235",
+                "surface_warm": "#1f2937",
+                "border": "#374151",
+                "border_soft": "#263244",
+                "text": "#f9fafb",
+                "muted": "#d1d5db",
+                "hint": "#9ca3af",
+                "accent": "#f97316",
+                "accent_hover": "#ea580c",
+                "danger": "#ef4444",
+                "danger_hover": "#dc2626",
+                "disabled_bg": "#1f2937",
+                "disabled_text": "#6b7280",
+                "input_bg": "#0b1220",
+                "input_border": "#4b5563",
+                "inline_status_bg": "#111827",
+                "pipeline_icon_bg": "#273244",
+            }
+        return {
+            "bg": "#f6efe6",
+            "surface": "#fffdf8",
+            "surface_alt": "#fff8ef",
+            "surface_soft": "#fff3e6",
+            "surface_warm": "#fff3e6",
+            "border": "#ead8c6",
+            "border_soft": "#f1e5d8",
+            "text": "#3a1408",
+            "muted": "#7b4b35",
+            "hint": "#8a6a58",
+            "accent": "#ff6f1a",
+            "accent_hover": "#f45a00",
+            "danger": "#d9280f",
+            "danger_hover": "#b91c1c",
+            "disabled_bg": "#f3e8dc",
+            "disabled_text": "#b49a89",
+            "input_bg": "#fffdf8",
+            "input_border": "#ead8c6",
+            "inline_status_bg": "#f3f4f6",
+            "pipeline_icon_bg": "#f3e8dc",
+        }
+
     def _apply_app_style(self) -> None:
+        self.current_theme = self._configured_theme()
+        colors = self._theme_palette()
         self.setStyleSheet(
             """
             QMainWindow {
-                background: #f6efe6;
-                color: #3a1408;
+                background: %(bg)s;
+                color: %(text)s;
                 font-family: "Segoe UI";
                 font-size: 13px;
             }
             QWidget#appRoot,
             QWidget#content,
             QStackedWidget#pages {
-                background: #f6efe6;
+                background: %(bg)s;
             }
             QWidget#sidebar {
-                background: #fffdf8;
-                border-right: 1px solid #ead8c6;
+                background: %(surface)s;
+                border-right: 1px solid %(border)s;
             }
             QLabel#brand {
-                color: #ff6f1a;
+                color: %(accent)s;
                 font-size: 18px;
                 font-weight: 800;
                 padding: 2px 14px 18px 14px;
-                border-bottom: 1px solid #f1e5d8;
+                border-bottom: 1px solid %(border_soft)s;
             }
             QPushButton#navButton {
                 background: transparent;
-                color: #7b4b35;
+                color: %(muted)s;
                 border: 0;
-                border-bottom: 1px solid #f1e5d8;
+                border-bottom: 1px solid %(border_soft)s;
                 border-radius: 0;
                 padding: 14px 18px;
                 text-align: left;
                 font-weight: 700;
             }
             QPushButton#navButton:hover {
-                background: #fff8ef;
-                color: #ff6f1a;
+                background: %(surface_alt)s;
+                color: %(accent)s;
             }
             QPushButton#navButton:checked {
-                background: #fff3e6;
-                color: #ff6f1a;
-                border-left: 3px solid #ff6f1a;
+                background: %(surface_soft)s;
+                color: %(accent)s;
+                border-left: 3px solid %(accent)s;
                 padding-left: 15px;
             }
             QPushButton#sidebarActionButton {
-                background: #fff8ef;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface_alt)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 padding: 8px 12px;
                 margin: 12px 14px 0 14px;
@@ -1058,92 +1194,92 @@ class MainWindow(QMainWindow):
                 text-align: left;
             }
             QPushButton#sidebarActionButton:hover {
-                color: #ff6f1a;
-                border-color: #ff6f1a;
+                color: %(accent)s;
+                border-color: %(accent)s;
             }
             QLabel#pageTitle {
-                color: #3a1408;
+                color: %(text)s;
                 font-size: 26px;
                 font-weight: 800;
             }
             QLabel#pageSubtitle {
-                color: #8a6a58;
+                color: %(hint)s;
             }
             QLabel#emptyState {
-                background: #fffdf8;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 padding: 18px;
             }
             QWidget#card {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
             }
             QLabel#cardTitle {
-                color: #3a1408;
+                color: %(text)s;
                 font-size: 14px;
                 font-weight: 800;
             }
             QLabel#sectionHint {
-                color: #8a6a58;
+                color: %(hint)s;
             }
             QLabel#heroValue {
-                color: #3a1408;
+                color: %(text)s;
                 font-size: 18px;
                 font-weight: 800;
             }
             QFrame#overviewInnerPanel {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 min-height: 150px;
             }
             QFrame#activeCallInnerPanel {
-                background: #fff3e6;
-                border: 1px solid #ffb98a;
+                background: %(surface_warm)s;
+                border: 1px solid %(accent)s;
                 border-radius: 8px;
                 min-height: 150px;
             }
             QLabel#callTimer {
-                color: #d9280f;
+                color: %(danger)s;
                 font-size: 28px;
                 font-weight: 800;
             }
             QFrame#meetingCard {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
             }
             QFrame#activeMeetingCard {
-                background: #fff3e6;
-                border: 1px solid #ffb98a;
+                background: %(surface_warm)s;
+                border: 1px solid %(accent)s;
                 border-radius: 8px;
             }
             QLabel#meetingHeaderLabel {
                 background: transparent;
                 border: 0;
-                color: #3a1408;
+                color: %(text)s;
                 font-size: 14px;
                 font-weight: 800;
                 padding: 0;
                 min-height: 22px;
             }
             QFrame#readinessTile {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 min-height: 82px;
                 max-height: 82px;
                 min-width: 300px;
             }
             QLabel#readinessTitle {
-                color: #3a1408;
+                color: %(text)s;
                 font-weight: 800;
             }
             QLabel#readinessMessage {
-                color: #8a6a58;
+                color: %(hint)s;
                 min-height: 30px;
             }
             QLabel#statusBadge {
@@ -1153,66 +1289,72 @@ class MainWindow(QMainWindow):
                 font-weight: 800;
             }
             QLabel#pipelineStepTitle {
-                color: #3a1408;
+                color: %(text)s;
                 font-weight: 800;
             }
             QFrame#pipelineStepCard {
-                background: #fffdf8;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
                 min-height: 58px;
             }
             QLabel#pipelineIcon {
-                background: #f3e8dc;
-                color: #7b4b35;
+                background: %(pipeline_icon_bg)s;
+                color: %(muted)s;
                 border-radius: 8px;
                 font-weight: 700;
             }
             QLabel#pipelineMessage {
-                color: #8a6a58;
+                color: %(hint)s;
+            }
+            QLabel#inlineStatus {
+                background: %(inline_status_bg)s;
+                color: %(text)s;
+                border-radius: 6px;
+                padding: 8px;
             }
             QPushButton {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(border)s;
                 border-radius: 6px;
                 padding: 8px 12px;
                 min-height: 28px;
                 font-weight: 600;
             }
             QPushButton:hover {
-                border-color: #ff6f1a;
-                color: #ff6f1a;
+                border-color: %(accent)s;
+                color: %(accent)s;
             }
             QPushButton:disabled {
-                background: #f3e8dc;
-                color: #b49a89;
-                border-color: #ead8c6;
+                background: %(disabled_bg)s;
+                color: %(disabled_text)s;
+                border-color: %(border)s;
             }
             QPushButton#primaryButton {
-                background: #ff6f1a;
+                background: %(accent)s;
                 color: #ffffff;
-                border: 1px solid #ff6f1a;
+                border: 1px solid %(accent)s;
             }
             QPushButton#primaryButton:hover {
-                background: #f45a00;
+                background: %(accent_hover)s;
                 color: #ffffff;
-                border-color: #f45a00;
+                border-color: %(accent_hover)s;
             }
             QPushButton#dangerButton {
-                background: #d9280f;
+                background: %(danger)s;
                 color: #ffffff;
-                border: 1px solid #d9280f;
+                border: 1px solid %(danger)s;
             }
             QPushButton#dangerButton:hover {
-                background: #b91c1c;
+                background: %(danger_hover)s;
                 color: #ffffff;
-                border-color: #b91c1c;
+                border-color: %(danger_hover)s;
             }
             QPushButton#headerPrimaryButton {
-                background: #ff6f1a;
+                background: %(accent)s;
                 color: #ffffff;
-                border: 1px solid #ff6f1a;
+                border: 1px solid %(accent)s;
                 border-radius: 6px;
                 padding: 4px 12px;
                 min-height: 24px;
@@ -1220,46 +1362,87 @@ class MainWindow(QMainWindow):
                 font-weight: 700;
             }
             QPushButton#headerPrimaryButton:hover {
-                background: #f45a00;
+                background: %(accent_hover)s;
                 color: #ffffff;
-                border-color: #f45a00;
+                border-color: %(accent_hover)s;
             }
             QPushButton#headerButton {
-                background: #fffdf8;
-                color: #7b4b35;
-                border: 1px solid #ead8c6;
+                background: %(surface)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
                 border-radius: 6px;
                 padding: 4px 12px;
                 min-height: 24px;
                 max-height: 34px;
                 font-weight: 600;
             }
-            QPlainTextEdit {
-                background: #fffdf8;
-                color: #3a1408;
-                border: 1px solid #ead8c6;
+            QLineEdit,
+            QComboBox,
+            QSpinBox,
+            QPlainTextEdit,
+            QTextBrowser {
+                background: %(input_bg)s;
+                color: %(text)s;
+                border: 1px solid %(input_border)s;
                 border-radius: 8px;
                 padding: 8px;
             }
+            QCheckBox {
+                color: %(text)s;
+                spacing: 8px;
+            }
+            QFormLayout QLabel {
+                color: %(text)s;
+            }
+            QScrollArea {
+                background: %(bg)s;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: %(bg)s;
+                width: 12px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: %(border)s;
+                border-radius: 6px;
+                min-height: 24px;
+            }
             QTabWidget::pane {
-                border: 1px solid #ead8c6;
+                border: 1px solid %(border)s;
                 border-radius: 8px;
-                background: #fffdf8;
+                background: %(surface)s;
             }
             QTabBar::tab {
-                background: #f3e8dc;
-                color: #8a6a58;
+                background: %(disabled_bg)s;
+                color: %(hint)s;
                 padding: 8px 12px;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
             }
             QTabBar::tab:selected {
-                background: #fffdf8;
-                color: #3a1408;
+                background: %(surface)s;
+                color: %(text)s;
                 font-weight: 700;
             }
-            """
+            """ % colors
         )
+
+    def _apply_theme_settings(self) -> None:
+        self._apply_app_style()
+        if hasattr(self, "start_meeting_overlay"):
+            self.start_meeting_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "floating_control"):
+            self.floating_control.apply_theme(self._effective_floating_theme())
+        if hasattr(self, "readiness_labels"):
+            for label in self.readiness_labels.values():
+                self._apply_status_style(label, "wait")
+        if hasattr(self, "readiness_badges"):
+            for badge in self.readiness_badges.values():
+                self._apply_badge_style(badge, self._badge_state_from_text(badge.text()))
+        if hasattr(self, "status_label"):
+            self.refresh_status()
+            self.refresh_buttons()
 
     @staticmethod
     def _create_card(
@@ -2089,7 +2272,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel(self._startup_status())
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
+        self.status_label.setObjectName("inlineStatus")
         layout.addWidget(self.status_label)
         layout.addStretch(1)
         page.setLayout(layout)
@@ -2160,7 +2343,7 @@ class MainWindow(QMainWindow):
 
         self.review_status_label = QLabel("Откройте ревью, чтобы загрузить локальные файлы.")
         self.review_status_label.setWordWrap(True)
-        self.review_status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
+        self.review_status_label.setObjectName("inlineStatus")
         layout.addWidget(self.review_status_label)
         page.setLayout(layout)
         return page
@@ -2256,15 +2439,28 @@ class MainWindow(QMainWindow):
         ui_layout.setHorizontalSpacing(18)
         ui_layout.setVerticalSpacing(8)
         self.settings_theme_select = QComboBox()
-        self.settings_theme_select.addItems(["light", "dark_later"])
+        self.settings_theme_select.addItem("Светлая", "light")
+        self.settings_theme_select.addItem("Темная", "dark")
         self._set_combo_value(
             self.settings_theme_select,
             str(self.config.get("ui", {}).get("theme", "light")),
         )
-        theme_hint = QLabel("Темная тема зарезервирована для будущей реализации.")
+        self.settings_floating_theme_select = QComboBox()
+        self.settings_floating_theme_select.addItem("Как в приложении", "inherit")
+        self.settings_floating_theme_select.addItem("Светлая", "light")
+        self.settings_floating_theme_select.addItem("Темная", "dark")
+        self._set_combo_value(
+            self.settings_floating_theme_select,
+            str(self.config.get("ui", {}).get("floating_theme", "inherit")),
+        )
+        theme_hint = QLabel(
+            "Тема основного окна и floating control применяется сразу после сохранения. "
+            "Настройки OBS, transcription, summary и папки данных применяются после перезапуска."
+        )
         theme_hint.setObjectName("sectionHint")
         theme_hint.setWordWrap(True)
-        ui_layout.addRow("Тема:", self.settings_theme_select)
+        ui_layout.addRow("Тема приложения:", self.settings_theme_select)
+        ui_layout.addRow("Тема floating control:", self.settings_floating_theme_select)
         ui_layout.addRow("", theme_hint)
         layout.addWidget(self._create_card("Интерфейс", ui_layout))
 
@@ -2279,7 +2475,7 @@ class MainWindow(QMainWindow):
             "Настройки сохраняются в локальный config.yaml. Файл не должен попадать в git."
         )
         self.settings_status_label.setWordWrap(True)
-        self.settings_status_label.setStyleSheet("padding: 8px; background: #f3f4f6;")
+        self.settings_status_label.setObjectName("inlineStatus")
         layout.addWidget(self.settings_status_label)
 
         page.setLayout(layout)
@@ -2292,8 +2488,17 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
-        index = combo.findText(value)
+        index = combo.findData(value)
+        if index < 0:
+            index = combo.findText(value)
         combo.setCurrentIndex(index if index >= 0 else 0)
+
+    @staticmethod
+    def _combo_value(combo: QComboBox) -> str:
+        data = combo.currentData()
+        if data is not None:
+            return str(data)
+        return combo.currentText()
 
     def _create_archive_page(self) -> QWidget:
         page = QWidget()
@@ -2833,32 +3038,29 @@ class MainWindow(QMainWindow):
         }.get(state, "Статус")
 
     @staticmethod
-    def _apply_status_style(label: QLabel, state: str) -> None:
-        label.setMinimumHeight(28)
-        colors = {
-            "ok": ("#dcfce7", "#166534"),
-            "active": ("#dbeafe", "#1d4ed8"),
-            "wait": ("#f3f4f6", "#4b5563"),
-            "skip": ("#f5f5f5", "#525252"),
-            "skipped": ("#f5f5f5", "#525252"),
-            "error": ("#fee2e2", "#991b1b"),
-        }
-        background, color = colors.get(state, colors["wait"])
-        if label.objectName() == "pipelineStatus":
-            label.setStyleSheet(
-                f"padding: 0; background: transparent; color: {color};"
-            )
-            return
-        if label.objectName() == "readinessMessage":
-            label.setStyleSheet("padding: 0; background: transparent; color: #8a6a58;")
-            return
-        label.setStyleSheet(
-            f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
-        )
+    def _badge_state_from_text(text: str) -> str:
+        normalized = text.strip().lower()
+        if normalized == "ok":
+            return "ok"
+        if normalized in {"идет", "выполняется", "генерация", "обработка"}:
+            return "active"
+        if normalized in {"пропущено", "пропущен"}:
+            return "skip"
+        if normalized == "ошибка":
+            return "error"
+        return "wait"
 
-    @staticmethod
-    def _apply_badge_style(label: QLabel, state: str) -> None:
-        colors = {
+    def _status_colors(self) -> dict[str, tuple[str, str]]:
+        if getattr(self, "current_theme", "light") == "dark":
+            return {
+                "ok": ("#064e3b", "#bbf7d0"),
+                "active": ("#1e3a8a", "#bfdbfe"),
+                "wait": ("#1f2937", "#d1d5db"),
+                "skip": ("#451a03", "#fde68a"),
+                "skipped": ("#451a03", "#fde68a"),
+                "error": ("#7f1d1d", "#fecaca"),
+            }
+        return {
             "ok": ("#dcfce7", "#166534"),
             "active": ("#dbeafe", "#1d4ed8"),
             "wait": ("#f3e8dc", "#7b4b35"),
@@ -2866,6 +3068,28 @@ class MainWindow(QMainWindow):
             "skipped": ("#fef3c7", "#92400e"),
             "error": ("#fee2e2", "#991b1b"),
         }
+
+    def _apply_status_style(self, label: QLabel, state: str) -> None:
+        label.setMinimumHeight(28)
+        colors = self._status_colors()
+        background, color = colors.get(state, colors["wait"])
+        if label.objectName() == "pipelineStatus":
+            label.setStyleSheet(
+                f"padding: 0; background: transparent; color: {color};"
+            )
+            return
+        if label.objectName() == "readinessMessage":
+            label.setStyleSheet(
+                "padding: 0; background: transparent; "
+                f"color: {self._theme_palette()['hint']};"
+            )
+            return
+        label.setStyleSheet(
+            f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
+        )
+
+    def _apply_badge_style(self, label: QLabel, state: str) -> None:
+        colors = self._status_colors()
         background, color = colors.get(state, colors["wait"])
         label.setStyleSheet(
             f"border-radius: 10px; padding: 3px 8px; font-size: 11px; "
@@ -3172,8 +3396,10 @@ class MainWindow(QMainWindow):
             encoding="utf-8",
         )
         self.config = load_config(config_path)
+        self._apply_theme_settings()
         self.settings_status_label.setText(
             "Настройки сохранены в config.yaml. "
+            "Тема интерфейса применена сразу. "
             "Для OBS, transcription, summary и папки данных перезапустите приложение, "
             "чтобы все сервисы точно использовали новые значения."
         )
@@ -3212,7 +3438,8 @@ class MainWindow(QMainWindow):
                 "max_chars_per_chunk": self.settings_summary_chunk_input.value(),
             },
             "ui": {
-                "theme": self.settings_theme_select.currentText(),
+                "theme": self._combo_value(self.settings_theme_select),
+                "floating_theme": self._combo_value(self.settings_floating_theme_select),
             },
         }
 
