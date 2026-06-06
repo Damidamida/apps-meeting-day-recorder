@@ -41,8 +41,8 @@ transcription:
       max_upload_mb: 25
       # Длинные WAV-записи автоматически режутся на части и отправляются последовательно.
       chunking_enabled: true
-      # 600 секунд = 10 минут. Для audio.wav 16 kHz mono это обычно меньше 25 МБ на часть.
-      chunk_duration_seconds: 600
+      # 300 секунд = 5 минут. Это снижает риск timeout/provider errors на длинных встречах.
+      chunk_duration_seconds: 300
       # Временные ошибки AI Tunnel 408/429/502 повторяются автоматически.
       retry_attempts: 2
       retry_sleep_seconds: 1

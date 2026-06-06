@@ -407,6 +407,96 @@ def test_aitunnel_transcriber_retries_temporary_chunk_error(
     )
 
 
+def test_aitunnel_transcriber_retries_transport_error_without_http_code(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path, duration_seconds=3)
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+    attempts = 0
+    progress: list[tuple[str, str]] = []
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            del kwargs
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("request timed out while uploading audio chunk")
+            return SimpleNamespace(text="Текст после transport retry", usage={})
+
+    class FakeClient:
+        audio = SimpleNamespace(transcriptions=FakeTranscriptions())
+
+    transcriber = AITunnelTranscriber(
+        chunking_enabled=True,
+        chunk_duration_seconds=2,
+        retry_attempts=1,
+        retry_sleep_seconds=0,
+        client_factory=lambda **kwargs: FakeClient(),
+    )
+
+    metadata = transcriber.transcribe(
+        audio_path,
+        tmp_path,
+        progress_callback=lambda event, message: progress.append((event, message)),
+    )
+
+    assert metadata["transcription_status"] == "completed"
+    assert attempts == 3
+    assert (
+        "transcription_chunk_retry",
+        "Повторяем часть 1/2: попытка 2 из 2.",
+    ) in progress
+
+
+def test_aitunnel_transcriber_records_unknown_chunk_error_details(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path, duration_seconds=3)
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+    progress: list[tuple[str, str]] = []
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            del kwargs
+            raise RuntimeError("socket closed while uploading chunk")
+
+    class FakeClient:
+        audio = SimpleNamespace(transcriptions=FakeTranscriptions())
+
+    metadata = AITunnelTranscriber(
+        chunking_enabled=True,
+        chunk_duration_seconds=2,
+        retry_attempts=0,
+        client_factory=lambda **kwargs: FakeClient(),
+    ).transcribe(
+        audio_path,
+        tmp_path,
+        progress_callback=lambda event, message: progress.append((event, message)),
+    )
+
+    assert metadata["transcription_status"] == "failed"
+    assert metadata["transcription_mode"] == "chunked"
+    assert metadata["transcription_failed_chunk"] == 1
+    assert metadata["transcription_failed_attempts"] == 1
+    assert metadata["transcription_exception_type"] == "RuntimeError"
+    assert (
+        metadata["transcription_exception_message"]
+        == "socket closed while uploading chunk"
+    )
+    assert metadata["transcription_error"] == (
+        "Ошибка на части 1/2: Не удалось выполнить внешнюю транскрипцию через AI Tunnel."
+    )
+    assert (
+        "transcription_chunk_failed",
+        "Ошибка на части 1/2: Не удалось выполнить внешнюю транскрипцию через AI Tunnel.",
+    ) in progress
+
+
 def test_aitunnel_transcriber_returns_specific_error_metadata(
     tmp_path: Path,
     monkeypatch,

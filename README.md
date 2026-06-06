@@ -168,10 +168,12 @@ transcription:
       timeout_seconds: 300
       max_upload_mb: 25
       chunking_enabled: true
-      chunk_duration_seconds: 600
+      chunk_duration_seconds: 300
       retry_attempts: 2
       retry_sleep_seconds: 1
 ```
+
+`chunk_duration_seconds: 300` означает части примерно по 5 минут. Это меньше нагружает внешний STT-провайдер и снижает риск timeout/provider errors на длинных встречах.
 
 API key не хранится в репозитории. Для AI Tunnel используется переменная `AITUNNEL_KEY`. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`; отдельно вводить имя переменной ключа в блоке транскрипции обычно не нужно.
 

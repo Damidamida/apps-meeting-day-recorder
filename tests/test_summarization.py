@@ -259,6 +259,8 @@ def test_api_failure_returns_failed_metadata(tmp_path: Path, monkeypatch) -> Non
     assert metadata == {
         "summary_status": "failed",
         "summary_error": "Не удалось подготовить черновик итогов через внешний AI endpoint.",
+        "summary_exception_type": "RuntimeError",
+        "summary_exception_message": "boom",
     }
 
 

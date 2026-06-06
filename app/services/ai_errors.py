@@ -57,12 +57,19 @@ def ai_error_metadata(
         metadata[f"{prefix}_error_kind"] = info.kind
     if info.provider:
         metadata[f"{prefix}_error_provider"] = info.provider
+    if info.kind is None:
+        metadata[f"{prefix}_exception_type"] = type(error).__name__
+        exception_message = _safe_exception_message(error)
+        if exception_message:
+            metadata[f"{prefix}_exception_message"] = exception_message
     return metadata
 
 
 def is_retryable_ai_error(error: BaseException) -> bool:
     info = parse_ai_service_error(error, "")
-    return info.code in RETRYABLE_AI_ERROR_CODES
+    if info.code is not None:
+        return info.code in RETRYABLE_AI_ERROR_CODES
+    return _looks_like_retryable_transport_error(error)
 
 
 def parse_ai_service_error(
@@ -123,3 +130,27 @@ def _extract_provider(details: dict[str, Any]) -> str | None:
             return str(provider)
     provider = details.get("provider")
     return str(provider) if provider else None
+
+
+def _looks_like_retryable_transport_error(error: BaseException) -> bool:
+    error_name = type(error).__name__.lower()
+    message = str(error).lower()
+    retry_markers = (
+        "timeout",
+        "timed out",
+        "connection",
+        "connect",
+        "network",
+        "temporarily unavailable",
+        "remote end closed",
+        "read error",
+        "write error",
+    )
+    return any(marker in error_name or marker in message for marker in retry_markers)
+
+
+def _safe_exception_message(error: BaseException) -> str:
+    message = " ".join(str(error).split())
+    if len(message) > 300:
+        return message[:297].rstrip() + "..."
+    return message

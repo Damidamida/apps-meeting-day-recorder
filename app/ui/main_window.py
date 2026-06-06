@@ -3099,6 +3099,7 @@ class MainWindow(QMainWindow):
             "transcription_chunk_started": ("transcription", "Выполняется", message, "active"),
             "transcription_chunk_retry": ("transcription", "Выполняется", message, "active"),
             "transcription_chunk_done": ("transcription", "Выполняется", message, "active"),
+            "transcription_chunk_failed": ("transcription", "Ошибка", message, "error"),
             "transcription_done": ("transcription", None, message, None),
             "summary_running": ("summary", "Выполняется", message, "active"),
             "summary_done": ("summary", None, message, None),

@@ -20,12 +20,14 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["transcription"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["transcription"]["timeout_seconds"] == 300
     assert config["transcription"]["max_upload_mb"] == 25
+    assert config["transcription"]["chunk_duration_seconds"] == 300
     assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
     assert config["transcription"]["backends"]["faster_whisper"]["model"] == "base"
     assert (
         config["transcription"]["backends"]["aitunnel"]["model"]
         == "whisper-large-v3-turbo"
     )
+    assert config["transcription"]["backends"]["aitunnel"]["chunk_duration_seconds"] == 300
     assert config["ui"]["theme"] == "light"
     assert config["ui"]["floating_theme"] == "inherit"
 

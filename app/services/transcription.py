@@ -296,7 +296,7 @@ class AITunnelTranscriber:
         timeout_seconds: int = 300,
         max_upload_mb: float = 25,
         chunking_enabled: bool = True,
-        chunk_duration_seconds: int = 600,
+        chunk_duration_seconds: int = 300,
         retry_attempts: int = 2,
         retry_sleep_seconds: float = 1.0,
         client_factory: Callable[..., Any] | None = None,
@@ -480,13 +480,31 @@ class AITunnelTranscriber:
                     progress_callback=progress_callback,
                 )
             except Exception as error:
+                error_metadata = ai_error_metadata(
+                    "transcription",
+                    error,
+                    AITUNNEL_FAILED_ERROR,
+                )
+                error_message = (
+                    f"Ошибка на части {index}/{total_chunks}: "
+                    f"{error_metadata.get('transcription_error') or AITUNNEL_FAILED_ERROR}"
+                )
+                error_metadata["transcription_error"] = error_message
+                _emit_progress(
+                    progress_callback,
+                    "transcription_chunk_failed",
+                    error_message,
+                )
                 return {
                     "transcription_status": "failed",
                     "transcription_mode": "chunked",
                     "transcription_chunk_count": total_chunks,
                     "transcription_completed_chunks": completed_chunks,
                     "transcription_failed_chunk": index,
-                    **ai_error_metadata("transcription", error, AITUNNEL_FAILED_ERROR),
+                    "transcription_failed_attempts": int(
+                        getattr(error, "_aitunnel_attempts", 1)
+                    ),
+                    **error_metadata,
                 }
 
             completed_chunks += 1
@@ -575,6 +593,10 @@ class AITunnelTranscriber:
             try:
                 return self._transcribe_file(client, audio_path)
             except Exception as error:
+                try:
+                    setattr(error, "_aitunnel_attempts", attempt)
+                except Exception:
+                    pass
                 if attempt >= max_attempts or not is_retryable_ai_error(error):
                     raise
                 if chunk_index is not None and chunk_count is not None:
