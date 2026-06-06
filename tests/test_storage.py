@@ -1,7 +1,10 @@
 import json
 from datetime import date, datetime
 
+import pytest
+
 from app.services.recorder import RecorderResult
+from app.services import storage as storage_module
 from app.services.storage import StorageService, safe_folder_name
 
 
@@ -207,6 +210,287 @@ def test_process_meeting_pipeline_updates_existing_day_meeting_entry(tmp_path) -
     day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
     assert metadata["processing_status"] == "completed"
     assert day_metadata["meetings"] == [{"folder": meeting_folder.name, **metadata}]
+
+
+def test_running_meeting_is_marked_for_recovery_after_restart(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Interrupted", datetime(2026, 6, 1, 9, 0))
+    storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    metadata.update(
+        {
+            "processing_status": "running",
+            "processing_started_at": "2026-06-01T09:31:00",
+            "audio_status": "extracted",
+            "audio_path": str(meeting_folder / "audio.wav"),
+        }
+    )
+    storage.write_metadata(meeting_folder, metadata)
+    storage._sync_day_meeting_metadata(meeting_folder, metadata)
+
+    restored_storage = StorageService(tmp_path)
+    recovered = restored_storage.recover_interrupted_meeting_processing(
+        day_folder,
+        recovered_at=datetime(2026, 6, 1, 10, 0),
+    )
+
+    recovered_metadata = restored_storage.read_meeting_metadata(meeting_folder)
+    day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert recovered == [meeting_folder]
+    assert recovered_metadata["processing_status"] == "pending"
+    assert recovered_metadata["processing_recovery_status"] == "recovered"
+    assert recovered_metadata["processing_recovered_at"] == "2026-06-01T10:00:00"
+    assert recovered_metadata["processing_recovery_reason"] == (
+        "Обработка была прервана при прошлом запуске приложения."
+    )
+    assert day_metadata["meetings"][0]["processing_status"] == "pending"
+    assert day_metadata["meetings"][0]["processing_recovery_status"] == "recovered"
+
+
+def test_corrupted_meeting_metadata_is_backed_up_and_reported(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    meeting_folder = day_folder / "09-00_Broken"
+    meeting_folder.mkdir()
+    metadata_path = meeting_folder / "meeting_metadata.json"
+    metadata_path.write_text('{"status": "ended",', encoding="utf-8")
+
+    with pytest.raises(storage_module.MetadataReadError) as error:
+        storage.read_meeting_metadata(meeting_folder)
+
+    assert error.value.path == metadata_path
+    assert metadata_path.read_text(encoding="utf-8") == "{}\n"
+    backups = list(meeting_folder.glob("meeting_metadata.corrupt-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '{"status": "ended",'
+
+
+def test_metadata_read_retries_transient_permission_error(tmp_path, monkeypatch) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    meeting_folder = day_folder / "09-00_Locked"
+    meeting_folder.mkdir()
+    metadata_path = meeting_folder / "meeting_metadata.json"
+    metadata_path.write_text('{"status": "ended"}', encoding="utf-8")
+    original_read_text = storage_module.Path.read_text
+    attempts = {"count": 0}
+
+    def flaky_read_text(path, *args, **kwargs):
+        if path == metadata_path and attempts["count"] == 0:
+            attempts["count"] += 1
+            raise PermissionError("metadata is briefly locked")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(storage_module.Path, "read_text", flaky_read_text)
+
+    assert storage.read_meeting_metadata(meeting_folder) == {"status": "ended"}
+    assert attempts["count"] == 1
+    assert not list(meeting_folder.glob("meeting_metadata.corrupt-*.json"))
+
+
+def test_metadata_write_retries_transient_permission_error(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "meeting_metadata.json"
+    original_replace = storage_module.os.replace
+    attempts = {"count": 0}
+
+    def flaky_replace(source, destination):
+        if destination == path and attempts["count"] == 0:
+            attempts["count"] += 1
+            raise PermissionError("metadata is briefly locked")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(storage_module.os, "replace", flaky_replace)
+
+    storage_module.StorageService._write_json(path, {"status": "ended"})
+
+    assert attempts["count"] == 1
+    assert json.loads(path.read_text(encoding="utf-8")) == {"status": "ended"}
+    assert not list(tmp_path.glob(".meeting_metadata.json.*.tmp"))
+
+
+def test_corrupted_day_metadata_does_not_restore_active_day(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    metadata_path = day_folder / "day_metadata.json"
+    metadata_path.write_text('{"status": "active",', encoding="utf-8")
+
+    storage.load_today_state(datetime(2026, 6, 1, 10, 0))
+
+    assert not storage.workday_active
+    assert metadata_path.read_text(encoding="utf-8") == "{}\n"
+    backups = list(day_folder.glob("day_metadata.corrupt-*.json"))
+    assert len(backups) == 1
+
+
+def test_corrupted_active_meeting_metadata_does_not_break_today_restore(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = day_folder / "09-00_Broken"
+    meeting_folder.mkdir()
+    metadata_path = meeting_folder / "meeting_metadata.json"
+    metadata_path.write_text('{"status": "active",', encoding="utf-8")
+
+    restored_storage = StorageService(tmp_path)
+    restored_storage.load_today_state(datetime(2026, 6, 1, 10, 0))
+
+    assert restored_storage.workday_active
+    assert not restored_storage.meeting_active
+    assert metadata_path.read_text(encoding="utf-8") == "{}\n"
+    backups = list(meeting_folder.glob("meeting_metadata.corrupt-*.json"))
+    assert len(backups) == 1
+
+
+def test_recovered_pipeline_skips_completed_steps(tmp_path) -> None:
+    class FailingAudioExtractor:
+        def extract_audio(self, recording_path, meeting_folder):
+            raise AssertionError("audio should not be extracted again")
+
+    class FailingTranscriber:
+        running_message = "transcriber should not run"
+
+        def transcribe(self, audio_path, meeting_folder, progress_callback=None):
+            raise AssertionError("transcription should not run again")
+
+    class FailingSummarizer:
+        def summarize_meeting(self, meeting_folder, metadata):
+            raise AssertionError("summary should not run again")
+
+        def summarize_day(self, day_folder, current_summary, meeting_summaries):
+            raise AssertionError("day summary is not part of this test")
+
+    storage = StorageService(
+        tmp_path,
+        audio_extractor=FailingAudioExtractor(),
+        transcriber=FailingTranscriber(),
+        summarizer=FailingSummarizer(),
+    )
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Recovered", datetime(2026, 6, 1, 9, 0))
+    storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+    audio_path = meeting_folder / "audio.wav"
+    transcript_path = meeting_folder / "transcript.md"
+    transcript_json_path = meeting_folder / "transcript.json"
+    summary_path = meeting_folder / "summary_draft.md"
+    audio_path.write_bytes(b"audio")
+    transcript_path.write_text("# Транскрипт\n\nГотов.\n", encoding="utf-8")
+    transcript_json_path.write_text(
+        json.dumps({"status": "completed", "text": "Готов.", "segments": []}),
+        encoding="utf-8",
+    )
+    summary_path.write_text("# Итоги встречи\n\nГотовы.\n", encoding="utf-8")
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    metadata.update(
+        {
+            "processing_status": "running",
+            "recording_status": "stopped",
+            "audio_status": "extracted",
+            "audio_path": str(audio_path),
+            "transcription_status": "completed",
+            "transcript_path": str(transcript_path),
+            "transcript_json_path": str(transcript_json_path),
+            "summary_status": "draft_created",
+            "summary_path": str(summary_path),
+        }
+    )
+    storage.write_metadata(meeting_folder, metadata)
+    storage._sync_day_meeting_metadata(meeting_folder, metadata)
+
+    storage.recover_interrupted_meeting_processing(day_folder, datetime(2026, 6, 1, 10, 0))
+    storage.process_meeting_pipeline(meeting_folder)
+
+    recovered_metadata = storage.read_meeting_metadata(meeting_folder)
+    assert recovered_metadata["processing_status"] == "completed"
+    assert "processing_recovery_status" not in recovered_metadata
+
+
+def test_manual_reprocess_runs_completed_steps_again(tmp_path) -> None:
+    calls = {"audio": 0, "transcription": 0, "summary": 0}
+
+    class CountingAudioExtractor:
+        def extract_audio(self, recording_path, meeting_folder):
+            del recording_path
+            calls["audio"] += 1
+            audio_path = meeting_folder / "audio.wav"
+            audio_path.write_bytes(b"new audio")
+            return {"audio_status": "extracted", "audio_path": str(audio_path)}
+
+    class CountingTranscriber:
+        running_message = "transcribing"
+
+        def transcribe(self, audio_path, meeting_folder, progress_callback=None):
+            del audio_path, progress_callback
+            calls["transcription"] += 1
+            transcript_path = meeting_folder / "transcript.md"
+            transcript_json_path = meeting_folder / "transcript.json"
+            transcript_path.write_text("New transcript.\n", encoding="utf-8")
+            transcript_json_path.write_text(
+                json.dumps({"status": "completed", "text": "New transcript.", "segments": []}),
+                encoding="utf-8",
+            )
+            return {
+                "transcription_status": "completed",
+                "transcript_path": str(transcript_path),
+                "transcript_json_path": str(transcript_json_path),
+            }
+
+    class CountingSummarizer:
+        def summarize_meeting(self, meeting_folder, metadata):
+            del metadata
+            calls["summary"] += 1
+            summary_path = meeting_folder / "summary_draft.md"
+            summary_path.write_text("# New summary\n", encoding="utf-8")
+            return {"summary_status": "draft_created", "summary_path": str(summary_path)}
+
+        def summarize_day(self, day_folder, current_summary, meeting_summaries):
+            raise AssertionError("day summary is not part of this test")
+
+    storage = StorageService(
+        tmp_path,
+        audio_extractor=CountingAudioExtractor(),
+        transcriber=CountingTranscriber(),
+        summarizer=CountingSummarizer(),
+    )
+    storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Manual reprocess", datetime(2026, 6, 1, 9, 0))
+    storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+    recording_path = meeting_folder / "recording.mkv"
+    recording_path.write_bytes(b"video")
+    audio_path = meeting_folder / "audio.wav"
+    transcript_path = meeting_folder / "transcript.md"
+    transcript_json_path = meeting_folder / "transcript.json"
+    summary_path = meeting_folder / "summary_draft.md"
+    audio_path.write_bytes(b"old audio")
+    transcript_path.write_text("Old transcript.\n", encoding="utf-8")
+    transcript_json_path.write_text(
+        json.dumps({"status": "completed", "text": "Old transcript.", "segments": []}),
+        encoding="utf-8",
+    )
+    summary_path.write_text("# Old summary\n", encoding="utf-8")
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    metadata.update(
+        {
+            "processing_status": "completed",
+            "recording_status": "stopped",
+            "recording_path": str(recording_path),
+            "audio_status": "extracted",
+            "audio_path": str(audio_path),
+            "transcription_status": "completed",
+            "transcript_path": str(transcript_path),
+            "transcript_json_path": str(transcript_json_path),
+            "summary_status": "draft_created",
+            "summary_path": str(summary_path),
+        }
+    )
+    storage.write_metadata(meeting_folder, metadata)
+
+    storage.mark_meeting_for_reprocessing(meeting_folder)
+    storage.process_meeting_pipeline(meeting_folder)
+
+    assert calls == {"audio": 1, "transcription": 1, "summary": 1}
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    assert metadata["processing_status"] == "completed"
+    assert "processing_force_reprocess" not in metadata
 
 
 def test_end_workday_creates_day_drafts(tmp_path) -> None:

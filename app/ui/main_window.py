@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from app.config import DEFAULT_CONFIG, load_config
 from app.services.readiness import check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
-from app.services.storage import StorageService
+from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import create_summarizer
 from app.services.transcription import create_transcriber
 
@@ -3105,12 +3105,27 @@ class MainWindow(QMainWindow):
 
     def _restore_today_pending_processing_queue(self) -> None:
         restored = 0
+        recovered = 0
+        day_folder = self.storage.get_today_day_folder()
+        if day_folder is not None:
+            try:
+                recovered = len(self.storage.recover_interrupted_meeting_processing(day_folder))
+            except MetadataReadError as error:
+                self.status_label.setText(
+                    f"Metadata поврежден и сохранен в backup: {error.backup_path}"
+                )
         for meeting_folder in self.storage.list_today_meeting_folders():
             if meeting_folder == self.pipeline_meeting_folder:
                 continue
             if meeting_folder in self.processing_queue:
                 continue
-            metadata = self.storage.read_meeting_metadata(meeting_folder)
+            try:
+                metadata = self.storage.read_meeting_metadata(meeting_folder)
+            except MetadataReadError as error:
+                self.status_label.setText(
+                    f"Metadata встречи поврежден и сохранен в backup: {error.backup_path}"
+                )
+                continue
             if (
                 metadata.get("status") == "ended"
                 and metadata.get("processing_status") == "pending"
@@ -3118,9 +3133,14 @@ class MainWindow(QMainWindow):
                 self.processing_queue.append(meeting_folder)
                 restored += 1
         if restored:
-            self.status_label.setText(
-                f"Восстановлена очередь обработки встреч: {restored}."
-            )
+            if recovered:
+                self.status_label.setText(
+                    f"Восстановлена обработка встреч после перезапуска: {recovered}."
+                )
+            else:
+                self.status_label.setText(
+                    f"Восстановлена очередь обработки встреч: {restored}."
+                )
             self._start_next_pipeline()
 
     def _start_next_pipeline(self) -> None:

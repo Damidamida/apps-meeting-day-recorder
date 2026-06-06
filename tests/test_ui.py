@@ -659,6 +659,53 @@ def test_pending_today_meetings_are_restored_to_processing_queue_on_startup(
     app.processEvents()
 
 
+def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    entered = Event()
+    release = Event()
+
+    class BlockingStorage(StorageService):
+        def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            del progress_callback
+            entered.set()
+            release.wait(5)
+            return meeting_folder
+
+    storage = BlockingStorage(tmp_path, recorder)
+    storage.start_workday(datetime.now())
+    running_meeting = storage.start_meeting("Восстановить running", datetime.now())
+    storage.finish_active_meeting_recording(datetime.now())
+    metadata = storage.read_meeting_metadata(running_meeting)
+    metadata["processing_status"] = "running"
+    storage.write_metadata(running_meeting, metadata)
+    storage._sync_day_meeting_metadata(running_meeting, metadata)
+
+    window = MainWindow(storage, recorder)
+    deadline = time.time() + 2
+    while not entered.is_set() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    recovered_metadata = storage.read_meeting_metadata(running_meeting)
+    assert entered.is_set()
+    assert window.pipeline_meeting_folder == running_meeting
+    assert window.pipeline_running
+    assert recovered_metadata["processing_recovery_status"] == "recovered"
+    assert recovered_metadata["processing_recovery_reason"] == (
+        "Обработка была прервана при прошлом запуске приложения."
+    )
+
+    release.set()
+    if window.pipeline_thread is not None:
+        window.pipeline_thread.quit()
+        window.pipeline_thread.wait(1000)
+    window.close()
+    app.processEvents()
+
+
 def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
