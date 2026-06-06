@@ -233,7 +233,11 @@ class StorageService:
         self._sync_day_meeting_metadata(meeting_folder, metadata)
         self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
 
-        self._emit_pipeline(progress_callback, "transcription_running", "Готовим локальный transcript.")
+        self._emit_pipeline(
+            progress_callback,
+            "transcription_running",
+            str(getattr(self.transcriber, "running_message", "Готовим transcript.")),
+        )
         metadata.update(self._transcribe_audio(metadata, meeting_folder))
         self.write_metadata(meeting_folder, metadata)
         self._sync_day_meeting_metadata(meeting_folder, metadata)

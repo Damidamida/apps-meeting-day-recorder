@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.services.transcription import (
+    AITunnelTranscriber,
     FasterWhisperTranscriber,
     LocalWhisperTranscriber,
     create_transcriber,
@@ -189,6 +190,103 @@ def test_faster_whisper_transcriber_reports_missing_dependency(tmp_path: Path) -
     }
 
 
+def test_aitunnel_transcriber_creates_transcript_files(tmp_path: Path, monkeypatch) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake-audio")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+
+    class FakeUsage:
+        seconds = 9.2
+        cost_rub = 0.18
+
+    class FakeTranscript:
+        text = "Внешний transcript"
+        usage = FakeUsage()
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            assert kwargs["model"] == "whisper-large-v3-turbo"
+            assert kwargs["language"] == "ru"
+            assert kwargs["response_format"] == "json"
+            assert kwargs["file"].read() == b"fake-audio"
+            return FakeTranscript()
+
+    class FakeAudio:
+        transcriptions = FakeTranscriptions()
+
+    class FakeClient:
+        audio = FakeAudio()
+
+    captured_client_kwargs = {}
+
+    def fake_client_factory(**kwargs):
+        captured_client_kwargs.update(kwargs)
+        return FakeClient()
+
+    transcriber = AITunnelTranscriber(
+        model_name="whisper-large-v3-turbo",
+        language="ru",
+        api_key_env="AITUNNEL_KEY",
+        base_url="https://api.aitunnel.ru/v1/",
+        timeout_seconds=180,
+        client_factory=fake_client_factory,
+    )
+
+    metadata = transcriber.transcribe(audio_path, tmp_path)
+
+    transcript_json = json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8"))
+    transcript_md = (tmp_path / "transcript.md").read_text(encoding="utf-8")
+    assert captured_client_kwargs == {
+        "api_key": "test-aitunnel-key",
+        "base_url": "https://api.aitunnel.ru/v1/",
+        "timeout": 180,
+    }
+    assert metadata["transcription_status"] == "completed"
+    assert metadata["transcription_provider"] == "aitunnel"
+    assert metadata["transcription_model"] == "whisper-large-v3-turbo"
+    assert metadata["transcription_base_url"] == "https://api.aitunnel.ru/v1/"
+    assert metadata["transcription_audio_bytes"] == len(b"fake-audio")
+    assert metadata["transcription_usage"] == {"seconds": 9.2, "cost_rub": 0.18}
+    assert metadata["transcription_quality"] == "ok"
+    assert transcript_json["provider"] == "aitunnel"
+    assert transcript_json["text"] == "Внешний transcript"
+    assert transcript_json["usage"] == {"seconds": 9.2, "cost_rub": 0.18}
+    assert "Внешний transcript" in transcript_md
+    assert "внешняя транскрипция AI Tunnel" in transcript_md
+
+
+def test_aitunnel_transcriber_requires_api_key(tmp_path: Path, monkeypatch) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake-audio")
+    monkeypatch.delenv("AITUNNEL_KEY", raising=False)
+
+    metadata = AITunnelTranscriber(client_factory=lambda **kwargs: None).transcribe(
+        audio_path,
+        tmp_path,
+    )
+
+    assert metadata == {
+        "transcription_status": "aitunnel_unavailable",
+        "transcription_error": "API key для внешней транскрипции не найден.",
+    }
+
+
+def test_aitunnel_transcriber_rejects_audio_over_upload_limit(tmp_path: Path, monkeypatch) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"0123456789")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+
+    metadata = AITunnelTranscriber(max_upload_mb=0.000001).transcribe(audio_path, tmp_path)
+
+    assert metadata == {
+        "transcription_status": "file_too_large",
+        "transcription_error": (
+            "Аудиофайл больше лимита внешней транскрипции. "
+            "Нужна нарезка аудио на части."
+        ),
+    }
+
+
 def test_transcript_quality_marks_repeated_long_transcript_as_suspect() -> None:
     segments = [
         {"start": index * 30.0, "end": (index + 1) * 30.0, "text": "ТЕЛЕФОННЫЙ ЗВОНОК"}
@@ -217,3 +315,23 @@ def test_create_transcriber_uses_configured_backend() -> None:
     assert isinstance(transcriber, FasterWhisperTranscriber)
     assert transcriber.model_name == "small"
     assert transcriber.vad_filter is False
+
+
+def test_create_transcriber_uses_aitunnel_backend_with_external_default_model() -> None:
+    transcriber = create_transcriber(
+        {
+            "backend": "aitunnel",
+            "model": "base",
+            "language": "ru",
+            "api_key_env": "AITUNNEL_KEY",
+            "base_url": "https://api.aitunnel.ru/v1/",
+            "env_file": "",
+            "timeout_seconds": 180,
+            "max_upload_mb": 25,
+        }
+    )
+
+    assert isinstance(transcriber, AITunnelTranscriber)
+    assert transcriber.model_name == "whisper-large-v3-turbo"
+    assert transcriber.api_key_env == "AITUNNEL_KEY"
+    assert transcriber.base_url == "https://api.aitunnel.ru/v1/"

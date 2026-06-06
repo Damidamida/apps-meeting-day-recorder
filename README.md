@@ -1,6 +1,6 @@
 # Meeting Day Recorder
 
-Локальное Windows-приложение для ручного учета ad hoc-встреч в течение рабочего дня. Текущая версия сохраняет local-first сценарий записи, извлечения аудио и подготовки транскрипта без отправки аудио во внешние сервисы.
+Локальное Windows-приложение для ручного учета ad hoc-встреч в течение рабочего дня. Текущая версия сохраняет local-first сценарий записи и извлечения аудио, а транскрипцию можно выполнять локально или явно переключить на внешний AI Tunnel STT backend.
 
 Актуальное состояние проекта, ограничения и план следующих этапов описаны в [`PROJECT_STATE.md`](PROJECT_STATE.md). Этот файл является единым источником истины для текущего контекста проекта.
 
@@ -54,7 +54,7 @@ pytest
 - Кнопка `Проверить готовность` со статусами OBS, FFmpeg, Whisper, summary, API key, endpoint и папки данных.
 - Визуальная статусная модель pipeline встречи: запись, извлечение аудио, транскрипция, генерация итогов и финальный статус.
 - Локальное извлечение `audio.wav` из OBS-записи через FFmpeg.
-- Локальная транскрипция `audio.wav` через optional Whisper CLI или optional faster-whisper.
+- Транскрипция `audio.wav` через optional Whisper CLI, optional faster-whisper или явно включаемый внешний backend AI Tunnel.
 - Генерация `summary_draft.md` одной встречи через AI Tunnel / OpenAI-compatible endpoint из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
 - Тяжелые шаги обработки встречи выполняются в фоне, чтобы UI не зависал.
 - После остановки записи можно сразу начать следующую встречу; FFmpeg, Whisper и summary по предыдущей встрече продолжают выполняться в очереди.
@@ -85,7 +85,7 @@ obs:
 
 Приложение не отправляет видео или аудио во внешние сервисы на этом этапе. Извлеченный файл `audio.wav` сохраняется локально в папке встречи.
 
-## Локальная транскрипция
+## Транскрипция
 
 На этапе 6 приложение может использовать локальный CLI `whisper` для подготовки `transcript.md` и `transcript.json` из файла `audio.wav`. После ручной проверки добавлен optional backend `faster-whisper`, чтобы ускорять локальную транскрипцию без отправки аудио во внешние сервисы.
 
@@ -119,7 +119,29 @@ transcription:
   whisper_command: "whisper"
 ```
 
-На этом этапе приложение не отправляет аудио во внешние сервисы и не использует OpenAI API для транскрипции.
+### Внешняя транскрипция через AI Tunnel
+
+Опционально можно переключить транскрипцию на AI Tunnel. В этом режиме приложение отправляет во внешний STT endpoint файл `audio.wav`, получает текст и сохраняет локальные `transcript.md` и `transcript.json`.
+
+Видео во внешний сервис не отправляется. Summary по-прежнему получает только текст transcript, не аудио и не видео.
+
+По документации AI Tunnel endpoint `POST /v1/audio/transcriptions` совместим с OpenAI SDK, принимает `multipart/form-data`, поддерживает `wav`, `mp3`, `flac`, `m4a`, `ogg`, `webm`, `aac`, `mp4`, `mpga` и имеет лимит 25 МБ на файл. Для длинных записей позже нужен отдельный chunking-режим; в текущем PR отправляется целый `audio.wav`.
+
+Пример настройки:
+
+```yaml
+transcription:
+  backend: "aitunnel"
+  model: "whisper-large-v3-turbo"
+  language: "ru"
+  api_key_env: "AITUNNEL_KEY"
+  base_url: "https://api.aitunnel.ru/v1/"
+  env_file: ""
+  timeout_seconds: 300
+  max_upload_mb: 25
+```
+
+API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `AITUNNEL_KEY` или внешний `.env.local`, путь к которому указан в `transcription.env_file`.
 
 ## Генерация итогов через AI Tunnel
 
@@ -180,7 +202,7 @@ python -m pip install -e ".[dev]"
 ffmpeg -version
 ```
 
-5. Проверьте, что выбранный backend транскрипции доступен локально. Для `whisper_cli`:
+5. Проверьте, что выбранный backend транскрипции доступен. Для `whisper_cli`:
 
 ```powershell
 whisper --help
@@ -191,6 +213,8 @@ whisper --help
 ```powershell
 python -m pip install -e ".[faster-whisper]"
 ```
+
+Для `aitunnel` укажите `transcription.api_key_env`, `transcription.base_url` и при необходимости `transcription.env_file`, затем нажмите в приложении `Проверить готовность`.
 
 6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или `.env.local`, который не добавляется в git.
 7. Запустите приложение двойным кликом через `start_meeting_day_recorder.cmd`.
@@ -221,6 +245,8 @@ python -m pip install -e ".[faster-whisper]"
 - `summary_status: disabled` — генерация итогов выключена;
 - `transcription_status: whisper_unavailable` — Whisper CLI недоступен;
 - `transcription_status: faster_whisper_unavailable` — faster-whisper не установлен;
+- `transcription_status: aitunnel_unavailable` — API key для внешней транскрипции не найден;
+- `transcription_status: file_too_large` — `audio.wav` больше лимита внешней транскрипции;
 - `summary_status: openai_unavailable` — API key не найден;
 - `summary_status: skipped` — transcript не готов или пустой.
 
@@ -229,6 +255,7 @@ python -m pip install -e ".[faster-whisper]"
 ## Намеренно не реализовано
 
 - Диаризация.
-- Внешняя транскрипция через AI Tunnel или другой STT-провайдер.
+- Chunking для внешней транскрипции длинных аудиофайлов.
+- Внешняя транскрипция через другие STT-провайдеры, кроме AI Tunnel.
 - OCR.
 - Интеграции с почтой, календарями и мессенджерами.

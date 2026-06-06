@@ -11,14 +11,23 @@ transcription:
   # Варианты:
   # backend: "whisper_cli"      # старый CLI-вариант
   # backend: "faster_whisper"   # ускоренный локальный backend, требует optional-зависимость
+  # backend: "aitunnel"         # внешняя транскрипция через AI Tunnel, отправляет audio.wav
   backend: "whisper_cli"
   model: "base"
+  # Для AI Tunnel используйте, например:
+  # model: "whisper-large-v3-turbo"
   language: "ru"
   device: "cpu"
   compute_type: "int8"
   # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
   vad_filter: true
   whisper_command: "whisper"
+  api_key_env: "AITUNNEL_KEY"
+  base_url: "https://api.aitunnel.ru/v1/"
+  env_file: ""
+  timeout_seconds: 300
+  # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
+  max_upload_mb: 25
 
 summary:
   enabled: false

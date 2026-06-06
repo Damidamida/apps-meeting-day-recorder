@@ -542,9 +542,14 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_obs_host_input.setText("127.0.0.1")
     window.settings_obs_port_input.setValue(4456)
     window.settings_obs_password_input.setText("secret")
-    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
-    window.settings_transcription_model_input.setText("small")
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window.settings_transcription_model_input.setText("whisper-large-v3-turbo")
     window.settings_transcription_vad_checkbox.setChecked(False)
+    window.settings_transcription_api_key_env_input.setText("AITUNNEL_KEY")
+    window.settings_transcription_base_url_input.setText("https://api.aitunnel.ru/v1/")
+    window.settings_transcription_env_file_input.setText("C:/safe/.env.local")
+    window.settings_transcription_timeout_input.setValue(240)
+    window.settings_transcription_upload_limit_input.setValue(20)
     window.settings_summary_enabled_checkbox.setChecked(True)
     window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
     window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
@@ -561,9 +566,14 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["obs"]["websocket_host"] == "127.0.0.1"
     assert config["obs"]["websocket_port"] == 4456
     assert config["obs"]["websocket_password"] == "secret"
-    assert config["transcription"]["backend"] == "faster_whisper"
-    assert config["transcription"]["model"] == "small"
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["transcription"]["model"] == "whisper-large-v3-turbo"
     assert config["transcription"]["vad_filter"] is False
+    assert config["transcription"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["transcription"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["transcription"]["env_file"] == "C:/safe/.env.local"
+    assert config["transcription"]["timeout_seconds"] == 240
+    assert config["transcription"]["max_upload_mb"] == 20
     assert config["summary"]["enabled"] is True
     assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
     assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"

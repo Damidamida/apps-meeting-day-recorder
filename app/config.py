@@ -32,6 +32,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "compute_type": "int8",
         "whisper_command": "whisper",
         "vad_filter": True,
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
+        "env_file": "",
+        "timeout_seconds": 300,
+        "max_upload_mb": 25,
     },
     "ui": {
         "theme": "light",
@@ -143,9 +148,8 @@ def _normalize_transcription(
     transcription: dict[str, Any],
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    del config
     backend = str(transcription.get("backend") or "whisper_cli").strip().lower()
-    if backend not in {"whisper_cli", "faster_whisper"}:
+    if backend not in {"whisper_cli", "faster_whisper", "aitunnel"}:
         backend = "whisper_cli"
     transcription["backend"] = backend
     transcription["model"] = str(
@@ -167,6 +171,27 @@ def _normalize_transcription(
     transcription["vad_filter"] = _safe_bool(
         transcription.get("vad_filter"),
         bool(DEFAULT_CONFIG["transcription"]["vad_filter"]),
+    )
+    default_api_key_env = str(DEFAULT_CONFIG["transcription"]["api_key_env"])
+    transcription["api_key_env"] = (
+        str(transcription.get("api_key_env") or default_api_key_env).strip()
+        or default_api_key_env
+    )
+    transcription["base_url"] = str(
+        transcription.get("base_url") or DEFAULT_CONFIG["transcription"]["base_url"]
+    ).strip()
+    transcription["env_file"] = str(transcription.get("env_file") or "").strip()
+    transcription["timeout_seconds"] = _safe_int(
+        transcription.get("timeout_seconds"),
+        int(DEFAULT_CONFIG["transcription"]["timeout_seconds"]),
+        "transcription.timeout_seconds",
+        config,
+    )
+    transcription["max_upload_mb"] = _safe_int(
+        transcription.get("max_upload_mb"),
+        int(DEFAULT_CONFIG["transcription"]["max_upload_mb"]),
+        "transcription.max_upload_mb",
+        config,
     )
     return transcription
 

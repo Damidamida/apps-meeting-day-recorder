@@ -2455,7 +2455,9 @@ class MainWindow(QMainWindow):
         transcription_layout.setHorizontalSpacing(18)
         transcription_layout.setVerticalSpacing(8)
         self.settings_transcription_backend_select = QComboBox()
-        self.settings_transcription_backend_select.addItems(["whisper_cli", "faster_whisper"])
+        self.settings_transcription_backend_select.addItems(
+            ["whisper_cli", "faster_whisper", "aitunnel"]
+        )
         self._set_combo_value(
             self.settings_transcription_backend_select,
             str(self.config["transcription"]["backend"]),
@@ -2468,6 +2470,25 @@ class MainWindow(QMainWindow):
         )
         self.settings_transcription_command_input = QLineEdit(
             str(self.config["transcription"]["whisper_command"])
+        )
+        self.settings_transcription_api_key_env_input = QLineEdit(
+            str(self.config["transcription"].get("api_key_env", "AITUNNEL_KEY"))
+        )
+        self.settings_transcription_base_url_input = QLineEdit(
+            str(self.config["transcription"].get("base_url", "https://api.aitunnel.ru/v1/"))
+        )
+        self.settings_transcription_env_file_input = QLineEdit(
+            str(self.config["transcription"].get("env_file", ""))
+        )
+        self.settings_transcription_timeout_input = QSpinBox()
+        self.settings_transcription_timeout_input.setRange(1, 3600)
+        self.settings_transcription_timeout_input.setValue(
+            int(self.config["transcription"].get("timeout_seconds", 300))
+        )
+        self.settings_transcription_upload_limit_input = QSpinBox()
+        self.settings_transcription_upload_limit_input.setRange(1, 25)
+        self.settings_transcription_upload_limit_input.setValue(
+            int(self.config["transcription"].get("max_upload_mb", 25))
         )
         self.settings_transcription_vad_checkbox = QCheckBox(
             "Для faster-whisper отсекать тишину и неречевой шум"
@@ -2482,6 +2503,20 @@ class MainWindow(QMainWindow):
         transcription_layout.addRow("Compute type:", self.settings_transcription_compute_type_input)
         transcription_layout.addRow("", self.settings_transcription_vad_checkbox)
         transcription_layout.addRow("Whisper command:", self.settings_transcription_command_input)
+        transcription_layout.addRow(
+            "Переменная API key:",
+            self.settings_transcription_api_key_env_input,
+        )
+        transcription_layout.addRow("Base URL:", self.settings_transcription_base_url_input)
+        transcription_layout.addRow(".env файл:", self.settings_transcription_env_file_input)
+        transcription_layout.addRow(
+            "Timeout, секунд:",
+            self.settings_transcription_timeout_input,
+        )
+        transcription_layout.addRow(
+            "Макс. размер аудио, МБ:",
+            self.settings_transcription_upload_limit_input,
+        )
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
 
         summary_layout = QFormLayout()
@@ -3501,6 +3536,17 @@ class MainWindow(QMainWindow):
                 "whisper_command": (
                     self.settings_transcription_command_input.text().strip() or "whisper"
                 ),
+                "api_key_env": (
+                    self.settings_transcription_api_key_env_input.text().strip()
+                    or str(DEFAULT_CONFIG["transcription"]["api_key_env"])
+                ),
+                "base_url": (
+                    self.settings_transcription_base_url_input.text().strip()
+                    or str(DEFAULT_CONFIG["transcription"]["base_url"])
+                ),
+                "env_file": self.settings_transcription_env_file_input.text().strip(),
+                "timeout_seconds": self.settings_transcription_timeout_input.value(),
+                "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
             },
             "summary": {
                 "enabled": self.settings_summary_enabled_checkbox.isChecked(),
