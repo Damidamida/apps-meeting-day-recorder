@@ -5,8 +5,10 @@ from pathlib import Path
 from app.services.recorder import (
     OBS_UNAVAILABLE_MESSAGE,
     NoopRecorder,
+    ObsRecorder,
     RecorderError,
     RecorderResult,
+    create_recorder,
 )
 from app.services.storage import StorageService
 
@@ -101,7 +103,7 @@ class FakeTranscriber:
 def test_noop_recorder_does_not_require_obs(tmp_path) -> None:
     recorder = NoopRecorder()
 
-    assert recorder.check_connection() == "OBS: выключен в настройках"
+    assert recorder.check_connection() == "OBS: тестовый режим без записи"
     assert recorder.start_recording(tmp_path).metadata == {"recording_status": "disabled"}
 
 
@@ -118,6 +120,22 @@ def test_storage_lifecycle_works_with_obs_disabled(tmp_path) -> None:
     assert metadata["audio_status"] == "skipped"
     assert metadata["audio_error"] == "Путь к записи отсутствует."
     assert (meeting_folder / "transcript.md").is_file()
+
+
+def test_create_recorder_ignores_legacy_obs_enabled_flag() -> None:
+    recorder = create_recorder(
+        {
+            "enabled": False,
+            "websocket_host": "127.0.0.1",
+            "websocket_port": 4456,
+            "websocket_password": "secret",
+        }
+    )
+
+    assert isinstance(recorder, ObsRecorder)
+    assert recorder.enabled is True
+    assert recorder.host == "127.0.0.1"
+    assert recorder.port == 4456
 
 
 def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:

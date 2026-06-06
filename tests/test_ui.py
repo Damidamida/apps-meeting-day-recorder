@@ -215,10 +215,10 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
     window.config["summary"]["enabled"] = False
     window.config["transcription"]["backend"] = "whisper_cli"
 
-    assert window.obs_status_value.text() == "OBS: выключен в настройках"
+    assert window.obs_status_value.text() == "OBS: тестовый режим без записи"
 
     window.check_obs()
-    assert window.status_label.text() == "OBS: выключен в настройках"
+    assert window.status_label.text() == "OBS: тестовый режим без записи"
 
     with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
         window.check_readiness()
@@ -649,7 +649,7 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window = MainWindow(storage, recorder)
 
     window.settings_storage_root_input.setText("MeetingSummariesCustom")
-    window.settings_obs_enabled_checkbox.setChecked(True)
+    assert not hasattr(window, "settings_obs_enabled_checkbox")
     window.settings_obs_host_input.setText("127.0.0.1")
     window.settings_obs_port_input.setValue(4456)
     window.settings_obs_password_input.setText("secret")
@@ -674,7 +674,7 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
 
     config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
     assert config["storage"]["root"] == "MeetingSummariesCustom"
-    assert config["obs"]["enabled"] is True
+    assert "enabled" not in config["obs"]
     assert config["obs"]["websocket_host"] == "127.0.0.1"
     assert config["obs"]["websocket_port"] == 4456
     assert config["obs"]["websocket_password"] == "secret"

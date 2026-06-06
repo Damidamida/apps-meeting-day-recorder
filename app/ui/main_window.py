@@ -586,7 +586,7 @@ class FloatingMeetingControl(QWidget):
 
     def _render_meeting_active(self, meeting_title: str) -> None:
         self.state_label.setText("Созвон идет")
-        details = "OBS пишет." if self._recorder_enabled else "OBS выключен или недоступен."
+        details = "OBS пишет." if self._recorder_enabled else "OBS недоступен."
         if meeting_title:
             details = f"{meeting_title}\n{details}"
         self.detail_label.setText(details)
@@ -2521,15 +2521,12 @@ class MainWindow(QMainWindow):
         obs_layout = QFormLayout()
         obs_layout.setHorizontalSpacing(18)
         obs_layout.setVerticalSpacing(8)
-        self.settings_obs_enabled_checkbox = QCheckBox("OBS включен")
-        self.settings_obs_enabled_checkbox.setChecked(bool(self.config["obs"]["enabled"]))
         self.settings_obs_host_input = QLineEdit(str(self.config["obs"]["websocket_host"]))
         self.settings_obs_port_input = QSpinBox()
         self.settings_obs_port_input.setRange(1, 65535)
         self.settings_obs_port_input.setValue(int(self.config["obs"]["websocket_port"]))
         self.settings_obs_password_input = QLineEdit(str(self.config["obs"]["websocket_password"]))
         self.settings_obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        obs_layout.addRow("", self.settings_obs_enabled_checkbox)
         obs_layout.addRow("WebSocket host:", self.settings_obs_host_input)
         obs_layout.addRow("WebSocket port:", self.settings_obs_port_input)
         obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
@@ -3862,7 +3859,6 @@ class MainWindow(QMainWindow):
                 "root": self.settings_storage_root_input.text().strip() or "MeetingSummaries",
             },
             "obs": {
-                "enabled": self.settings_obs_enabled_checkbox.isChecked(),
                 "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
                 "websocket_port": self.settings_obs_port_input.value(),
                 "websocket_password": self.settings_obs_password_input.text(),

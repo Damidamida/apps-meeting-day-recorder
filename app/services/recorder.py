@@ -30,7 +30,7 @@ class Recorder(Protocol):
 
 class NoopRecorder:
     enabled = False
-    status_text = "OBS: выключен в настройках"
+    status_text = "OBS: тестовый режим без записи"
 
     def check_connection(self) -> str:
         return self.status_text
@@ -39,7 +39,7 @@ class NoopRecorder:
         del meeting_folder
         return RecorderResult(
             metadata={"recording_status": "disabled"},
-            message="OBS выключен в настройках. Встреча сохранена локально без записи.",
+            message="Запись OBS не используется. Встреча сохранена локально без записи.",
         )
 
     def stop_recording(self) -> RecorderResult:
@@ -130,8 +130,6 @@ class ObsRecorder:
 
 
 def create_recorder(config: dict[str, Any]) -> Recorder:
-    if not config.get("enabled", False):
-        return NoopRecorder()
     return ObsRecorder(
         host=str(config.get("websocket_host", "localhost")),
         port=int(config.get("websocket_port", 4455)),

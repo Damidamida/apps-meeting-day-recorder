@@ -2,7 +2,6 @@ storage:
   root: MeetingSummaries
 
 obs:
-  enabled: false
   websocket_host: "localhost"
   websocket_port: 4455
   websocket_password: ""
