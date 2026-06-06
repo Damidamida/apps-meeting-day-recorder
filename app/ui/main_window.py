@@ -939,6 +939,7 @@ class MainWindow(QMainWindow):
         self.active_call_timer.timeout.connect(self._refresh_active_call_display)
         self.active_call_timer.start()
         self.show_floating_control()
+        self._restore_today_pending_processing_queue()
 
     def _transcription_runtime_config(self) -> dict[str, object]:
         config = dict(self.config["transcription"])
@@ -1992,16 +1993,20 @@ class MainWindow(QMainWindow):
 
     def _meeting_detail_text(self, metadata: dict[str, object]) -> str:
         parts = []
-        if metadata.get("transcription_quality") == "suspect":
-            parts.append("транскрипция требует проверки")
+        if self._meeting_has_no_recording(metadata):
+            parts.append("запись не создана")
+        elif self._meeting_needs_attention(metadata):
+            parts.append("pipeline требует внимания")
+        elif metadata.get("summary_status") == "disabled":
+            parts.append("итоги выключены")
         if metadata.get("summary_status") == "draft_created":
             parts.append("итоги готовы")
-        elif metadata.get("summary_status") in {"disabled", "skipped"}:
-            parts.append("итоги пропущены")
+        elif metadata.get("summary_status") == "skipped":
+            parts.append("итоги не сформированы")
         elif metadata.get("processing_status") == "running":
             parts.append("обработка выполняется")
         elif metadata.get("processing_status") == "pending":
-            parts.append("ожидает обработки")
+            parts.append("ждет обработки встречи")
         if metadata.get("transcription_status") == "completed":
             parts.append("transcript готов")
         elif metadata.get("transcription_status") == "skipped":
@@ -2016,12 +2021,50 @@ class MainWindow(QMainWindow):
         if metadata.get("processing_status") == "running":
             return "Обработка", "active"
         if metadata.get("processing_status") == "pending":
-            return "В очереди", "wait"
-        if metadata.get("transcription_quality") == "suspect":
-            return "Требует проверки", "error"
+            return "Ждет обработки встречи", "wait"
+        if self._meeting_has_no_recording(metadata):
+            return "Без записи", "error"
+        if self._meeting_needs_attention(metadata):
+            return "Требует внимания", "error"
         if metadata.get("summary_status") == "draft_created":
             return "Итоги готовы", "ok"
-        return "Завершена", "ok"
+        if metadata.get("summary_status") == "disabled":
+            return "Итоги выключены", "skip"
+        return "Ждет обработки встречи", "wait"
+
+    @staticmethod
+    def _meeting_has_no_recording(metadata: dict[str, object]) -> bool:
+        if metadata.get("status") == "active":
+            return False
+        recording_status = str(metadata.get("recording_status") or "")
+        if recording_status in {"disabled", "start_failed", "stop_failed"}:
+            return True
+        return recording_status == "stopped" and not metadata.get("recording_path")
+
+    @staticmethod
+    def _meeting_needs_attention(metadata: dict[str, object]) -> bool:
+        if metadata.get("transcription_quality") == "suspect":
+            return True
+        if str(metadata.get("audio_status") or "") in {
+            "missing_recording",
+            "ffmpeg_unavailable",
+            "failed",
+        }:
+            return True
+        if str(metadata.get("transcription_status") or "") in {
+            "missing_audio",
+            "whisper_unavailable",
+            "faster_whisper_unavailable",
+            "aitunnel_unavailable",
+            "file_too_large",
+            "failed",
+        }:
+            return True
+        return str(metadata.get("summary_status") or "") in {
+            "skipped",
+            "openai_unavailable",
+            "failed",
+        }
 
     def _day_summary_detail_text(self, metadata: dict[str, object]) -> str:
         included = metadata.get("included_meetings")
@@ -3039,6 +3082,26 @@ class MainWindow(QMainWindow):
         if not self.pipeline_running:
             self._start_next_pipeline()
 
+    def _restore_today_pending_processing_queue(self) -> None:
+        restored = 0
+        for meeting_folder in self.storage.list_today_meeting_folders():
+            if meeting_folder == self.pipeline_meeting_folder:
+                continue
+            if meeting_folder in self.processing_queue:
+                continue
+            metadata = self.storage.read_meeting_metadata(meeting_folder)
+            if (
+                metadata.get("status") == "ended"
+                and metadata.get("processing_status") == "pending"
+            ):
+                self.processing_queue.append(meeting_folder)
+                restored += 1
+        if restored:
+            self.status_label.setText(
+                f"Восстановлена очередь обработки встреч: {restored}."
+            )
+            self._start_next_pipeline()
+
     def _start_next_pipeline(self) -> None:
         if self.pipeline_running or self.pipeline_thread is not None or not self.processing_queue:
             return
@@ -3308,8 +3371,12 @@ class MainWindow(QMainWindow):
             status = str(metadata.get("recording_status") or "")
             if status == "recording":
                 return "Выполняется", "active"
-            if status in {"stopped", "disabled"}:
-                return ("Готово" if status == "stopped" else "Пропущено", "ok" if status == "stopped" else "skip")
+            if status == "stopped":
+                if metadata.get("recording_path"):
+                    return "Готово", "ok"
+                return "Без записи", "error"
+            if status == "disabled":
+                return "Без записи", "error"
             if status.endswith("failed"):
                 return "Ошибка", "error"
             return "Ожидает", "wait"
@@ -3332,8 +3399,10 @@ class MainWindow(QMainWindow):
         if step == "summary":
             if status == "draft_created":
                 return "Готово", "ok"
-            if status in {"disabled", "skipped"}:
-                return "Пропущено", "skip"
+            if status == "disabled":
+                return "Выключено", "skip"
+            if status == "skipped":
+                return "Ошибка", "error"
             if status:
                 return "Ошибка", "error"
         return "Ожидает", "wait"
@@ -3343,9 +3412,11 @@ class MainWindow(QMainWindow):
             if metadata.get("recording_status") == "recording":
                 return "OBS ведет запись."
             if metadata.get("recording_status") == "stopped":
+                if not metadata.get("recording_path"):
+                    return "OBS не вернул путь к записи."
                 return "Запись остановлена."
             if metadata.get("recording_status") == "disabled":
-                return "OBS запись не активна."
+                return "OBS запись не выполнена."
             return str(metadata.get("recording_note") or "OBS запись ожидает обработки.")
         if step == "audio":
             if metadata.get("audio_error"):
@@ -3353,7 +3424,11 @@ class MainWindow(QMainWindow):
             if metadata.get("audio_status") == "extracted":
                 return "audio.wav извлечен через FFmpeg."
             if metadata.get("audio_status") == "skipped":
+                if self._meeting_has_no_recording(metadata):
+                    return "Аудио не извлекалось: нет записи."
                 return "Аудио не извлекалось."
+            if metadata.get("processing_status") == "pending":
+                return "Ждет обработки встречи."
             return "Ждет завершения записи."
         if step == "transcription":
             if metadata.get("transcription_error"):
@@ -3368,16 +3443,29 @@ class MainWindow(QMainWindow):
                 return f"transcript.md создан локально{suffix}."
             if metadata.get("transcription_status") == "skipped":
                 return "Транскрипция пропущена."
+            if metadata.get("audio_status") == "extracted":
+                if metadata.get("processing_status") == "pending":
+                    return self._pending_processing_message()
+                return "Ждет запуска транскрипции."
             return "Ждет audio.wav."
         if step == "summary":
             if metadata.get("summary_error"):
                 return str(metadata["summary_error"])
             if metadata.get("summary_status") == "draft_created":
                 return "summary_draft.md готов к ревью."
-            if metadata.get("summary_status") in {"disabled", "skipped"}:
-                return "Генерация итогов выключена или пропущена."
+            if metadata.get("summary_status") == "disabled":
+                return "Генерация итогов выключена в настройках."
+            if metadata.get("summary_status") == "skipped":
+                return "Итоги не сформированы."
             return "Ждет transcript."
         return ""
+
+    def _pending_processing_message(self) -> str:
+        if self.pipeline_running:
+            return (
+                "Ждет обработки встречи: сначала завершается обработка другой встречи."
+            )
+        return "Ждет обработки встречи."
 
     @staticmethod
     def _readiness_state_text(state: str, message: str) -> str:
