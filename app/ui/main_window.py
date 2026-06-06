@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.config import load_config
+from app.config import DEFAULT_CONFIG, load_config
 from app.services.readiness import check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
@@ -2638,7 +2638,7 @@ class MainWindow(QMainWindow):
         local_layout = QVBoxLayout()
         local_text = QLabel(
             "Аудио и видео остаются локально. Для генерации итогов во внешний OpenAI-compatible "
-            "endpoint / ProxyAPI отправляется только текст transcript. `config.yaml`, `.env`, записи, "
+            "endpoint отправляется только текст transcript. `config.yaml`, `.env`, записи, "
             "аудио, transcript и summary-файлы нельзя добавлять в git."
         )
         local_text.setObjectName("sectionHint")
@@ -3507,9 +3507,13 @@ class MainWindow(QMainWindow):
                 "provider": "openai",
                 "model": self.settings_summary_model_input.text().strip() or "gpt-5.4-mini",
                 "api_key_env": (
-                    self.settings_summary_api_key_env_input.text().strip() or "OPENAI_API_KEY"
+                    self.settings_summary_api_key_env_input.text().strip()
+                    or str(DEFAULT_CONFIG["summary"]["api_key_env"])
                 ),
-                "base_url": self.settings_summary_base_url_input.text().strip(),
+                "base_url": (
+                    self.settings_summary_base_url_input.text().strip()
+                    or str(DEFAULT_CONFIG["summary"]["base_url"])
+                ),
                 "env_file": self.settings_summary_env_file_input.text().strip(),
                 "timeout_seconds": self.settings_summary_timeout_input.value(),
                 "max_chars_per_chunk": self.settings_summary_chunk_input.value(),

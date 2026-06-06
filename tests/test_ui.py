@@ -580,6 +580,30 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     app.processEvents()
 
 
+def test_settings_screen_uses_aitunnel_summary_defaults_when_fields_are_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_summary_enabled_checkbox.setChecked(True)
+    window.settings_summary_api_key_env_input.clear()
+    window.settings_summary_base_url_input.clear()
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+
+    window.close()
+    app.processEvents()
+
+
 def test_dark_theme_styles_scroll_page_surfaces_and_form_labels(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

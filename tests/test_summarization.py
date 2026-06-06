@@ -18,8 +18,8 @@ def _summary_config(**overrides):
         "enabled": True,
         "provider": "openai",
         "model": "gpt-5.4-mini",
-        "api_key_env": "OPENAI_API_KEY",
-        "base_url": "",
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
         "env_file": "",
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
@@ -52,8 +52,8 @@ def test_disabled_summary_does_not_call_openai(tmp_path: Path) -> None:
     }
 
 
-def test_missing_api_key_returns_openai_unavailable_without_printing_key(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_missing_api_key_returns_unavailable_without_printing_key(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("AITUNNEL_KEY", raising=False)
     _write_completed_transcript(tmp_path)
 
     summarizer = OpenAISummarizer(_summary_config())
@@ -68,7 +68,7 @@ def test_missing_api_key_returns_openai_unavailable_without_printing_key(tmp_pat
 
 
 def test_not_ready_transcript_is_skipped(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     (tmp_path / "transcript.json").write_text(
         json.dumps({"status": "placeholder", "segments": []}),
         encoding="utf-8",
@@ -88,7 +88,7 @@ def test_empty_completed_transcript_is_skipped_without_calling_openai(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     (tmp_path / "transcript.json").write_text(
         json.dumps({"status": "completed", "text": "", "segments": []}),
         encoding="utf-8",
@@ -117,7 +117,7 @@ def test_suspect_transcript_is_skipped_without_calling_openai(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     (tmp_path / "transcript.json").write_text(
         json.dumps(
             {
@@ -154,7 +154,7 @@ def test_suspect_transcript_is_skipped_without_calling_openai(
 
 
 def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     _write_completed_transcript(tmp_path)
     response = SimpleNamespace(
         output_text=(
@@ -172,7 +172,7 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
     client_kwargs = {}
 
     summarizer = OpenAISummarizer(
-        _summary_config(base_url="https://api.proxyapi.ru/openai/v1"),
+        _summary_config(),
         client_factory=lambda **kwargs: client_kwargs.update(kwargs) or client,
         now=lambda: datetime(2026, 6, 3, 12, 0),
     )
@@ -186,7 +186,7 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
     assert metadata["summary_path"] == str(tmp_path / "summary_draft.md")
     assert metadata["summary_generated_at"] == "2026-06-03T12:00:00"
     assert metadata["summary_usage"] == {"input_tokens": 100, "output_tokens": 50}
-    assert client_kwargs["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert client_kwargs["base_url"] == "https://api.aitunnel.ru/v1/"
     assert client_kwargs["api_key"] == "test-secret"
     assert "# Итоги встречи" in summary_text
     assert "## Задачи" in summary_text
@@ -194,7 +194,7 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
 
 
 def test_successful_day_summary_uses_meeting_summaries_only(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     response = SimpleNamespace(
         output_text="# Итоги встреч\n\n## Главное за день\n\nСводка дня.",
         usage=SimpleNamespace(input_tokens=40, output_tokens=20),
@@ -207,7 +207,7 @@ def test_successful_day_summary_uses_meeting_summaries_only(tmp_path: Path, monk
 
     client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
     summarizer = OpenAISummarizer(
-        _summary_config(base_url="https://api.proxyapi.ru/openai/v1"),
+        _summary_config(),
         client_factory=lambda **kwargs: client,
         now=lambda: datetime(2026, 6, 3, 18, 0),
     )
@@ -246,7 +246,7 @@ def test_successful_day_summary_uses_meeting_summaries_only(tmp_path: Path, monk
 
 
 def test_api_failure_returns_failed_metadata(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     _write_completed_transcript(tmp_path)
 
     def failing_client(**kwargs):
@@ -258,28 +258,28 @@ def test_api_failure_returns_failed_metadata(tmp_path: Path, monkeypatch) -> Non
 
     assert metadata == {
         "summary_status": "failed",
-        "summary_error": "Не удалось подготовить черновик итогов через OpenAI.",
+        "summary_error": "Не удалось подготовить черновик итогов через внешний AI endpoint.",
     }
 
 
 def test_env_file_parser_reads_plain_and_quoted_values(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AITUNNEL_KEY", raising=False)
     env_path = tmp_path / ".env.local"
 
-    env_path.write_text("OPENAI_API_KEY=test-plain\n", encoding="utf-8")
-    assert load_api_key("OPENAI_API_KEY", env_path) == "test-plain"
+    env_path.write_text("AITUNNEL_KEY=test-plain\n", encoding="utf-8")
+    assert load_api_key("AITUNNEL_KEY", env_path) == "test-plain"
 
-    env_path.write_text('OPENAI_API_KEY="test-double"\n', encoding="utf-8")
-    assert load_api_key("OPENAI_API_KEY", env_path) == "test-double"
+    env_path.write_text('AITUNNEL_KEY="test-double"\n', encoding="utf-8")
+    assert load_api_key("AITUNNEL_KEY", env_path) == "test-double"
 
-    env_path.write_text("OPENAI_API_KEY='test-single'\n", encoding="utf-8")
-    assert load_api_key("OPENAI_API_KEY", env_path) == "test-single"
+    env_path.write_text("AITUNNEL_KEY='test-single'\n", encoding="utf-8")
+    assert load_api_key("AITUNNEL_KEY", env_path) == "test-single"
 
-    assert load_api_key("OPENAI_API_KEY", tmp_path / "missing.env") is None
+    assert load_api_key("AITUNNEL_KEY", tmp_path / "missing.env") is None
 
 
 def test_chunking_splits_long_transcript_and_combines_final_summary(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     _write_completed_transcript(tmp_path, "строка 1\nстрока 2\nстрока 3\nстрока 4\n")
     calls = []
 

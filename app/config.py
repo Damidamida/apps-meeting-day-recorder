@@ -18,8 +18,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": False,
         "provider": "openai",
         "model": "gpt-5.4-mini",
-        "api_key_env": "OPENAI_API_KEY",
-        "base_url": "",
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
         "env_file": "",
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
@@ -118,8 +118,9 @@ def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[
     summary["enabled"] = _safe_bool(summary.get("enabled"), False)
     summary["provider"] = str(summary.get("provider") or "openai").strip() or "openai"
     summary["model"] = str(summary.get("model") or DEFAULT_CONFIG["summary"]["model"]).strip()
+    default_api_key_env = str(DEFAULT_CONFIG["summary"]["api_key_env"])
     summary["api_key_env"] = (
-        str(summary.get("api_key_env") or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+        str(summary.get("api_key_env") or default_api_key_env).strip() or default_api_key_env
     )
     summary["base_url"] = str(summary.get("base_url") or "").strip()
     summary["env_file"] = str(summary.get("env_file") or "").strip()

@@ -65,7 +65,7 @@ def _summary_status(enabled: bool) -> dict[str, str]:
 def _api_key_status(summary_config: dict[str, Any], summary_enabled: bool) -> dict[str, str]:
     if not summary_enabled:
         return _status("API key", "skipped", "API key не требуется: summary выключен.")
-    api_key_env = str(summary_config.get("api_key_env") or "OPENAI_API_KEY")
+    api_key_env = str(summary_config.get("api_key_env") or "AITUNNEL_KEY")
     env_file = summary_config.get("env_file") or ""
     if load_api_key(api_key_env, env_file):
         return _status("API key", "ok", "API key найден.")
@@ -82,6 +82,8 @@ def _endpoint_status(summary_config: dict[str, Any], summary_enabled: bool) -> d
     base_url = str(summary_config.get("base_url") or "").strip()
     if not base_url:
         return _status("Summary endpoint", "ok", "Используется прямой OpenAI endpoint.")
+    if "aitunnel" in base_url.lower():
+        return _status("Summary endpoint", "ok", "Используется AI Tunnel endpoint.")
     if "proxyapi" in base_url.lower():
         return _status("Summary endpoint", "ok", "Используется ProxyAPI / custom endpoint.")
     return _status("Summary endpoint", "ok", "Используется custom endpoint.")

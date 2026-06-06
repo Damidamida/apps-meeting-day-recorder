@@ -24,11 +24,12 @@ summary:
   enabled: false
   provider: "openai"
   model: "gpt-5.4-mini"
-  api_key_env: "OPENAI_API_KEY"
-  # Для ProxyAPI используйте:
+  api_key_env: "AITUNNEL_KEY"
+  # По умолчанию используется AI Tunnel как OpenAI-compatible endpoint.
+  base_url: "https://api.aitunnel.ru/v1/"
+  # Для ProxyAPI как альтернативного endpoint используйте:
   # api_key_env: "PROXYAPI_KEY"
   # base_url: "https://api.proxyapi.ru/openai/v1"
-  base_url: ""
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000

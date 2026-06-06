@@ -8,8 +8,8 @@ from app.services.recorder import NoopRecorder
 def _config(**summary_overrides):
     summary = {
         "enabled": False,
-        "api_key_env": "OPENAI_API_KEY",
-        "base_url": "",
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
         "env_file": "",
     }
     summary.update(summary_overrides)
@@ -87,15 +87,15 @@ def test_readiness_reports_summary_disabled_without_api_key(tmp_path: Path) -> N
     assert statuses["Summary endpoint"]["state"] == "skipped"
 
 
-def test_readiness_reports_summary_key_and_custom_endpoint_without_revealing_secret(
+def test_readiness_reports_summary_key_and_aitunnel_endpoint_without_revealing_secret(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("PROXYAPI_KEY", "test-secret-value")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret-value")
     config = _config(
         enabled=True,
-        api_key_env="PROXYAPI_KEY",
-        base_url="https://api.proxyapi.ru/openai/v1",
+        api_key_env="AITUNNEL_KEY",
+        base_url="https://api.aitunnel.ru/v1/",
     )
 
     with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
@@ -104,7 +104,7 @@ def test_readiness_reports_summary_key_and_custom_endpoint_without_revealing_sec
     rendered = str(statuses)
     mapped = _by_component(statuses)
     assert mapped["API key"]["message"] == "API key найден."
-    assert mapped["Summary endpoint"]["message"] == "Используется ProxyAPI / custom endpoint."
+    assert mapped["Summary endpoint"]["message"] == "Используется AI Tunnel endpoint."
     assert "test-secret-value" not in rendered
 
 
