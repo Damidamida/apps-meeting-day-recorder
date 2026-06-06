@@ -838,7 +838,7 @@ class MainWindow(QMainWindow):
         self.storage = storage or StorageService(
             Path(self.config["storage"]["root"]),
             self.recorder,
-            transcriber=create_transcriber(self.config["transcription"]),
+            transcriber=create_transcriber(self._transcription_runtime_config()),
             summarizer=create_summarizer(self.config["summary"]),
         )
         self.storage.load_today_state()
@@ -910,6 +910,12 @@ class MainWindow(QMainWindow):
         self.active_call_timer.timeout.connect(self._refresh_active_call_display)
         self.active_call_timer.start()
         self.show_floating_control()
+
+    def _transcription_runtime_config(self) -> dict[str, object]:
+        config = dict(self.config["transcription"])
+        if not str(config.get("env_file") or "").strip():
+            config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
+        return config
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2451,9 +2457,26 @@ class MainWindow(QMainWindow):
         obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
         layout.addWidget(self._create_card("OBS", obs_layout))
 
+        secrets_layout = QFormLayout()
+        secrets_layout.setHorizontalSpacing(18)
+        secrets_layout.setVerticalSpacing(8)
+        self.settings_secrets_env_file_input = QLineEdit(
+            str(self.config.get("secrets", {}).get("env_file", ""))
+        )
+        secrets_hint = QLabel(
+            "Один локальный .env файл для API-ключей внешних сервисов. "
+            "Например, для AITUNNEL_KEY. Сам файл не добавляется в git."
+        )
+        secrets_hint.setObjectName("sectionHint")
+        secrets_hint.setWordWrap(True)
+        secrets_layout.addRow(".env файл:", self.settings_secrets_env_file_input)
+        secrets_layout.addRow("", secrets_hint)
+        layout.addWidget(self._create_card("Секреты", secrets_layout))
+
         transcription_layout = QFormLayout()
         transcription_layout.setHorizontalSpacing(18)
         transcription_layout.setVerticalSpacing(8)
+        self.settings_transcription_rows: list[tuple[QLabel | None, QWidget, set[str]]] = []
         self.settings_transcription_backend_select = QComboBox()
         self.settings_transcription_backend_select.addItems(
             ["whisper_cli", "faster_whisper", "aitunnel"]
@@ -2497,26 +2520,76 @@ class MainWindow(QMainWindow):
             bool(self.config["transcription"].get("vad_filter", True))
         )
         transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
-        transcription_layout.addRow("Модель:", self.settings_transcription_model_input)
-        transcription_layout.addRow("Язык:", self.settings_transcription_language_input)
-        transcription_layout.addRow("Устройство:", self.settings_transcription_device_input)
-        transcription_layout.addRow("Compute type:", self.settings_transcription_compute_type_input)
-        transcription_layout.addRow("", self.settings_transcription_vad_checkbox)
-        transcription_layout.addRow("Whisper command:", self.settings_transcription_command_input)
-        transcription_layout.addRow(
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Модель:",
+            self.settings_transcription_model_input,
+            {"whisper_cli", "faster_whisper", "aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Язык:",
+            self.settings_transcription_language_input,
+            {"whisper_cli", "faster_whisper", "aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Устройство:",
+            self.settings_transcription_device_input,
+            {"faster_whisper"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Compute type:",
+            self.settings_transcription_compute_type_input,
+            {"faster_whisper"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "",
+            self.settings_transcription_vad_checkbox,
+            {"faster_whisper"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Whisper command:",
+            self.settings_transcription_command_input,
+            {"whisper_cli"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
             "Переменная API key:",
             self.settings_transcription_api_key_env_input,
+            {"aitunnel"},
         )
-        transcription_layout.addRow("Base URL:", self.settings_transcription_base_url_input)
-        transcription_layout.addRow(".env файл:", self.settings_transcription_env_file_input)
-        transcription_layout.addRow(
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Base URL:",
+            self.settings_transcription_base_url_input,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            ".env файл:",
+            self.settings_transcription_env_file_input,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
             "Timeout, секунд:",
             self.settings_transcription_timeout_input,
+            {"aitunnel"},
         )
-        transcription_layout.addRow(
+        self._add_transcription_settings_row(
+            transcription_layout,
             "Макс. размер аудио, МБ:",
             self.settings_transcription_upload_limit_input,
+            {"aitunnel"},
         )
+        self.settings_transcription_backend_select.currentTextChanged.connect(
+            self._update_transcription_settings_visibility
+        )
+        self._update_transcription_settings_visibility()
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
 
         summary_layout = QFormLayout()
@@ -2588,6 +2661,27 @@ class MainWindow(QMainWindow):
 
         page.setLayout(layout)
         return self._create_page_scroll_area("settingsScrollArea", page)
+
+    def _add_transcription_settings_row(
+        self,
+        layout: QFormLayout,
+        label_text: str,
+        field: QWidget,
+        backends: set[str],
+    ) -> None:
+        layout.addRow(label_text, field)
+        label = layout.labelForField(field)
+        self.settings_transcription_rows.append((label, field, backends))
+
+    def _update_transcription_settings_visibility(self) -> None:
+        if not hasattr(self, "settings_transcription_rows"):
+            return
+        backend = self.settings_transcription_backend_select.currentText()
+        for label, field, backends in self.settings_transcription_rows:
+            visible = backend in backends
+            field.setVisible(visible)
+            if label is not None:
+                label.setVisible(visible)
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -3525,6 +3619,9 @@ class MainWindow(QMainWindow):
                 "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
                 "websocket_port": self.settings_obs_port_input.value(),
                 "websocket_password": self.settings_obs_password_input.text(),
+            },
+            "secrets": {
+                "env_file": self.settings_secrets_env_file_input.text().strip(),
             },
             "transcription": {
                 "backend": self.settings_transcription_backend_select.currentText(),

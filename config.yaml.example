@@ -7,6 +7,11 @@ obs:
   websocket_port: 4455
   websocket_password: ""
 
+secrets:
+  # Общий локальный .env файл для API-ключей внешних сервисов.
+  # Сам файл нельзя добавлять в git.
+  env_file: ""
+
 transcription:
   # Варианты:
   # backend: "whisper_cli"      # старый CLI-вариант
@@ -24,6 +29,7 @@ transcription:
   whisper_command: "whisper"
   api_key_env: "AITUNNEL_KEY"
   base_url: "https://api.aitunnel.ru/v1/"
+  # Обычно используется общий secrets.env_file. Это поле оставлено для редких отдельных STT-ключей.
   env_file: ""
   timeout_seconds: 300
   # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
@@ -39,6 +45,7 @@ summary:
   # Для ProxyAPI как альтернативного endpoint используйте:
   # api_key_env: "PROXYAPI_KEY"
   # base_url: "https://api.proxyapi.ru/openai/v1"
+  # Обычно используется общий secrets.env_file. Это поле оставлено для редких отдельных summary-ключей.
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000

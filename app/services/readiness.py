@@ -8,6 +8,7 @@ from app.services.summarization import load_api_key
 
 
 def check_readiness(config: dict[str, Any], recorder: Recorder, data_root: Path) -> list[dict[str, str]]:
+    secrets_config = config.get("secrets", {})
     summary_config = config.get("summary", {})
     transcription_config = config.get("transcription", {})
     summary_enabled = bool(summary_config.get("enabled", False))
@@ -24,6 +25,7 @@ def check_readiness(config: dict[str, Any], recorder: Recorder, data_root: Path)
             summary_enabled,
             transcription_config,
             external_transcription_enabled,
+            secrets_config,
         ),
         _endpoint_status(
             summary_config,
@@ -85,20 +87,22 @@ def _api_key_status(
     summary_enabled: bool,
     transcription_config: dict[str, Any],
     external_transcription_enabled: bool,
+    secrets_config: dict[str, Any],
 ) -> dict[str, str]:
+    shared_env_file = secrets_config.get("env_file") or ""
     required_keys: list[tuple[str, str | Path]] = []
     if summary_enabled:
         required_keys.append(
             (
                 str(summary_config.get("api_key_env") or "AITUNNEL_KEY"),
-                summary_config.get("env_file") or "",
+                summary_config.get("env_file") or shared_env_file,
             )
         )
     if external_transcription_enabled:
         required_keys.append(
             (
                 str(transcription_config.get("api_key_env") or "AITUNNEL_KEY"),
-                transcription_config.get("env_file") or "",
+                transcription_config.get("env_file") or shared_env_file,
             )
         )
     if not required_keys:

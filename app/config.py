@@ -14,6 +14,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "websocket_port": 4455,
         "websocket_password": "",
     },
+    "secrets": {
+        "env_file": "",
+    },
     "summary": {
         "enabled": False,
         "provider": "openai",
@@ -50,6 +53,7 @@ def _default_config() -> dict[str, Any]:
         **DEFAULT_CONFIG,
         "storage": dict(DEFAULT_CONFIG["storage"]),
         "obs": dict(DEFAULT_CONFIG["obs"]),
+        "secrets": dict(DEFAULT_CONFIG["secrets"]),
         "summary": dict(DEFAULT_CONFIG["summary"]),
         "transcription": dict(DEFAULT_CONFIG["transcription"]),
         "ui": dict(DEFAULT_CONFIG["ui"]),
@@ -79,12 +83,14 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
 
     storage = _section(loaded, "storage", config)
     obs = _section(loaded, "obs", config)
+    secrets = _section(loaded, "secrets", config)
     summary = _section(loaded, "summary", config)
     transcription = _section(loaded, "transcription", config)
     ui = _section(loaded, "ui", config)
     config.update(loaded)
     config["storage"] = {**DEFAULT_CONFIG["storage"], **storage}
     config["obs"] = _normalize_obs({**DEFAULT_CONFIG["obs"], **obs}, config)
+    config["secrets"] = _normalize_secrets({**DEFAULT_CONFIG["secrets"], **secrets})
     config["summary"] = _normalize_summary({**DEFAULT_CONFIG["summary"], **summary}, config)
     config["transcription"] = _normalize_transcription(
         {**DEFAULT_CONFIG["transcription"], **transcription},
@@ -117,6 +123,11 @@ def _normalize_obs(obs: dict[str, Any], config: dict[str, Any]) -> dict[str, Any
     )
     obs["websocket_password"] = str(obs.get("websocket_password") or "")
     return obs
+
+
+def _normalize_secrets(secrets: dict[str, Any]) -> dict[str, Any]:
+    secrets["env_file"] = str(secrets.get("env_file") or "").strip()
+    return secrets
 
 
 def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:

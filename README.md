@@ -16,6 +16,24 @@ pip install -e ".[dev]"
 Copy-Item config.yaml.example config.yaml
 ```
 
+## API-ключи и `.env.local`
+
+API-ключи не хранятся в репозитории и не должны попадать в git. Для локального использования укажите один общий `.env.local` в настройках приложения или в `config.yaml`:
+
+```yaml
+secrets:
+  env_file: "C:/path/to/.env.local"
+```
+
+Внутри `.env.local` можно хранить ключи внешних сервисов:
+
+```text
+AITUNNEL_KEY=...
+PROXYAPI_KEY=...
+```
+
+Приложение сначала проверяет переменную окружения Windows с нужным именем, а если ее нет — ищет ключ в общем `secrets.env_file`. В обычном локальном сценарии достаточно общего `.env.local`.
+
 ## Запуск приложения
 
 ```powershell
@@ -136,12 +154,11 @@ transcription:
   language: "ru"
   api_key_env: "AITUNNEL_KEY"
   base_url: "https://api.aitunnel.ru/v1/"
-  env_file: ""
   timeout_seconds: 300
   max_upload_mb: 25
 ```
 
-API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `AITUNNEL_KEY` или внешний `.env.local`, путь к которому указан в `transcription.env_file`.
+API key не хранится в репозитории. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`.
 
 ## Генерация итогов через AI Tunnel
 
@@ -158,14 +175,13 @@ summary:
   model: "gpt-5.4-mini"
   api_key_env: "AITUNNEL_KEY"
   base_url: "https://api.aitunnel.ru/v1/"
-  env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000
 ```
 
 API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `AITUNNEL_KEY`.
 
-Для локального использования можно указать путь к внешнему `.env.local` в `summary.env_file`, но сам `.env.local` нельзя добавлять в git.
+Для локального использования укажите путь к внешнему `.env.local` в общем `secrets.env_file`, но сам `.env.local` нельзя добавлять в git.
 
 Если нужно временно вернуться на ProxyAPI, укажите ключ ProxyAPI и базовый URL ProxyAPI в локальном `config.yaml`:
 
@@ -176,7 +192,6 @@ summary:
   model: "gpt-5.4-mini"
   api_key_env: "PROXYAPI_KEY"
   base_url: "https://api.proxyapi.ru/openai/v1"
-  env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000
 ```
@@ -214,9 +229,9 @@ whisper --help
 python -m pip install -e ".[faster-whisper]"
 ```
 
-Для `aitunnel` укажите `transcription.api_key_env`, `transcription.base_url` и при необходимости `transcription.env_file`, затем нажмите в приложении `Проверить готовность`.
+Для `aitunnel` укажите `transcription.api_key_env`, `transcription.base_url` и общий `secrets.env_file`, затем нажмите в приложении `Проверить готовность`.
 
-6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или `.env.local`, который не добавляется в git.
+6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или общем `.env.local`, который не добавляется в git.
 7. Запустите приложение двойным кликом через `start_meeting_day_recorder.cmd`.
 8. Нажмите `Проверить готовность`.
 9. Начните рабочий день.

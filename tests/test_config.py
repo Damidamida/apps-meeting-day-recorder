@@ -11,6 +11,7 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["secrets"]["env_file"] == ""
     assert config["transcription"]["backend"] == "whisper_cli"
     assert config["transcription"]["model"] == "base"
     assert config["transcription"]["compute_type"] == "int8"
@@ -105,6 +106,23 @@ def test_transcription_config_supports_aitunnel_backend(tmp_path) -> None:
     assert config["transcription"]["env_file"] == "C:/safe/.env.local"
     assert config["transcription"]["timeout_seconds"] == 240
     assert config["transcription"]["max_upload_mb"] == 20
+
+
+def test_config_supports_shared_secrets_env_file(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "secrets:\n"
+        "  env_file: C:/safe/.env.local\n"
+        "summary:\n"
+        "  enabled: true\n"
+        "transcription:\n"
+        "  backend: aitunnel\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["secrets"]["env_file"] == "C:/safe/.env.local"
 
 
 def test_ui_config_supports_main_and_floating_themes(tmp_path) -> None:

@@ -211,6 +211,7 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
     window.config["summary"]["enabled"] = False
+    window.config["transcription"]["backend"] = "whisper_cli"
 
     assert window.obs_status_value.text() == "OBS: выключен в настройках"
 
@@ -542,6 +543,7 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_obs_host_input.setText("127.0.0.1")
     window.settings_obs_port_input.setValue(4456)
     window.settings_obs_password_input.setText("secret")
+    window.settings_secrets_env_file_input.setText("C:/safe/.env.local")
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window.settings_transcription_model_input.setText("whisper-large-v3-turbo")
     window.settings_transcription_vad_checkbox.setChecked(False)
@@ -566,6 +568,7 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["obs"]["websocket_host"] == "127.0.0.1"
     assert config["obs"]["websocket_port"] == 4456
     assert config["obs"]["websocket_password"] == "secret"
+    assert config["secrets"]["env_file"] == "C:/safe/.env.local"
     assert config["transcription"]["backend"] == "aitunnel"
     assert config["transcription"]["model"] == "whisper-large-v3-turbo"
     assert config["transcription"]["vad_filter"] is False
@@ -585,6 +588,49 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert "#111827" in window.floating_control.styleSheet()
     assert "Тема интерфейса применена сразу" in window.settings_status_label.text()
     assert "перезапустите приложение" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_switches_transcription_fields_by_backend(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_transcription_backend_select.setCurrentText("whisper_cli")
+    app.processEvents()
+
+    assert not window.settings_transcription_command_input.isHidden()
+    assert not window.settings_transcription_model_input.isHidden()
+    assert not window.settings_transcription_language_input.isHidden()
+    assert window.settings_transcription_device_input.isHidden()
+    assert window.settings_transcription_compute_type_input.isHidden()
+    assert window.settings_transcription_vad_checkbox.isHidden()
+    assert window.settings_transcription_api_key_env_input.isHidden()
+    assert window.settings_transcription_base_url_input.isHidden()
+
+    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
+    app.processEvents()
+
+    assert window.settings_transcription_command_input.isHidden()
+    assert not window.settings_transcription_device_input.isHidden()
+    assert not window.settings_transcription_compute_type_input.isHidden()
+    assert not window.settings_transcription_vad_checkbox.isHidden()
+    assert window.settings_transcription_api_key_env_input.isHidden()
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    app.processEvents()
+
+    assert window.settings_transcription_command_input.isHidden()
+    assert window.settings_transcription_device_input.isHidden()
+    assert window.settings_transcription_compute_type_input.isHidden()
+    assert window.settings_transcription_vad_checkbox.isHidden()
+    assert not window.settings_transcription_api_key_env_input.isHidden()
+    assert not window.settings_transcription_base_url_input.isHidden()
+    assert not window.settings_transcription_timeout_input.isHidden()
+    assert not window.settings_transcription_upload_limit_input.isHidden()
 
     window.close()
     app.processEvents()

@@ -14,6 +14,7 @@ def _config(**summary_overrides):
     }
     summary.update(summary_overrides)
     return {
+        "secrets": {"env_file": ""},
         "summary": summary,
         "transcription": {
             "backend": "whisper_cli",
@@ -167,3 +168,28 @@ def test_readiness_requires_summary_and_external_transcription_keys(
     )
     assert mapped["Summary endpoint"]["message"] == "Используются разные AI endpoints."
     assert "summary-secret-value" not in rendered
+
+
+def test_readiness_uses_shared_secrets_env_file_for_external_services(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("AITUNNEL_KEY=shared-secret-value\n", encoding="utf-8")
+    monkeypatch.delenv("AITUNNEL_KEY", raising=False)
+    config = _config(enabled=True)
+    config["secrets"] = {"env_file": str(env_file)}
+    config["transcription"] = {
+        "backend": "aitunnel",
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
+    }
+
+    with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
+        statuses = check_readiness(config, NoopRecorder(), tmp_path)
+
+    rendered = str(statuses)
+    mapped = _by_component(statuses)
+    assert mapped["API key"]["state"] == "ok"
+    assert mapped["API key"]["message"] == "API key найден."
+    assert "shared-secret-value" not in rendered
