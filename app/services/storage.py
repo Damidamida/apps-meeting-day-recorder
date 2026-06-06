@@ -43,12 +43,35 @@ JSON_WRITE_RETRY_COUNT = 5
 
 class MetadataReadError(ValueError):
     def __init__(self, path: Path, backup_path: Path) -> None:
+        """
+        Exception representing a corrupted metadata JSON file that was moved to a backup location.
+        
+        Parameters:
+            path (Path): The original path of the corrupted metadata file.
+            backup_path (Path): The path where the corrupted file was saved.
+        
+        Attributes:
+            path (Path): The original metadata file path.
+            backup_path (Path): The backup path where the corrupted file was stored.
+        """
         super().__init__(f"{CORRUPTED_METADATA_MESSAGE} Файл сохранен в backup: {backup_path}")
         self.path = path
         self.backup_path = backup_path
 
 
 def safe_folder_name(title: str, fallback: str = "meeting") -> str:
+    """
+    Sanitizes a string for safe use as a filesystem folder name.
+    
+    Performs character replacement and normalization, then falls back if the result is empty or a Windows reserved device name.
+    
+    Parameters:
+        title (str): Input title to sanitize.
+        fallback (str): Value to return when the sanitized result would be empty or is a Windows reserved name.
+    
+    Returns:
+        str: A filesystem-safe folder name (or `fallback` if the sanitized name is empty or reserved).
+    """
     safe_title = UNSAFE_FOLDER_CHARACTERS.sub("_", title.strip())
     safe_title = WHITESPACE.sub("_", safe_title)
     safe_title = REPEATED_UNDERSCORES.sub("_", safe_title).strip(" ._")
@@ -95,6 +118,18 @@ class StorageService:
         return self.active_meeting_folder is not None
 
     def load_today_state(self, now: datetime | None = None) -> None:
+        """
+        Restore in-memory active day and meeting state from today's metadata file.
+        
+        If today's day_metadata.json is missing, corrupted, or has a status other than "active",
+        the method clears any active state and returns. If the day is active, sets
+        active_day_folder to today's folder and, if any meetings are marked active, sets
+        active_meeting_folder to the most-recent active meeting folder (sorted order).
+        
+        Parameters:
+            now (datetime | None): Optional current time used to determine today's folder;
+                defaults to datetime.now() when not provided.
+        """
         now = now or datetime.now()
         self.active_day_folder = None
         self.active_meeting_folder = None
@@ -235,6 +270,21 @@ class StorageService:
         meeting_folder: Path,
         progress_callback: Callable[[str, str], None] | None = None,
     ) -> Path:
+        """
+        Run the meeting processing pipeline for a meeting folder: perform audio extraction, transcription, and summary generation (skipping stages already ready unless forced), while updating metadata and emitting pipeline events.
+        
+        Parameters:
+            meeting_folder (Path): Path to the meeting folder containing or to receive meeting metadata and outputs.
+            progress_callback (Callable[[str, str], None] | None): Optional callback invoked with (event, message) for pipeline progress events.
+        
+        Returns:
+            Path: The processed meeting folder path.
+        
+        Side effects:
+            - Writes and updates meeting metadata and synchronizes day-level metadata.
+            - Emits pipeline events via the provided progress_callback when present.
+            - Clears `processing_force_reprocess` and `processing_recovery_status` from metadata on completion.
+        """
         metadata = self._read_json(meeting_folder / "meeting_metadata.json")
         force_reprocess = bool(metadata.get("processing_force_reprocess"))
         metadata.update(
@@ -294,6 +344,14 @@ class StorageService:
         return meeting_folder
 
     def mark_meeting_for_reprocessing(self, meeting_folder: Path) -> dict[str, Any]:
+        """
+        Mark a meeting to be reprocessed by the processing pipeline.
+        
+        Updates the meeting metadata to request reprocessing by setting `processing_status` to `"pending"`, recording `reprocess_requested_at` with the current timestamp, enabling `processing_force_reprocess`, and removing any existing `processing_error`. Persists the updated metadata and synchronizes the day-level meeting entry.
+        
+        Returns:
+            dict: The updated meeting metadata.
+        """
         metadata = self.read_meeting_metadata(meeting_folder)
         metadata.update(
             {
@@ -312,6 +370,16 @@ class StorageService:
         day_folder: Path,
         recovered_at: datetime | None = None,
     ) -> list[Path]:
+        """
+        Mark meetings under a day folder that were interrupted during processing as pending recovery.
+        
+        Parameters:
+        	day_folder (Path): Path to the day folder containing meeting subfolders.
+        	recovered_at (datetime | None): Timestamp to record as the recovery time; uses current time if omitted.
+        
+        Returns:
+        	recovered (list[Path]): List of meeting folder paths that were updated for recovery.
+        """
         recovered_at = recovered_at or datetime.now()
         recovered: list[Path] = []
         for meeting_folder in self.list_meeting_folders(day_folder):
@@ -343,6 +411,14 @@ class StorageService:
         event: str,
         message: str,
     ) -> None:
+        """
+        Invoke a pipeline progress callback with an event and message if a callback is provided.
+        
+        Parameters:
+            progress_callback (Callable[[str, str], None] | None): Optional callback to receive pipeline events.
+            event (str): Short event identifier (e.g., "audio_running", "transcription_done").
+            message (str): Human-readable status message for the event.
+        """
         if progress_callback is not None:
             progress_callback(event, message)
 
@@ -410,12 +486,31 @@ class StorageService:
         return transcription_metadata
 
     def _summarize_meeting(self, metadata: dict[str, Any], meeting_folder: Path) -> dict[str, Any]:
+        """
+        Generate a meeting summary and update the service's last summary message.
+        
+        Calls the configured summarizer to produce summary metadata for the meeting and sets
+        self.last_summary_message based on the returned metadata.
+        
+        Returns:
+            summary_metadata (dict[str, Any]): Metadata produced by the summarizer for the meeting.
+        """
         summary_metadata = self.summarizer.summarize_meeting(meeting_folder, metadata)
         self.last_summary_message = summary_message(summary_metadata)
         return summary_metadata
 
     @staticmethod
     def _audio_is_ready(metadata: dict[str, Any]) -> bool:
+        """
+        Determine whether extracted audio is present and points to an existing file.
+        
+        Parameters:
+            metadata (dict): Meeting metadata expected to contain the keys
+                `"audio_status"` (str) and `"audio_path"` (str or path-like).
+        
+        Returns:
+            True if `metadata["audio_status"]` equals `"extracted"`, `audio_path` is set, and the path refers to an existing file; False otherwise.
+        """
         audio_path = metadata.get("audio_path")
         return (
             metadata.get("audio_status") == "extracted"
@@ -425,6 +520,19 @@ class StorageService:
 
     @staticmethod
     def _transcript_is_ready(metadata: dict[str, Any], meeting_folder: Path) -> bool:
+        """
+        Determines whether a meeting's transcription is marked complete and both transcript files exist.
+        
+        Parameters:
+            metadata (dict): Meeting metadata; the function checks `metadata["transcription_status"]` and optionally uses
+                `metadata["transcript_path"]` and `metadata["transcript_json_path"]` if present.
+            meeting_folder (Path): Folder used as the default location for `transcript.md` and `transcript.json` when
+                corresponding keys are not provided in `metadata`.
+        
+        Returns:
+            `true` if `metadata["transcription_status"] == "completed"` and both the transcript markdown and JSON files
+            exist at their resolved paths, `false` otherwise.
+        """
         transcript_path = Path(str(metadata.get("transcript_path") or meeting_folder / "transcript.md"))
         transcript_json_path = Path(
             str(metadata.get("transcript_json_path") or meeting_folder / "transcript.json")
@@ -437,10 +545,29 @@ class StorageService:
 
     @staticmethod
     def _summary_is_ready(metadata: dict[str, Any], meeting_folder: Path) -> bool:
+        """
+        Determines whether a meeting's summary draft is present and marked as created.
+        
+        Parameters:
+            metadata (dict[str, Any]): Meeting metadata; may contain `summary_status` and optional `summary_path`.
+            meeting_folder (Path): Folder used as the default location for `summary_draft.md` when `summary_path` is not provided.
+        
+        Returns:
+            bool: `true` if `metadata["summary_status"]` equals `"draft_created"` and the resolved summary path points to an existing file, `false` otherwise.
+        """
         summary_path = Path(str(metadata.get("summary_path") or meeting_folder / "summary_draft.md"))
         return metadata.get("summary_status") == "draft_created" and summary_path.is_file()
 
     def _sync_day_meeting_metadata(self, meeting_folder: Path, metadata: dict[str, Any]) -> None:
+        """
+        Update the parent day's day_metadata.json to reflect the provided meeting metadata.
+        
+        If a day_metadata.json file exists in the meeting folder's parent, this replaces the meeting entry with the same folder name or appends a new entry, and writes the updated JSON back to disk. If the day metadata file is missing, the function does nothing.
+        
+        Parameters:
+            meeting_folder (Path): Path to the meeting folder whose entry should be updated.
+            metadata (dict[str, Any]): Meeting metadata to store; merged into the day's meetings entry under the `folder` key.
+        """
         day_metadata_path = meeting_folder.parent / "day_metadata.json"
         if not day_metadata_path.exists():
             return
@@ -833,6 +960,16 @@ class StorageService:
 
     @classmethod
     def _meeting_has_status(cls, meeting_folder: Path, status: str) -> bool:
+        """
+        Check whether a meeting's stored metadata `status` equals the provided status.
+        
+        Parameters:
+            meeting_folder (Path): Path to the meeting folder containing `meeting_metadata.json`.
+            status (str): Expected status value to compare against the metadata's `"status"` field.
+        
+        Returns:
+            `true` if the meeting's metadata `status` equals `status`, `false` otherwise. Corrupted or missing metadata is treated as not matching.
+        """
         metadata_path = meeting_folder / "meeting_metadata.json"
         if not metadata_path.exists():
             return False
@@ -843,6 +980,12 @@ class StorageService:
 
     @staticmethod
     def _meeting_summary_placeholder() -> str:
+        """
+        Return the default placeholder text used for a meeting summary draft.
+        
+        Returns:
+            placeholder (str): Markdown-formatted placeholder indicating the meeting summary has not been filled.
+        """
         return "# Черновик итогов встречи\n\n_Итоги встречи пока не заполнены._\n"
 
     @staticmethod
@@ -870,6 +1013,22 @@ class StorageService:
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
+        """
+        Read and parse JSON from the given path, with retries and corruption recovery.
+        
+        If the file contains invalid JSON, the original file is moved to a timestamped ".corrupt-..." backup, the original path is overwritten with an empty JSON object (`{}`), and a MetadataReadError referencing the original and backup paths is raised. Transient PermissionError conditions are retried a small number of times; if retries are exhausted the PermissionError is propagated.
+        
+        Parameters:
+            path (Path): Path to the JSON file to read.
+        
+        Returns:
+            dict[str, Any]: The parsed JSON object.
+        
+        Raises:
+            MetadataReadError: If the file contains invalid JSON (the corrupted file is backed up and replaced).
+            PermissionError: If the file cannot be read due to permission errors after retrying.
+            RuntimeError: If the internal read-retry loop ends unexpectedly.
+        """
         for attempt in range(JSON_READ_RETRY_COUNT):
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -885,6 +1044,19 @@ class StorageService:
 
     @staticmethod
     def _write_json(path: Path, content: dict[str, Any]) -> None:
+        """
+        Atomically write JSON content to a file path, using a temporary file and retrying on PermissionError.
+        
+        Writes the JSON-serialized `content` (pretty-printed, UTF-8) to a uniquely named temporary file in the same directory, then atomically replaces `path` with the temp file using `os.replace`. Parent directories are created if missing. On `PermissionError` the replace is retried up to the configured retry count with the configured delay between attempts.
+        
+        Parameters:
+            path (Path): Destination file path for the JSON content.
+            content (dict[str, Any]): JSON-serializable mapping to write.
+        
+        Raises:
+            PermissionError: If the final replace attempt fails due to permission issues.
+            RuntimeError: If the retry loop exits unexpectedly (should not occur under normal operation).
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         temp_path = path.with_name(f".{path.name}.{os.getpid()}.{timestamp}.tmp")
@@ -904,6 +1076,15 @@ class StorageService:
 
     @staticmethod
     def _backup_corrupted_json(path: Path) -> Path:
+        """
+        Move a corrupted JSON file to a timestamped backup alongside the original and return its new path.
+        
+        Parameters:
+            path (Path): Path to the corrupted JSON file to back up.
+        
+        Returns:
+            Path: The path to which the corrupted file was moved (named "<stem>.corrupt-<timestamp><suffix>").
+        """
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         backup_path = path.with_name(f"{path.stem}.corrupt-{timestamp}{path.suffix}")
         os.replace(path, backup_path)

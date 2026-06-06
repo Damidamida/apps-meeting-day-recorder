@@ -624,6 +624,11 @@ def test_pipeline_wait_messages_do_not_claim_ready_audio_is_missing(
 def test_pending_today_meetings_are_restored_to_processing_queue_on_startup(
     tmp_path: Path,
 ) -> None:
+    """
+    Verifies that meetings with pending processing are enqueued and started by the UI on application startup.
+    
+    Sets up a StorageService subclass that blocks when processing a meeting, creates a workday and a meeting whose recording has finished (so processing status becomes pending), then constructs MainWindow and waits for the storage's processing entry to be invoked. Asserts that the window's pipeline_meeting_folder points to the pending meeting and that pipeline_running is true, then cleans up the blocked processing thread.
+    """
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     entered = Event()
@@ -662,6 +667,11 @@ def test_pending_today_meetings_are_restored_to_processing_queue_on_startup(
 def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
     tmp_path: Path,
 ) -> None:
+    """
+    Checks that a meeting with processing_status "running" is requeued and marked recovered when the application starts.
+    
+    Sets up a storage backend that blocks pipeline processing, creates a meeting whose metadata is marked as `running`, starts the main application window, and waits for the pipeline to begin. Asserts that the window selects the meeting for processing, `pipeline_running` becomes true, and the meeting metadata is updated with `processing_recovery_status == "recovered"` and the expected recovery reason. Cleans up the pipeline thread and closes the window.
+    """
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     entered = Event()
@@ -669,6 +679,18 @@ def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
 
     class BlockingStorage(StorageService):
         def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            """
+            Simulates processing of a meeting pipeline for tests by signaling entry and blocking until released.
+            
+            This test helper sets the `entered` Event to indicate the pipeline started, waits up to 5 seconds on the `release` Event, ignores the `progress_callback` argument, and then returns the provided meeting folder. It is intended for use in tests that need to observe pipeline start and control when processing continues.
+            
+            Parameters:
+                meeting_folder: Path-like or identifier of the meeting folder to process; returned unchanged.
+                progress_callback: Ignored. Present to match the production API.
+            
+            Returns:
+                The same `meeting_folder` argument passed in.
+            """
             del progress_callback
             entered.set()
             release.wait(5)

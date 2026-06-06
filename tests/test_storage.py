@@ -277,6 +277,18 @@ def test_metadata_read_retries_transient_permission_error(tmp_path, monkeypatch)
     attempts = {"count": 0}
 
     def flaky_read_text(path, *args, **kwargs):
+        """
+        Simulate a transient PermissionError for a target metadata path on its first invocation, then return the file's text.
+        
+        Parameters:
+            path: Path-like object to read; when equal to the test's `metadata_path` this function raises PermissionError once on the first call.
+            
+        Returns:
+            str: The text content of the file at `path`.
+        
+        Raises:
+            PermissionError: Raised once for the target `metadata_path` to simulate a brief lock; subsequent calls return the file content.
+        """
         if path == metadata_path and attempts["count"] == 0:
             attempts["count"] += 1
             raise PermissionError("metadata is briefly locked")
@@ -290,11 +302,26 @@ def test_metadata_read_retries_transient_permission_error(tmp_path, monkeypatch)
 
 
 def test_metadata_write_retries_transient_permission_error(tmp_path, monkeypatch) -> None:
+    """
+    Verifies that StorageService._write_json retries and succeeds when a transient PermissionError occurs during os.replace.
+    
+    Asserts that the temporary failure is retried exactly once, the final metadata file contains the expected JSON content, and no temporary `.tmp` files are left behind.
+    """
     path = tmp_path / "meeting_metadata.json"
     original_replace = storage_module.os.replace
     attempts = {"count": 0}
 
     def flaky_replace(source, destination):
+        """
+        Simulate a flaky file replace operation that raises PermissionError once for a specific destination path.
+        
+        Parameters:
+            source (str | pathlib.Path): Source path passed to the replace operation.
+            destination (str | pathlib.Path): Destination path passed to the replace operation; when equal to the test `path` the function will raise PermissionError on the first call.
+        
+        Returns:
+            The value returned by the underlying `original_replace` call.
+        """
         if destination == path and attempts["count"] == 0:
             attempts["count"] += 1
             raise PermissionError("metadata is briefly locked")
@@ -344,19 +371,56 @@ def test_corrupted_active_meeting_metadata_does_not_break_today_restore(tmp_path
 def test_recovered_pipeline_skips_completed_steps(tmp_path) -> None:
     class FailingAudioExtractor:
         def extract_audio(self, recording_path, meeting_folder):
+            """
+            Prevent extraction of audio for a meeting; calling this method always raises an AssertionError.
+            
+            Raises:
+                AssertionError: always raised with message "audio should not be extracted again".
+            """
             raise AssertionError("audio should not be extracted again")
 
     class FailingTranscriber:
         running_message = "transcriber should not run"
 
         def transcribe(self, audio_path, meeting_folder, progress_callback=None):
+            """
+            Stub transcribe implementation used in tests that deliberately fails if invoked.
+            
+            This function always raises an AssertionError to signal that transcription must not be executed
+            (attempting to run transcription again is considered a test failure).
+            
+            Parameters:
+                audio_path: Path or str to the audio file (ignored).
+                meeting_folder: Path or str to the meeting folder (ignored).
+                progress_callback: Optional callable for progress updates (ignored).
+            
+            Raises:
+                AssertionError: Always raised to indicate the transcribe function should not be called.
+            """
             raise AssertionError("transcription should not run again")
 
     class FailingSummarizer:
         def summarize_meeting(self, meeting_folder, metadata):
+            """
+            Placeholder meeting summarizer used in tests that fails if invoked.
+            
+            Raises:
+                AssertionError: Always raised to indicate the summarization step must not be run.
+            """
             raise AssertionError("summary should not run again")
 
         def summarize_day(self, day_folder, current_summary, meeting_summaries):
+            """
+            Test stub used in tests that must not invoke day summarization; it fails immediately if called.
+            
+            Parameters:
+                day_folder (pathlib.Path): Path to the day folder that would be summarized.
+                current_summary (str): Existing day summary text (may be a placeholder).
+                meeting_summaries (list): Collected meeting summary items to include in the day summary.
+            
+            Raises:
+                AssertionError: Always raised to signal that day summarization should not run in this test.
+            """
             raise AssertionError("day summary is not part of this test")
 
     storage = StorageService(
@@ -405,10 +469,27 @@ def test_recovered_pipeline_skips_completed_steps(tmp_path) -> None:
 
 
 def test_manual_reprocess_runs_completed_steps_again(tmp_path) -> None:
+    """
+    Verifies that marking a meeting for reprocessing forces all pipeline steps to run again.
+    
+    Creates a meeting with completed processing state, marks it for reprocessing, and asserts that the audio extraction, transcription, and summarization steps are each executed exactly once. Also verifies the meeting metadata ends with `processing_status` equal to `"completed"` and that the `processing_force_reprocess` flag is removed.
+    """
     calls = {"audio": 0, "transcription": 0, "summary": 0}
 
     class CountingAudioExtractor:
         def extract_audio(self, recording_path, meeting_folder):
+            """
+            Simulate extracting audio for a meeting by creating an `audio.wav` file in the meeting folder and returning extraction metadata.
+            
+            Parameters:
+                recording_path (Path): Path to the source recording (unused by this test helper).
+                meeting_folder (Path): Destination folder where the extracted `audio.wav` will be written.
+            
+            Returns:
+                dict: Extraction metadata with keys:
+                    - "audio_status": `"extracted"` when the simulated extraction succeeded.
+                    - "audio_path": string path to the written `audio.wav` file.
+            """
             del recording_path
             calls["audio"] += 1
             audio_path = meeting_folder / "audio.wav"
@@ -419,6 +500,20 @@ def test_manual_reprocess_runs_completed_steps_again(tmp_path) -> None:
         running_message = "transcribing"
 
         def transcribe(self, audio_path, meeting_folder, progress_callback=None):
+            """
+            Write a completed transcript and transcript JSON into the given meeting folder and return transcription metadata.
+            
+            Parameters:
+                audio_path: Path-like object for the source audio (not used by this fake implementation).
+                meeting_folder (pathlib.Path): Directory where `transcript.md` and `transcript.json` will be written.
+                progress_callback: Optional callable for progress updates (ignored by this implementation).
+            
+            Returns:
+                dict: Metadata about the transcription with keys:
+                    - `transcription_status` (str): `"completed"`.
+                    - `transcript_path` (str): Filesystem path to the written `transcript.md`.
+                    - `transcript_json_path` (str): Filesystem path to the written `transcript.json`.
+            """
             del audio_path, progress_callback
             calls["transcription"] += 1
             transcript_path = meeting_folder / "transcript.md"
@@ -436,6 +531,16 @@ def test_manual_reprocess_runs_completed_steps_again(tmp_path) -> None:
 
     class CountingSummarizer:
         def summarize_meeting(self, meeting_folder, metadata):
+            """
+            Create a meeting summary draft file inside the specified meeting folder.
+            
+            Parameters:
+                meeting_folder (pathlib.Path): Directory of the meeting where the draft will be written.
+                metadata (dict): Meeting metadata dictionary.
+            
+            Returns:
+                dict: A mapping with `"summary_status": "draft_created"` and `"summary_path"` set to the created draft file path as a string.
+            """
             del metadata
             calls["summary"] += 1
             summary_path = meeting_folder / "summary_draft.md"
@@ -443,6 +548,17 @@ def test_manual_reprocess_runs_completed_steps_again(tmp_path) -> None:
             return {"summary_status": "draft_created", "summary_path": str(summary_path)}
 
         def summarize_day(self, day_folder, current_summary, meeting_summaries):
+            """
+            Test stub used in tests that must not invoke day summarization; it fails immediately if called.
+            
+            Parameters:
+                day_folder (pathlib.Path): Path to the day folder that would be summarized.
+                current_summary (str): Existing day summary text (may be a placeholder).
+                meeting_summaries (list): Collected meeting summary items to include in the day summary.
+            
+            Raises:
+                AssertionError: Always raised to signal that day summarization should not run in this test.
+            """
             raise AssertionError("day summary is not part of this test")
 
     storage = StorageService(

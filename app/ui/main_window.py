@@ -3104,6 +3104,14 @@ class MainWindow(QMainWindow):
             self._start_next_pipeline()
 
     def _restore_today_pending_processing_queue(self) -> None:
+        """
+        Restore any pending or interrupted meeting processing for today by recovering interrupted pipelines and enqueuing meetings whose metadata indicates processing is still pending.
+        
+        This method:
+        - Attempts to recover interrupted meeting processing for today's day folder; if metadata corruption is detected, updates the status label with the backup path.
+        - Scans today's meeting folders and enqueues any meeting whose metadata has `"status": "ended"` and `"processing_status": "pending"`, skipping the meeting currently being processed and those already in the processing queue; metadata read errors update the status label and cause that meeting to be skipped.
+        - If any meetings were recovered or restored, updates the status label with a summary message and starts the next pipeline.
+        """
         restored = 0
         recovered = 0
         day_folder = self.storage.get_today_day_folder()
@@ -3144,6 +3152,11 @@ class MainWindow(QMainWindow):
             self._start_next_pipeline()
 
     def _start_next_pipeline(self) -> None:
+        """
+        Start background processing for the next meeting in the processing queue.
+        
+        If a pipeline is already running, a thread exists, or the processing queue is empty, this does nothing. Otherwise it sets the selected meeting as the active pipeline, updates internal state and visible status text, and launches a background worker in a new thread to perform the meeting processing. Progress, completion, and failure are reported via the worker's signals and handled by the instance's pipeline callbacks.
+        """
         if self.pipeline_running or self.pipeline_thread is not None or not self.processing_queue:
             return
         self.pipeline_meeting_folder = self.processing_queue.pop(0)
