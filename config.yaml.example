@@ -7,29 +7,52 @@ obs:
   websocket_port: 4455
   websocket_password: ""
 
+secrets:
+  # Общий локальный .env файл для API-ключей внешних сервисов.
+  # Сам файл нельзя добавлять в git.
+  env_file: ""
+
 transcription:
-  # Варианты:
-  # backend: "whisper_cli"      # старый CLI-вариант
-  # backend: "faster_whisper"   # ускоренный локальный backend, требует optional-зависимость
+  # Активный backend транскрипции.
+  # Варианты: "whisper_cli", "faster_whisper", "aitunnel".
   backend: "whisper_cli"
-  model: "base"
-  language: "ru"
-  device: "cpu"
-  compute_type: "int8"
-  # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
-  vad_filter: true
-  whisper_command: "whisper"
+  # У каждого backend свой профиль настроек. Переключение backend не перетирает модель
+  # и параметры других backend.
+  backends:
+    whisper_cli:
+      # Локальный Whisper CLI. Язык всегда ru, команда по умолчанию whisper.
+      model: "base"
+    faster_whisper:
+      # Ускоренный локальный backend, требует optional-зависимость:
+      # python -m pip install -e ".[faster-whisper]"
+      model: "base"
+      device: "cpu"
+      # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
+      vad_filter: true
+    aitunnel:
+      # Внешняя транскрипция через AI Tunnel. Во внешний сервис отправляется audio.wav.
+      # Доступные модели в UI:
+      # - whisper-large-v3-turbo: 0.13 ₽/мин, значение по умолчанию;
+      # - whisper-large-v3: 0.36 ₽/мин;
+      # - whisper-1: 1.15 ₽/мин.
+      model: "whisper-large-v3-turbo"
+      timeout_seconds: 300
+      # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
+      max_upload_mb: 25
 
 summary:
   enabled: false
   provider: "openai"
+  # В UI доступны рекомендуемые модели AI Tunnel:
+  # - gpt-5.4-mini: 144 ₽/1M вход, 864 ₽/1M выход, значение по умолчанию;
+  # - gpt-5.4-nano: 38.4 ₽/1M вход, 240 ₽/1M выход.
+  # Для других моделей AI Tunnel выберите в UI "Другая модель AI Tunnel"
+  # и укажите ID модели из каталога AI Tunnel.
   model: "gpt-5.4-mini"
+  # В обычном UI эти поля не показываются: используется AI Tunnel, а ключ берется
+  # из общего secrets.env_file или переменной окружения Windows AITUNNEL_KEY.
   api_key_env: "AITUNNEL_KEY"
-  # По умолчанию используется AI Tunnel как OpenAI-compatible endpoint.
   base_url: "https://api.aitunnel.ru/v1/"
-  # Для ProxyAPI как альтернативного endpoint используйте:
-  # api_key_env: "PROXYAPI_KEY"
-  # base_url: "https://api.proxyapi.ru/openai/v1"
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000

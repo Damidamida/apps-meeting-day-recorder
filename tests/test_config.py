@@ -11,10 +11,21 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["secrets"]["env_file"] == ""
     assert config["transcription"]["backend"] == "whisper_cli"
     assert config["transcription"]["model"] == "base"
     assert config["transcription"]["compute_type"] == "int8"
     assert config["transcription"]["vad_filter"] is True
+    assert config["transcription"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["transcription"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["transcription"]["timeout_seconds"] == 300
+    assert config["transcription"]["max_upload_mb"] == 25
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
+    assert config["transcription"]["backends"]["faster_whisper"]["model"] == "base"
+    assert (
+        config["transcription"]["backends"]["aitunnel"]["model"]
+        == "whisper-large-v3-turbo"
+    )
     assert config["ui"]["theme"] == "light"
     assert config["ui"]["floating_theme"] == "inherit"
 
@@ -75,6 +86,105 @@ def test_unknown_transcription_backend_falls_back_to_whisper_cli(tmp_path) -> No
     config = load_config(config_path)
 
     assert config["transcription"]["backend"] == "whisper_cli"
+
+
+def test_transcription_config_supports_aitunnel_backend(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "transcription:\n"
+        "  backend: aitunnel\n"
+        "  model: whisper-large-v3-turbo\n"
+        "  language: ru\n"
+        "  api_key_env: AITUNNEL_KEY\n"
+        "  base_url: https://api.aitunnel.ru/v1/\n"
+        "  env_file: C:/safe/.env.local\n"
+        "  timeout_seconds: 240\n"
+        "  max_upload_mb: 20\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["transcription"]["model"] == "whisper-large-v3-turbo"
+    assert config["transcription"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["transcription"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["transcription"]["env_file"] == "C:/safe/.env.local"
+    assert config["transcription"]["timeout_seconds"] == 240
+    assert config["transcription"]["max_upload_mb"] == 20
+    assert (
+        config["transcription"]["backends"]["aitunnel"]["model"]
+        == "whisper-large-v3-turbo"
+    )
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
+
+
+def test_transcription_config_supports_backend_profiles(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "transcription:\n"
+        "  backend: aitunnel\n"
+        "  backends:\n"
+        "    whisper_cli:\n"
+        "      model: small\n"
+        "    faster_whisper:\n"
+        "      model: medium\n"
+        "      device: cuda\n"
+        "      vad_filter: false\n"
+        "    aitunnel:\n"
+        "      model: whisper-large-v3\n"
+        "      timeout_seconds: 240\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["transcription"]["model"] == "whisper-large-v3"
+    assert config["transcription"]["timeout_seconds"] == 240
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "small"
+    assert config["transcription"]["backends"]["faster_whisper"]["model"] == "medium"
+    assert config["transcription"]["backends"]["faster_whisper"]["device"] == "cuda"
+    assert config["transcription"]["backends"]["faster_whisper"]["compute_type"] == "float16"
+    assert config["transcription"]["backends"]["faster_whisper"]["vad_filter"] is False
+    assert config["transcription"]["backends"]["aitunnel"]["model"] == "whisper-large-v3"
+
+
+def test_legacy_flat_transcription_config_only_updates_active_backend(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "transcription:\n"
+        "  backend: aitunnel\n"
+        "  model: whisper-1\n"
+        "  timeout_seconds: 180\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["transcription"]["model"] == "whisper-1"
+    assert config["transcription"]["backends"]["aitunnel"]["model"] == "whisper-1"
+    assert config["transcription"]["backends"]["aitunnel"]["timeout_seconds"] == 180
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
+    assert config["transcription"]["backends"]["faster_whisper"]["model"] == "base"
+
+
+def test_config_supports_shared_secrets_env_file(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "secrets:\n"
+        "  env_file: C:/safe/.env.local\n"
+        "summary:\n"
+        "  enabled: true\n"
+        "transcription:\n"
+        "  backend: aitunnel\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["secrets"]["env_file"] == "C:/safe/.env.local"
 
 
 def test_ui_config_supports_main_and_floating_themes(tmp_path) -> None:

@@ -4,11 +4,17 @@ import subprocess
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+
+from app.services.summarization import load_api_key
 
 
 TRANSCRIPTION_PROVIDER = "local_whisper_cli"
 FASTER_WHISPER_PROVIDER = "local_faster_whisper"
+AITUNNEL_PROVIDER = "aitunnel"
+AITUNNEL_TRANSCRIPTION_MODEL_DEFAULT = "whisper-large-v3-turbo"
+AITUNNEL_BASE_URL_DEFAULT = "https://api.aitunnel.ru/v1/"
+AITUNNEL_API_KEY_ENV_DEFAULT = "AITUNNEL_KEY"
 MISSING_AUDIO_ERROR = "Аудиофайл для транскрипции не найден."
 SKIPPED_AUDIO_ERROR = "Аудио еще не извлечено."
 WHISPER_UNAVAILABLE_ERROR = (
@@ -20,6 +26,11 @@ FASTER_WHISPER_UNAVAILABLE_ERROR = (
 )
 FASTER_WHISPER_FAILED_ERROR = "Не удалось выполнить локальную транскрипцию через faster-whisper."
 TRANSCRIPTION_SUSPECT_ERROR = "Транскрипция требует проверки."
+AITUNNEL_KEY_MISSING_ERROR = "API key для внешней транскрипции не найден."
+AITUNNEL_FAILED_ERROR = "Не удалось выполнить внешнюю транскрипцию через AI Tunnel."
+AITUNNEL_FILE_TOO_LARGE_ERROR = (
+    "Аудиофайл больше лимита внешней транскрипции. Нужна нарезка аудио на части."
+)
 
 
 class Transcriber(Protocol):
@@ -34,6 +45,8 @@ class NoopTranscriber:
 
 
 class LocalWhisperTranscriber:
+    running_message = "Готовим локальный transcript."
+
     def __init__(
         self,
         whisper_command: str = "whisper",
@@ -115,13 +128,16 @@ class LocalWhisperTranscriber:
         return json.loads(result_path.read_text(encoding="utf-8"))
 
     @staticmethod
-    def _render_markdown(result: dict[str, Any]) -> str:
+    def _render_markdown(
+        result: dict[str, Any],
+        source_note: str = "локальная транскрипция Whisper",
+    ) -> str:
         text = result.get("text", "")
         segments = result.get("segments") or []
         lines = [
             "# Транскрипт",
             "",
-            "_Источник: локальная транскрипция Whisper._",
+            f"_Источник: {source_note}._",
             "",
         ]
         if result.get("quality") == "suspect":
@@ -149,6 +165,8 @@ class LocalWhisperTranscriber:
 
 
 class FasterWhisperTranscriber:
+    running_message = "Готовим локальный transcript через faster-whisper."
+
     def __init__(
         self,
         model_name: str = "base",
@@ -239,6 +257,132 @@ class FasterWhisperTranscriber:
         }
 
 
+class AITunnelTranscriber:
+    running_message = "Отправляем audio.wav во внешний сервис транскрипции."
+
+    def __init__(
+        self,
+        model_name: str = AITUNNEL_TRANSCRIPTION_MODEL_DEFAULT,
+        language: str = "ru",
+        api_key_env: str = AITUNNEL_API_KEY_ENV_DEFAULT,
+        base_url: str = AITUNNEL_BASE_URL_DEFAULT,
+        env_file: str = "",
+        timeout_seconds: int = 300,
+        max_upload_mb: float = 25,
+        client_factory: Callable[..., Any] | None = None,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.model_name = (
+            model_name
+            if model_name and model_name != "base"
+            else AITUNNEL_TRANSCRIPTION_MODEL_DEFAULT
+        )
+        self.language = language
+        self.api_key_env = api_key_env
+        self.base_url = base_url
+        self.env_file = env_file
+        self.timeout_seconds = timeout_seconds
+        self.max_upload_mb = max_upload_mb
+        self.client_factory = client_factory or self._default_client_factory
+        self.now = now or datetime.now
+
+    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
+        audio_path = Path(audio_path)
+        if not audio_path.is_file():
+            return {
+                "transcription_status": "missing_audio",
+                "transcription_error": MISSING_AUDIO_ERROR,
+            }
+
+        audio_size = audio_path.stat().st_size
+        max_bytes = int(float(self.max_upload_mb) * 1024 * 1024)
+        if audio_size > max_bytes:
+            return {
+                "transcription_status": "file_too_large",
+                "transcription_error": AITUNNEL_FILE_TOO_LARGE_ERROR,
+            }
+
+        api_key = load_api_key(self.api_key_env, self.env_file)
+        if not api_key:
+            return {
+                "transcription_status": "aitunnel_unavailable",
+                "transcription_error": AITUNNEL_KEY_MISSING_ERROR,
+            }
+
+        try:
+            client_kwargs: dict[str, Any] = {
+                "api_key": api_key,
+                "timeout": int(self.timeout_seconds),
+            }
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+            client = self.client_factory(**client_kwargs)
+            with audio_path.open("rb") as audio_file:
+                response = client.audio.transcriptions.create(
+                    model=self.model_name,
+                    file=audio_file,
+                    language=self.language,
+                    response_format="json",
+                )
+            text = _extract_transcription_text(response)
+            usage = _extract_transcription_usage(response)
+        except Exception:
+            return {
+                "transcription_status": "failed",
+                "transcription_error": AITUNNEL_FAILED_ERROR,
+            }
+
+        segment_items: list[dict[str, Any]] = []
+        quality = transcript_quality(text, segment_items)
+        transcript_json_path = meeting_folder / "transcript.json"
+        transcript_md_path = meeting_folder / "transcript.md"
+        canonical_result: dict[str, Any] = {
+            "status": "completed",
+            "provider": AITUNNEL_PROVIDER,
+            "model": self.model_name,
+            "language": self.language,
+            "text": text,
+            "segments": segment_items,
+            **quality,
+        }
+        if usage:
+            canonical_result["usage"] = usage
+        transcript_json_path.write_text(
+            json.dumps(canonical_result, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        transcript_md_path.write_text(
+            LocalWhisperTranscriber._render_markdown(
+                canonical_result,
+                source_note="внешняя транскрипция AI Tunnel",
+            ),
+            encoding="utf-8",
+        )
+
+        result: dict[str, Any] = {
+            "transcription_status": "completed",
+            "transcription_provider": AITUNNEL_PROVIDER,
+            "transcription_model": self.model_name,
+            "transcription_language": self.language,
+            "transcription_base_url": self.base_url,
+            "transcription_audio_bytes": audio_size,
+            "transcription_quality": quality["quality"],
+            "transcription_quality_warnings": quality["quality_warnings"],
+            "transcript_path": str(transcript_md_path),
+            "transcript_json_path": str(transcript_json_path),
+            "transcribed_at": self.now().isoformat(),
+        }
+        if usage:
+            result["transcription_usage"] = usage
+        return result
+
+    @staticmethod
+    def _default_client_factory(**kwargs: Any) -> Any:
+        from openai import OpenAI
+
+        return OpenAI(**kwargs)
+
+
 def create_transcriber(config: dict[str, Any]) -> Transcriber:
     backend = str(config.get("backend") or "whisper_cli")
     model_name = str(config.get("model") or "base")
@@ -249,6 +393,16 @@ def create_transcriber(config: dict[str, Any]) -> Transcriber:
             device=str(config.get("device") or "cpu"),
             compute_type=str(config.get("compute_type") or "int8"),
             vad_filter=bool(config.get("vad_filter", True)),
+        )
+    if backend == "aitunnel":
+        return AITunnelTranscriber(
+            model_name=model_name,
+            language=str(config.get("language") or "ru"),
+            api_key_env=str(config.get("api_key_env") or AITUNNEL_API_KEY_ENV_DEFAULT),
+            base_url=str(config.get("base_url") or AITUNNEL_BASE_URL_DEFAULT),
+            env_file=str(config.get("env_file") or ""),
+            timeout_seconds=int(config.get("timeout_seconds") or 300),
+            max_upload_mb=float(config.get("max_upload_mb") or 25),
         )
     return LocalWhisperTranscriber(
         whisper_command=str(config.get("whisper_command") or "whisper"),
@@ -271,6 +425,8 @@ def transcription_message(metadata: dict[str, Any]) -> str:
             warnings = metadata.get("transcription_quality_warnings") or []
             warning_text = f" {' '.join(warnings)}" if warnings else ""
             return f"{TRANSCRIPTION_SUSPECT_ERROR}{warning_text}"
+        if metadata.get("transcription_provider") == AITUNNEL_PROVIDER:
+            return "Транскрипция завершена через AI Tunnel."
         return "Транскрипция завершена."
     if status == "skipped":
         return f"Транскрипция пропущена: {metadata['transcription_error']}"
@@ -325,3 +481,30 @@ def _format_seconds(value: Any) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _extract_transcription_text(response: Any) -> str:
+    if isinstance(response, dict):
+        text = response.get("text")
+    else:
+        text = getattr(response, "text", None)
+    return str(text or "").strip()
+
+
+def _extract_transcription_usage(response: Any) -> dict[str, Any]:
+    if isinstance(response, dict):
+        usage = response.get("usage")
+    else:
+        usage = getattr(response, "usage", None)
+    if not usage:
+        return {}
+
+    result: dict[str, Any] = {}
+    for key in ("seconds", "input_tokens", "output_tokens", "total_tokens", "cost_rub"):
+        if isinstance(usage, dict):
+            value = usage.get(key)
+        else:
+            value = getattr(usage, key, None)
+        if value is not None:
+            result[key] = value
+    return result

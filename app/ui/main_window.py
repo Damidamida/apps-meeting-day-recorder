@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 
@@ -35,6 +36,34 @@ from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
 from app.services.summarization import create_summarizer
 from app.services.transcription import create_transcriber
+
+
+WHISPER_CLI_MODEL_OPTIONS = [
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large", "large"),
+    ("turbo", "turbo"),
+]
+FASTER_WHISPER_MODEL_OPTIONS = [
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large-v3", "large-v3"),
+    ("turbo", "turbo"),
+]
+AITUNNEL_MODEL_OPTIONS = [
+    ("Whisper Large V3 Turbo — 0.13 ₽/мин", "whisper-large-v3-turbo"),
+    ("Whisper Large V3 — 0.36 ₽/мин", "whisper-large-v3"),
+    ("Whisper 1 — 1.15 ₽/мин", "whisper-1"),
+]
+SUMMARY_MODEL_OPTIONS = [
+    ("GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход", "gpt-5.4-mini"),
+    ("GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход", "gpt-5.4-nano"),
+    ("Другая модель AI Tunnel", "__custom__"),
+]
 
 
 class MeetingPipelineWorker(QObject):
@@ -838,8 +867,8 @@ class MainWindow(QMainWindow):
         self.storage = storage or StorageService(
             Path(self.config["storage"]["root"]),
             self.recorder,
-            transcriber=create_transcriber(self.config["transcription"]),
-            summarizer=create_summarizer(self.config["summary"]),
+            transcriber=create_transcriber(self._transcription_runtime_config()),
+            summarizer=create_summarizer(self._summary_runtime_config()),
         )
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
@@ -910,6 +939,18 @@ class MainWindow(QMainWindow):
         self.active_call_timer.timeout.connect(self._refresh_active_call_display)
         self.active_call_timer.start()
         self.show_floating_control()
+
+    def _transcription_runtime_config(self) -> dict[str, object]:
+        config = dict(self.config["transcription"])
+        if not str(config.get("env_file") or "").strip():
+            config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
+        return config
+
+    def _summary_runtime_config(self) -> dict[str, object]:
+        config = dict(self.config["summary"])
+        if not str(config.get("env_file") or "").strip():
+            config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
+        return config
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -2451,37 +2492,95 @@ class MainWindow(QMainWindow):
         obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
         layout.addWidget(self._create_card("OBS", obs_layout))
 
+        secrets_layout = QFormLayout()
+        secrets_layout.setHorizontalSpacing(18)
+        secrets_layout.setVerticalSpacing(8)
+        self.settings_secrets_env_file_input = QLineEdit(
+            str(self.config.get("secrets", {}).get("env_file", ""))
+        )
+        secrets_hint = QLabel(
+            "Один локальный .env файл для API-ключей внешних сервисов. "
+            "Например, для AITUNNEL_KEY. Сам файл не добавляется в git."
+        )
+        secrets_hint.setObjectName("sectionHint")
+        secrets_hint.setWordWrap(True)
+        secrets_layout.addRow(".env файл:", self.settings_secrets_env_file_input)
+        secrets_layout.addRow("", secrets_hint)
+        layout.addWidget(self._create_card("Секреты", secrets_layout))
+
         transcription_layout = QFormLayout()
         transcription_layout.setHorizontalSpacing(18)
         transcription_layout.setVerticalSpacing(8)
+        self.settings_transcription_profiles = deepcopy(
+            self.config["transcription"].get("backends", {})
+        )
+        self.settings_current_transcription_backend = str(
+            self.config["transcription"]["backend"]
+        )
+        self.settings_transcription_rows: list[tuple[QLabel | None, QWidget, set[str]]] = []
         self.settings_transcription_backend_select = QComboBox()
-        self.settings_transcription_backend_select.addItems(["whisper_cli", "faster_whisper"])
+        self.settings_transcription_backend_select.addItems(
+            ["whisper_cli", "faster_whisper", "aitunnel"]
+        )
         self._set_combo_value(
             self.settings_transcription_backend_select,
             str(self.config["transcription"]["backend"]),
         )
-        self.settings_transcription_model_input = QLineEdit(str(self.config["transcription"]["model"]))
-        self.settings_transcription_language_input = QLineEdit(str(self.config["transcription"]["language"]))
-        self.settings_transcription_device_input = QLineEdit(str(self.config["transcription"]["device"]))
-        self.settings_transcription_compute_type_input = QLineEdit(
-            str(self.config["transcription"]["compute_type"])
-        )
-        self.settings_transcription_command_input = QLineEdit(
-            str(self.config["transcription"]["whisper_command"])
-        )
+        self.settings_transcription_model_select = QComboBox()
+        self.settings_transcription_device_select = QComboBox()
+        self.settings_transcription_device_select.addItems(["cpu", "cuda"])
+        self.settings_transcription_timeout_input = QSpinBox()
+        self.settings_transcription_timeout_input.setRange(1, 3600)
+        self.settings_transcription_upload_limit_input = QSpinBox()
+        self.settings_transcription_upload_limit_input.setRange(1, 25)
         self.settings_transcription_vad_checkbox = QCheckBox(
             "Для faster-whisper отсекать тишину и неречевой шум"
         )
-        self.settings_transcription_vad_checkbox.setChecked(
-            bool(self.config["transcription"].get("vad_filter", True))
+        transcription_hint = QLabel(
+            "Язык транскрипции всегда русский. API key для AI Tunnel берется из блока "
+            "`Секреты` и переменной AITUNNEL_KEY."
         )
+        transcription_hint.setObjectName("sectionHint")
+        transcription_hint.setWordWrap(True)
         transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
-        transcription_layout.addRow("Модель:", self.settings_transcription_model_input)
-        transcription_layout.addRow("Язык:", self.settings_transcription_language_input)
-        transcription_layout.addRow("Устройство:", self.settings_transcription_device_input)
-        transcription_layout.addRow("Compute type:", self.settings_transcription_compute_type_input)
-        transcription_layout.addRow("", self.settings_transcription_vad_checkbox)
-        transcription_layout.addRow("Whisper command:", self.settings_transcription_command_input)
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Модель:",
+            self.settings_transcription_model_select,
+            {"whisper_cli", "faster_whisper", "aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Устройство:",
+            self.settings_transcription_device_select,
+            {"faster_whisper"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "",
+            self.settings_transcription_vad_checkbox,
+            {"faster_whisper"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Timeout, секунд:",
+            self.settings_transcription_timeout_input,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Макс. размер аудио, МБ:",
+            self.settings_transcription_upload_limit_input,
+            {"aitunnel"},
+        )
+        transcription_layout.addRow("", transcription_hint)
+        self._load_transcription_profile_into_settings(
+            self.settings_current_transcription_backend
+        )
+        self.settings_transcription_backend_select.currentTextChanged.connect(
+            self._on_transcription_backend_changed
+        )
+        self._update_transcription_settings_visibility()
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
 
         summary_layout = QFormLayout()
@@ -2489,23 +2588,39 @@ class MainWindow(QMainWindow):
         summary_layout.setVerticalSpacing(8)
         self.settings_summary_enabled_checkbox = QCheckBox("Генерация итогов включена")
         self.settings_summary_enabled_checkbox.setChecked(bool(self.config["summary"]["enabled"]))
-        self.settings_summary_model_input = QLineEdit(str(self.config["summary"]["model"]))
-        self.settings_summary_api_key_env_input = QLineEdit(str(self.config["summary"]["api_key_env"]))
-        self.settings_summary_base_url_input = QLineEdit(str(self.config["summary"]["base_url"]))
-        self.settings_summary_env_file_input = QLineEdit(str(self.config["summary"]["env_file"]))
+        self.settings_summary_model_select = QComboBox()
+        for label, value in SUMMARY_MODEL_OPTIONS:
+            self.settings_summary_model_select.addItem(label, value)
+        self.settings_summary_custom_model_input = QLineEdit()
+        self.settings_summary_custom_model_input.setPlaceholderText(
+            "Например: deepseek-r1, gemini-..., claude-..."
+        )
         self.settings_summary_timeout_input = QSpinBox()
         self.settings_summary_timeout_input.setRange(1, 3600)
         self.settings_summary_timeout_input.setValue(int(self.config["summary"]["timeout_seconds"]))
         self.settings_summary_chunk_input = QSpinBox()
         self.settings_summary_chunk_input.setRange(1000, 200000)
         self.settings_summary_chunk_input.setValue(int(self.config["summary"]["max_chars_per_chunk"]))
+        summary_hint = QLabel(
+            "Summary использует AI Tunnel. API key берется из блока `Секреты` "
+            "и переменной AITUNNEL_KEY."
+        )
+        summary_hint.setObjectName("sectionHint")
+        summary_hint.setWordWrap(True)
         summary_layout.addRow("", self.settings_summary_enabled_checkbox)
-        summary_layout.addRow("Модель:", self.settings_summary_model_input)
-        summary_layout.addRow("Переменная API key:", self.settings_summary_api_key_env_input)
-        summary_layout.addRow("Base URL:", self.settings_summary_base_url_input)
-        summary_layout.addRow(".env файл:", self.settings_summary_env_file_input)
+        summary_layout.addRow("Модель:", self.settings_summary_model_select)
+        self.settings_summary_custom_model_label = QLabel("ID модели:")
+        summary_layout.addRow(
+            self.settings_summary_custom_model_label,
+            self.settings_summary_custom_model_input,
+        )
         summary_layout.addRow("Timeout, секунд:", self.settings_summary_timeout_input)
         summary_layout.addRow("Символов на chunk:", self.settings_summary_chunk_input)
+        summary_layout.addRow("", summary_hint)
+        self._load_summary_model_settings(str(self.config["summary"]["model"]))
+        self.settings_summary_model_select.currentIndexChanged.connect(
+            self._update_summary_custom_model_visibility
+        )
         layout.addWidget(self._create_card("Summary", summary_layout))
 
         ui_layout = QFormLayout()
@@ -2528,7 +2643,7 @@ class MainWindow(QMainWindow):
         )
         theme_hint = QLabel(
             "Тема основного окна и floating control применяется сразу после сохранения. "
-            "Настройки OBS, transcription, summary и папки данных применяются после перезапуска."
+            "Настройки transcription применяются для следующих встреч после сохранения."
         )
         theme_hint.setObjectName("sectionHint")
         theme_hint.setWordWrap(True)
@@ -2553,6 +2668,137 @@ class MainWindow(QMainWindow):
 
         page.setLayout(layout)
         return self._create_page_scroll_area("settingsScrollArea", page)
+
+    def _add_transcription_settings_row(
+        self,
+        layout: QFormLayout,
+        label_text: str,
+        field: QWidget,
+        backends: set[str],
+    ) -> None:
+        layout.addRow(label_text, field)
+        label = layout.labelForField(field)
+        self.settings_transcription_rows.append((label, field, backends))
+
+    def _on_transcription_backend_changed(self, backend: str) -> None:
+        previous_backend = getattr(self, "settings_current_transcription_backend", "")
+        if previous_backend:
+            self._save_current_transcription_profile(previous_backend)
+        self.settings_current_transcription_backend = backend
+        self._load_transcription_profile_into_settings(backend)
+        self._update_transcription_settings_visibility()
+
+    def _load_transcription_profile_into_settings(self, backend: str) -> None:
+        profile = self._transcription_settings_profile(backend)
+        self._set_transcription_model_options(
+            backend,
+            str(profile.get("model") or "base"),
+        )
+        if backend == "faster_whisper":
+            self._set_combo_value(
+                self.settings_transcription_device_select,
+                str(profile.get("device") or "cpu"),
+            )
+            self.settings_transcription_vad_checkbox.setChecked(
+                bool(profile.get("vad_filter", True))
+            )
+        if backend == "aitunnel":
+            self.settings_transcription_timeout_input.setValue(
+                int(profile.get("timeout_seconds") or 300)
+            )
+            self.settings_transcription_upload_limit_input.setValue(
+                int(profile.get("max_upload_mb") or 25)
+            )
+
+    def _set_transcription_model_options(self, backend: str, selected_model: str) -> None:
+        if backend == "aitunnel":
+            options = AITUNNEL_MODEL_OPTIONS
+        elif backend == "faster_whisper":
+            options = FASTER_WHISPER_MODEL_OPTIONS
+        else:
+            options = WHISPER_CLI_MODEL_OPTIONS
+        self.settings_transcription_model_select.clear()
+        for label, value in options:
+            self.settings_transcription_model_select.addItem(label, value)
+        self._set_combo_value(self.settings_transcription_model_select, selected_model)
+
+    def _save_current_transcription_profile(self, backend: str) -> None:
+        if not hasattr(self, "settings_transcription_profiles"):
+            return
+        profile = self._transcription_settings_profile(backend)
+        model = self._combo_value(self.settings_transcription_model_select)
+        if backend == "aitunnel":
+            profile.update(
+                {
+                    "model": model or "whisper-large-v3-turbo",
+                    "language": "ru",
+                    "api_key_env": "AITUNNEL_KEY",
+                    "base_url": "https://api.aitunnel.ru/v1/",
+                    "env_file": "",
+                    "timeout_seconds": self.settings_transcription_timeout_input.value(),
+                    "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
+                }
+            )
+        elif backend == "faster_whisper":
+            device = self._combo_value(self.settings_transcription_device_select) or "cpu"
+            profile.update(
+                {
+                    "model": model or "base",
+                    "language": "ru",
+                    "device": device,
+                    "compute_type": "float16" if device == "cuda" else "int8",
+                    "vad_filter": self.settings_transcription_vad_checkbox.isChecked(),
+                }
+            )
+        else:
+            profile.update(
+                {
+                    "model": model or "base",
+                    "language": "ru",
+                    "whisper_command": "whisper",
+                }
+            )
+        self.settings_transcription_profiles[backend] = profile
+
+    def _transcription_settings_profile(self, backend: str) -> dict[str, object]:
+        profiles = getattr(self, "settings_transcription_profiles", {})
+        profile = profiles.get(backend)
+        if isinstance(profile, dict):
+            return dict(profile)
+        defaults = DEFAULT_CONFIG["transcription"]["backends"]
+        default_profile = defaults.get(backend, defaults["whisper_cli"])
+        return dict(default_profile)
+
+    def _update_transcription_settings_visibility(self) -> None:
+        if not hasattr(self, "settings_transcription_rows"):
+            return
+        backend = self.settings_transcription_backend_select.currentText()
+        for label, field, backends in self.settings_transcription_rows:
+            visible = backend in backends
+            field.setVisible(visible)
+            if label is not None:
+                label.setVisible(visible)
+
+    def _load_summary_model_settings(self, model: str) -> None:
+        known_models = {value for _, value in SUMMARY_MODEL_OPTIONS if value != "__custom__"}
+        if model in known_models:
+            self._set_combo_value(self.settings_summary_model_select, model)
+            self.settings_summary_custom_model_input.clear()
+        else:
+            self._set_combo_value(self.settings_summary_model_select, "__custom__")
+            self.settings_summary_custom_model_input.setText(model)
+        self._update_summary_custom_model_visibility()
+
+    def _update_summary_custom_model_visibility(self) -> None:
+        visible = self._combo_value(self.settings_summary_model_select) == "__custom__"
+        self.settings_summary_custom_model_label.setVisible(visible)
+        self.settings_summary_custom_model_input.setVisible(visible)
+
+    def _summary_model_from_settings(self) -> str:
+        selected_model = self._combo_value(self.settings_summary_model_select)
+        if selected_model == "__custom__":
+            return self.settings_summary_custom_model_input.text().strip() or "gpt-5.4-mini"
+        return selected_model or "gpt-5.4-mini"
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -3473,14 +3719,13 @@ class MainWindow(QMainWindow):
         )
         self.config = load_config(config_path)
         self._apply_theme_settings()
-        self.settings_status_label.setText(
-            "Настройки сохранены в config.yaml. "
-            "Тема интерфейса применена сразу. "
-            "Для OBS, transcription, summary и папки данных перезапустите приложение, "
-            "чтобы все сервисы точно использовали новые значения."
-        )
+        self._apply_runtime_settings_after_save()
 
     def _settings_config_from_ui(self) -> dict[str, object]:
+        if hasattr(self, "settings_current_transcription_backend"):
+            self._save_current_transcription_profile(
+                self.settings_current_transcription_backend
+            )
         return {
             "storage": {
                 "root": self.settings_storage_root_input.text().strip() or "MeetingSummaries",
@@ -3491,30 +3736,20 @@ class MainWindow(QMainWindow):
                 "websocket_port": self.settings_obs_port_input.value(),
                 "websocket_password": self.settings_obs_password_input.text(),
             },
+            "secrets": {
+                "env_file": self.settings_secrets_env_file_input.text().strip(),
+            },
             "transcription": {
                 "backend": self.settings_transcription_backend_select.currentText(),
-                "model": self.settings_transcription_model_input.text().strip() or "base",
-                "language": self.settings_transcription_language_input.text().strip() or "ru",
-                "device": self.settings_transcription_device_input.text().strip() or "cpu",
-                "compute_type": self.settings_transcription_compute_type_input.text().strip() or "int8",
-                "vad_filter": self.settings_transcription_vad_checkbox.isChecked(),
-                "whisper_command": (
-                    self.settings_transcription_command_input.text().strip() or "whisper"
-                ),
+                "backends": deepcopy(self.settings_transcription_profiles),
             },
             "summary": {
                 "enabled": self.settings_summary_enabled_checkbox.isChecked(),
                 "provider": "openai",
-                "model": self.settings_summary_model_input.text().strip() or "gpt-5.4-mini",
-                "api_key_env": (
-                    self.settings_summary_api_key_env_input.text().strip()
-                    or str(DEFAULT_CONFIG["summary"]["api_key_env"])
-                ),
-                "base_url": (
-                    self.settings_summary_base_url_input.text().strip()
-                    or str(DEFAULT_CONFIG["summary"]["base_url"])
-                ),
-                "env_file": self.settings_summary_env_file_input.text().strip(),
+                "model": self._summary_model_from_settings(),
+                "api_key_env": str(DEFAULT_CONFIG["summary"]["api_key_env"]),
+                "base_url": str(DEFAULT_CONFIG["summary"]["base_url"]),
+                "env_file": "",
                 "timeout_seconds": self.settings_summary_timeout_input.value(),
                 "max_chars_per_chunk": self.settings_summary_chunk_input.value(),
             },
@@ -3523,6 +3758,21 @@ class MainWindow(QMainWindow):
                 "floating_theme": self._combo_value(self.settings_floating_theme_select),
             },
         }
+
+    def _apply_runtime_settings_after_save(self) -> None:
+        if self._has_processing_work():
+            self.settings_status_label.setText(
+                "Настройки сохранены. Тема интерфейса применена сразу. "
+                "Текущая обработка завершится со старой конфигурацией, "
+                "следующие встречи будут использовать обновленные настройки."
+            )
+            return
+        self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+        self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        self.settings_status_label.setText(
+            "Настройки сохранены. Тема интерфейса применена сразу. "
+            "Следующие встречи будут использовать обновленные настройки."
+        )
 
     def open_day_folder(self) -> None:
         day_folder = self.storage.get_today_day_folder()

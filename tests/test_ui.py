@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
+from app.services.summarization import OpenAISummarizer
+from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
 from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
 
 
@@ -211,6 +213,7 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
     window.config["summary"]["enabled"] = False
+    window.config["transcription"]["backend"] = "whisper_cli"
 
     assert window.obs_status_value.text() == "OBS: выключен в настройках"
 
@@ -542,12 +545,18 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_obs_host_input.setText("127.0.0.1")
     window.settings_obs_port_input.setValue(4456)
     window.settings_obs_password_input.setText("secret")
+    window.settings_secrets_env_file_input.setText("C:/safe/.env.local")
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window._set_combo_value(window.settings_transcription_model_select, "whisper-large-v3")
+    window.settings_transcription_timeout_input.setValue(240)
+    window.settings_transcription_upload_limit_input.setValue(20)
     window.settings_transcription_backend_select.setCurrentText("faster_whisper")
-    window.settings_transcription_model_input.setText("small")
+    window._set_combo_value(window.settings_transcription_model_select, "medium")
+    window._set_combo_value(window.settings_transcription_device_select, "cuda")
     window.settings_transcription_vad_checkbox.setChecked(False)
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window.settings_summary_enabled_checkbox.setChecked(True)
-    window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
-    window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
+    window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
     window.settings_theme_select.setCurrentIndex(window.settings_theme_select.findData("dark"))
     window.settings_floating_theme_select.setCurrentIndex(
         window.settings_floating_theme_select.findData("dark")
@@ -561,26 +570,175 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["obs"]["websocket_host"] == "127.0.0.1"
     assert config["obs"]["websocket_port"] == 4456
     assert config["obs"]["websocket_password"] == "secret"
-    assert config["transcription"]["backend"] == "faster_whisper"
-    assert config["transcription"]["model"] == "small"
-    assert config["transcription"]["vad_filter"] is False
+    assert config["secrets"]["env_file"] == "C:/safe/.env.local"
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["transcription"]["backends"]["aitunnel"]["model"] == "whisper-large-v3"
+    assert config["transcription"]["backends"]["aitunnel"]["timeout_seconds"] == 240
+    assert config["transcription"]["backends"]["aitunnel"]["max_upload_mb"] == 20
+    assert config["transcription"]["backends"]["aitunnel"]["api_key_env"] == "AITUNNEL_KEY"
+    assert (
+        config["transcription"]["backends"]["aitunnel"]["base_url"]
+        == "https://api.aitunnel.ru/v1/"
+    )
+    assert config["transcription"]["backends"]["aitunnel"]["env_file"] == ""
+    assert config["transcription"]["backends"]["faster_whisper"]["model"] == "medium"
+    assert config["transcription"]["backends"]["faster_whisper"]["device"] == "cuda"
+    assert config["transcription"]["backends"]["faster_whisper"]["compute_type"] == "float16"
+    assert config["transcription"]["backends"]["faster_whisper"]["vad_filter"] is False
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
     assert config["summary"]["enabled"] is True
-    assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
-    assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert config["summary"]["model"] == "gpt-5.4-nano"
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["summary"]["env_file"] == ""
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"
     assert window.config["ui"]["floating_theme"] == "dark"
     assert "#0f172a" in window.styleSheet()
     assert "#111827" in window.floating_control.styleSheet()
-    assert "Тема интерфейса применена сразу" in window.settings_status_label.text()
-    assert "перезапустите приложение" in window.settings_status_label.text()
+    assert "Настройки сохранены" in window.settings_status_label.text()
+    assert "следующие встречи" in window.settings_status_label.text().lower()
+    assert isinstance(window.storage.transcriber, AITunnelTranscriber)
 
     window.close()
     app.processEvents()
 
 
-def test_settings_screen_uses_aitunnel_summary_defaults_when_fields_are_empty(
+def test_settings_screen_switches_transcription_fields_by_backend(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_transcription_backend_select.setCurrentText("whisper_cli")
+    app.processEvents()
+
+    assert not window.settings_transcription_model_select.isHidden()
+    assert window.settings_transcription_device_select.isHidden()
+    assert window.settings_transcription_vad_checkbox.isHidden()
+    assert window.settings_transcription_timeout_input.isHidden()
+    assert window.settings_transcription_upload_limit_input.isHidden()
+
+    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
+    app.processEvents()
+
+    assert not window.settings_transcription_model_select.isHidden()
+    assert not window.settings_transcription_device_select.isHidden()
+    assert not window.settings_transcription_vad_checkbox.isHidden()
+    assert window.settings_transcription_timeout_input.isHidden()
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    app.processEvents()
+
+    assert not window.settings_transcription_model_select.isHidden()
+    assert window.settings_transcription_device_select.isHidden()
+    assert window.settings_transcription_vad_checkbox.isHidden()
+    assert not window.settings_transcription_timeout_input.isHidden()
+    assert not window.settings_transcription_upload_limit_input.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_keeps_separate_transcription_backend_profiles(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window._set_combo_value(window.settings_transcription_model_select, "whisper-1")
+    window.settings_transcription_timeout_input.setValue(180)
+
+    window.settings_transcription_backend_select.setCurrentText("whisper_cli")
+    app.processEvents()
+    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    window._set_combo_value(window.settings_transcription_model_select, "small")
+
+    window.settings_transcription_backend_select.setCurrentText("faster_whisper")
+    app.processEvents()
+    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    window._set_combo_value(window.settings_transcription_model_select, "medium")
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    app.processEvents()
+    assert window._combo_value(window.settings_transcription_model_select) == "whisper-1"
+    assert window.settings_transcription_timeout_input.value() == 180
+
+    config = window._settings_config_from_ui()
+    assert config["transcription"]["backends"]["aitunnel"]["model"] == "whisper-1"
+    assert config["transcription"]["backends"]["whisper_cli"]["model"] == "small"
+    assert config["transcription"]["backends"]["faster_whisper"]["model"] == "medium"
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_save_defers_transcription_runtime_change_while_processing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.pipeline_running = True
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+
+    window.save_settings()
+
+    assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
+    assert "Текущая обработка завершится со старой конфигурацией" in (
+        window.settings_status_label.text()
+    )
+
+    window.close()
+    app.processEvents()
+
+
+def test_summary_runtime_uses_shared_secrets_env_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("AITUNNEL_KEY=test-secret\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "secrets": {"env_file": str(env_file)},
+                "summary": {
+                    "enabled": True,
+                    "provider": "openai",
+                    "model": "gpt-5.4-mini",
+                    "api_key_env": "AITUNNEL_KEY",
+                    "base_url": "https://api.aitunnel.ru/v1/",
+                    "env_file": "",
+                    "timeout_seconds": 120,
+                    "max_chars_per_chunk": 20000,
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+
+    window = MainWindow(recorder=recorder)
+
+    assert isinstance(window.storage.summarizer, OpenAISummarizer)
+    assert window.storage.summarizer.config["env_file"] == str(env_file)
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_uses_simplified_aitunnel_summary_settings(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -591,12 +749,49 @@ def test_settings_screen_uses_aitunnel_summary_defaults_when_fields_are_empty(
     window = MainWindow(storage, recorder)
 
     window.settings_summary_enabled_checkbox.setChecked(True)
-    window.settings_summary_api_key_env_input.clear()
-    window.settings_summary_base_url_input.clear()
+    assert not hasattr(window, "settings_summary_api_key_env_input")
+    assert not hasattr(window, "settings_summary_base_url_input")
+    assert not hasattr(window, "settings_summary_env_file_input")
+    assert window.settings_summary_model_select.currentData() == "gpt-5.4-mini"
+    assert "144 ₽/1M вход" in window.settings_summary_model_select.itemText(
+        window.settings_summary_model_select.currentIndex()
+    )
+
+    window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
 
     window.save_settings()
 
     config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["summary"]["model"] == "gpt-5.4-nano"
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["summary"]["env_file"] == ""
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_supports_custom_aitunnel_summary_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.settings_summary_custom_model_input.isHidden()
+
+    window._set_combo_value(window.settings_summary_model_select, "__custom__")
+    app.processEvents()
+    assert not window.settings_summary_custom_model_input.isHidden()
+    window.settings_summary_custom_model_input.setText("deepseek-r1")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["summary"]["model"] == "deepseek-r1"
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
 
