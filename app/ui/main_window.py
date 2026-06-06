@@ -868,7 +868,7 @@ class MainWindow(QMainWindow):
             Path(self.config["storage"]["root"]),
             self.recorder,
             transcriber=create_transcriber(self._transcription_runtime_config()),
-            summarizer=create_summarizer(self.config["summary"]),
+            summarizer=create_summarizer(self._summary_runtime_config()),
         )
         self.storage.load_today_state()
         self.readiness_labels: dict[str, QLabel] = {}
@@ -942,6 +942,12 @@ class MainWindow(QMainWindow):
 
     def _transcription_runtime_config(self) -> dict[str, object]:
         config = dict(self.config["transcription"])
+        if not str(config.get("env_file") or "").strip():
+            config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
+        return config
+
+    def _summary_runtime_config(self) -> dict[str, object]:
+        config = dict(self.config["summary"])
         if not str(config.get("env_file") or "").strip():
             config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
         return config
@@ -3762,7 +3768,7 @@ class MainWindow(QMainWindow):
             )
             return
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
-        self.storage.summarizer = create_summarizer(self.config["summary"])
+        self.storage.summarizer = create_summarizer(self._summary_runtime_config())
         self.settings_status_label.setText(
             "Настройки сохранены. Тема интерфейса применена сразу. "
             "Следующие встречи будут использовать обновленные настройки."

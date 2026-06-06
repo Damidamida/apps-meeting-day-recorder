@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
+from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
 from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
 
@@ -693,6 +694,45 @@ def test_settings_save_defers_transcription_runtime_change_while_processing(
     assert "Текущая обработка завершится со старой конфигурацией" in (
         window.settings_status_label.text()
     )
+
+    window.close()
+    app.processEvents()
+
+
+def test_summary_runtime_uses_shared_secrets_env_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("AITUNNEL_KEY=test-secret\n", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "secrets": {"env_file": str(env_file)},
+                "summary": {
+                    "enabled": True,
+                    "provider": "openai",
+                    "model": "gpt-5.4-mini",
+                    "api_key_env": "AITUNNEL_KEY",
+                    "base_url": "https://api.aitunnel.ru/v1/",
+                    "env_file": "",
+                    "timeout_seconds": 120,
+                    "max_chars_per_chunk": 20000,
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+
+    window = MainWindow(recorder=recorder)
+
+    assert isinstance(window.storage.summarizer, OpenAISummarizer)
+    assert window.storage.summarizer.config["env_file"] == str(env_file)
 
     window.close()
     app.processEvents()
