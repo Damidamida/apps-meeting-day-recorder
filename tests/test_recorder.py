@@ -72,7 +72,13 @@ class FakeTranscriber:
     def __init__(self) -> None:
         self.called = False
 
-    def transcribe(self, audio_path: str, meeting_folder: Path) -> dict[str, str]:
+    def transcribe(
+        self,
+        audio_path: str,
+        meeting_folder: Path,
+        progress_callback=None,
+    ) -> dict[str, str]:
+        del progress_callback
         self.called = True
         assert audio_path == str(meeting_folder / "audio.wav")
         (meeting_folder / "transcript.md").write_text(

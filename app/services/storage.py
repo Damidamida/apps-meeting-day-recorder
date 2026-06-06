@@ -238,7 +238,7 @@ class StorageService:
             "transcription_running",
             str(getattr(self.transcriber, "running_message", "Готовим transcript.")),
         )
-        metadata.update(self._transcribe_audio(metadata, meeting_folder))
+        metadata.update(self._transcribe_audio(metadata, meeting_folder, progress_callback))
         self.write_metadata(meeting_folder, metadata)
         self._sync_day_meeting_metadata(meeting_folder, metadata)
         self._emit_pipeline(
@@ -331,13 +331,19 @@ class StorageService:
             return "Аудио извлечено."
         return f"Аудио не извлечено: {metadata['audio_error']}"
 
-    def _transcribe_audio(self, metadata: dict[str, Any], meeting_folder: Path) -> dict[str, Any]:
+    def _transcribe_audio(
+        self,
+        metadata: dict[str, Any],
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
         if metadata.get("audio_status") != "extracted" or not metadata.get("audio_path"):
             transcription_metadata = skipped_transcription_metadata()
         else:
             transcription_metadata = self.transcriber.transcribe(
                 metadata["audio_path"],
                 meeting_folder,
+                progress_callback=progress_callback,
             )
         self.last_transcription_message = transcription_message(transcription_metadata)
         return transcription_metadata

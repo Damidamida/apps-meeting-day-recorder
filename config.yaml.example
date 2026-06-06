@@ -39,6 +39,13 @@ transcription:
       timeout_seconds: 300
       # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
       max_upload_mb: 25
+      # Длинные WAV-записи автоматически режутся на части и отправляются последовательно.
+      chunking_enabled: true
+      # 300 секунд = 5 минут. Это снижает риск timeout/provider errors на длинных встречах.
+      chunk_duration_seconds: 300
+      # Временные ошибки AI Tunnel 408/429/502 повторяются автоматически.
+      retry_attempts: 2
+      retry_sleep_seconds: 1
 
 summary:
   enabled: false
@@ -56,6 +63,9 @@ summary:
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000
+  # Временные ошибки AI Tunnel 408/429/502 повторяются автоматически.
+  retry_attempts: 2
+  retry_sleep_seconds: 1
 
 ui:
   # Тема основного окна: "light" или "dark".

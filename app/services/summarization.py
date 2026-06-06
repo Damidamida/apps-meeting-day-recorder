@@ -1,8 +1,11 @@
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
+
+from app.services.ai_errors import ai_error_metadata, is_retryable_ai_error
 
 
 SUMMARY_PROVIDER = "openai"
@@ -129,6 +132,8 @@ class OpenAISummarizer:
         self.config = config
         self.client_factory = client_factory or self._default_client_factory
         self.now = now or datetime.now
+        self.retry_attempts = max(0, int(config.get("retry_attempts", 2)))
+        self.retry_sleep_seconds = max(0.0, float(config.get("retry_sleep_seconds", 1)))
 
     def summarize_meeting(self, meeting_folder: Path, metadata: dict[str, Any]) -> dict[str, Any]:
         if not self.config.get("enabled", False):
@@ -167,10 +172,10 @@ class OpenAISummarizer:
                 **client_kwargs,
             )
             summary_text, usage = self._summarize_text(client, transcript)
-        except Exception:
+        except Exception as error:
             return {
                 "summary_status": "failed",
-                "summary_error": OPENAI_FAILED_ERROR,
+                **ai_error_metadata("summary", error, OPENAI_FAILED_ERROR),
             }
 
         summary_path = meeting_folder / "summary_draft.md"
@@ -233,17 +238,21 @@ class OpenAISummarizer:
             if base_url:
                 client_kwargs["base_url"] = base_url
             client = self.client_factory(**client_kwargs)
-            response = self._create_response(
+            response = self._create_response_with_retries(
                 client,
                 _day_summary_input(current_summary, meeting_summaries),
                 DAY_SUMMARY_SYSTEM_PROMPT,
             )
             summary_text = extract_response_text(response)
             usage = extract_usage(response)
-        except Exception:
+        except Exception as error:
             return {
                 "day_summary_status": "failed",
-                "day_summary_error": "Не удалось подготовить итоги дня через внешний AI endpoint.",
+                **ai_error_metadata(
+                    "day_summary",
+                    error,
+                    "Не удалось подготовить итоги дня через внешний AI endpoint.",
+                ),
             }
 
         summary_path = day_folder / "00_day_summary_draft.md"
@@ -262,13 +271,16 @@ class OpenAISummarizer:
     def _summarize_text(self, client: Any, transcript: str) -> tuple[str, dict[str, int]]:
         chunks = split_text(transcript, int(self.config.get("max_chars_per_chunk") or 20000))
         if len(chunks) == 1:
-            response = self._create_response(client, _meeting_summary_input(chunks[0]))
+            response = self._create_response_with_retries(client, _meeting_summary_input(chunks[0]))
             return extract_response_text(response), extract_usage(response)
 
         chunk_summaries = []
         total_usage: dict[str, int] = {}
         for index, chunk in enumerate(chunks, start=1):
-            response = self._create_response(client, _chunk_summary_input(index, len(chunks), chunk))
+            response = self._create_response_with_retries(
+                client,
+                _chunk_summary_input(index, len(chunks), chunk),
+            )
             chunk_summaries.append(extract_response_text(response))
             total_usage = merge_usage(total_usage, extract_usage(response))
 
@@ -276,9 +288,26 @@ class OpenAISummarizer:
             f"## Часть {index}\n\n{summary}"
             for index, summary in enumerate(chunk_summaries, start=1)
         )
-        response = self._create_response(client, _final_summary_input(combined))
+        response = self._create_response_with_retries(client, _final_summary_input(combined))
         total_usage = merge_usage(total_usage, extract_usage(response))
         return extract_response_text(response), total_usage
+
+    def _create_response_with_retries(
+        self,
+        client: Any,
+        user_input: str,
+        system_prompt: str = SYSTEM_PROMPT,
+    ) -> Any:
+        max_attempts = self.retry_attempts + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._create_response(client, user_input, system_prompt)
+            except Exception as error:
+                if attempt >= max_attempts or not is_retryable_ai_error(error):
+                    raise
+                if self.retry_sleep_seconds:
+                    time.sleep(self.retry_sleep_seconds)
+        raise RuntimeError("AI summary retry loop did not return a response.")
 
     def _create_response(
         self,
@@ -341,7 +370,7 @@ def summary_message(metadata: dict[str, Any]) -> str:
     if status == "openai_unavailable":
         return "Итоги не подготовлены: API key для генерации итогов не найден."
     if status == "failed":
-        return "Итоги не подготовлены: не удалось подготовить черновик итогов через внешний AI endpoint."
+        return f"Итоги не подготовлены: {metadata.get('summary_error') or OPENAI_FAILED_ERROR}"
     return "Итоги не подготовлены."
 
 
@@ -354,7 +383,7 @@ def day_summary_message(metadata: dict[str, Any]) -> str:
     if status == "openai_unavailable":
         return "Итоги дня не подготовлены: API key для генерации итогов не найден."
     if status == "failed":
-        return "Итоги дня не подготовлены: не удалось подготовить итоги дня через внешний AI endpoint."
+        return f"Итоги дня не подготовлены: {metadata.get('day_summary_error') or 'не удалось подготовить итоги дня через внешний AI endpoint.'}"
     if status == "waiting_for_meetings":
         return "Итоги дня ожидают завершения обработки встреч."
     if status == "up_to_date":
