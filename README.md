@@ -149,7 +149,7 @@ transcription:
 
 Видео во внешний сервис не отправляется. Summary по-прежнему получает только текст transcript, не аудио и не видео.
 
-По документации AI Tunnel endpoint `POST /v1/audio/transcriptions` совместим с OpenAI SDK, принимает `multipart/form-data`, поддерживает `wav`, `mp3`, `flac`, `m4a`, `ogg`, `webm`, `aac`, `mp4`, `mpga` и имеет лимит 25 МБ на файл. Для длинных записей позже нужен отдельный chunking-режим; в текущем PR отправляется целый `audio.wav`.
+По документации AI Tunnel endpoint `POST /v1/audio/transcriptions` совместим с OpenAI SDK, принимает `multipart/form-data`, поддерживает `wav`, `mp3`, `flac`, `m4a`, `ogg`, `webm`, `aac`, `mp4`, `mpga` и имеет лимит 25 МБ на файл. Для длинных WAV-записей приложение может автоматически нарезать `audio.wav` на части, отправлять их последовательно и показывать прогресс в pipeline встречи, например `Выполнено: 1/5 (20%)`.
 
 В выпадающем списке AI Tunnel доступны три модели с ориентировочной ценой за минуту аудио:
 
@@ -167,9 +167,15 @@ transcription:
       model: "whisper-large-v3-turbo"
       timeout_seconds: 300
       max_upload_mb: 25
+      chunking_enabled: true
+      chunk_duration_seconds: 600
+      retry_attempts: 2
+      retry_sleep_seconds: 1
 ```
 
 API key не хранится в репозитории. Для AI Tunnel используется переменная `AITUNNEL_KEY`. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`; отдельно вводить имя переменной ключа в блоке транскрипции обычно не нужно.
+
+Если AI Tunnel возвращает временную ошибку `408`, `429` или `502`, приложение автоматически повторяет запрос. Ошибки неверного ключа, нехватки баланса или модерации не повторяются и сохраняются в metadata понятным текстом.
 
 ## Генерация итогов через AI Tunnel
 
@@ -196,6 +202,8 @@ summary:
   base_url: "https://api.aitunnel.ru/v1/"
   timeout_seconds: 120
   max_chars_per_chunk: 20000
+  retry_attempts: 2
+  retry_sleep_seconds: 1
 ```
 
 Для другой модели AI Tunnel достаточно заменить `model` на ID модели из каталога AI Tunnel:
@@ -274,7 +282,7 @@ python -m pip install -e ".[faster-whisper]"
 - `transcription_status: whisper_unavailable` — Whisper CLI недоступен;
 - `transcription_status: faster_whisper_unavailable` — faster-whisper не установлен;
 - `transcription_status: aitunnel_unavailable` — API key для внешней транскрипции не найден;
-- `transcription_status: file_too_large` — `audio.wav` больше лимита внешней транскрипции;
+- `transcription_status: file_too_large` — `audio.wav` или отдельная часть после нарезки больше лимита внешней транскрипции;
 - `summary_status: openai_unavailable` — API key не найден;
 - `summary_status: skipped` — transcript не готов или пустой.
 
@@ -283,7 +291,6 @@ python -m pip install -e ".[faster-whisper]"
 ## Намеренно не реализовано
 
 - Диаризация.
-- Chunking для внешней транскрипции длинных аудиофайлов.
 - Внешняя транскрипция через другие STT-провайдеры, кроме AI Tunnel.
 - OCR.
 - Интеграции с почтой, календарями и мессенджерами.

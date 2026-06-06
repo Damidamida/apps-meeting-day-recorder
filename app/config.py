@@ -33,6 +33,10 @@ DEFAULT_TRANSCRIPTION_BACKENDS: dict[str, dict[str, Any]] = {
         "env_file": "",
         "timeout_seconds": 300,
         "max_upload_mb": 25,
+        "chunking_enabled": True,
+        "chunk_duration_seconds": 600,
+        "retry_attempts": 2,
+        "retry_sleep_seconds": 1,
     },
 }
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -57,6 +61,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "env_file": "",
         "timeout_seconds": 120,
         "max_chars_per_chunk": 20000,
+        "retry_attempts": 2,
+        "retry_sleep_seconds": 1,
     },
     "transcription": {
         "backend": "whisper_cli",
@@ -71,6 +77,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "env_file": "",
         "timeout_seconds": 300,
         "max_upload_mb": 25,
+        "chunking_enabled": True,
+        "chunk_duration_seconds": 600,
+        "retry_attempts": 2,
+        "retry_sleep_seconds": 1,
         "backends": DEFAULT_TRANSCRIPTION_BACKENDS,
     },
     "ui": {
@@ -184,6 +194,18 @@ def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[
         "summary.max_chars_per_chunk",
         config,
     )
+    summary["retry_attempts"] = _safe_non_negative_int(
+        summary.get("retry_attempts"),
+        int(DEFAULT_CONFIG["summary"]["retry_attempts"]),
+        "summary.retry_attempts",
+        config,
+    )
+    summary["retry_sleep_seconds"] = _safe_int(
+        summary.get("retry_sleep_seconds"),
+        int(DEFAULT_CONFIG["summary"]["retry_sleep_seconds"]),
+        "summary.retry_sleep_seconds",
+        config,
+    )
     return summary
 
 
@@ -255,6 +277,10 @@ def _transcription_profile_keys(backend: str) -> set[str]:
             "env_file",
             "timeout_seconds",
             "max_upload_mb",
+            "chunking_enabled",
+            "chunk_duration_seconds",
+            "retry_attempts",
+            "retry_sleep_seconds",
         }
     return {"model", "language", "whisper_command"}
 
@@ -311,6 +337,40 @@ def _normalize_transcription_profile(
                 "transcription.backends.aitunnel.max_upload_mb",
                 config,
             ),
+            "chunking_enabled": _safe_bool(
+                profile.get(
+                    "chunking_enabled",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["chunking_enabled"],
+                ),
+                bool(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["chunking_enabled"]),
+            ),
+            "chunk_duration_seconds": _safe_int(
+                profile.get(
+                    "chunk_duration_seconds",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["chunk_duration_seconds"],
+                ),
+                int(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["chunk_duration_seconds"]),
+                "transcription.backends.aitunnel.chunk_duration_seconds",
+                config,
+            ),
+            "retry_attempts": _safe_non_negative_int(
+                profile.get(
+                    "retry_attempts",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["retry_attempts"],
+                ),
+                int(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["retry_attempts"]),
+                "transcription.backends.aitunnel.retry_attempts",
+                config,
+            ),
+            "retry_sleep_seconds": _safe_int(
+                profile.get(
+                    "retry_sleep_seconds",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["retry_sleep_seconds"],
+                ),
+                int(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["retry_sleep_seconds"]),
+                "transcription.backends.aitunnel.retry_sleep_seconds",
+                config,
+            ),
         }
     return {
         "model": _allowed_value(profile.get("model"), LOCAL_WHISPER_MODELS, "base"),
@@ -363,6 +423,27 @@ def _safe_int(value: Any, default: int, name: str, config: dict[str, Any]) -> in
     if parsed <= 0:
         config["_warnings"].append(
             f"`{name}` должно быть больше 0. Используется безопасное значение {default}."
+        )
+        return default
+    return parsed
+
+
+def _safe_non_negative_int(
+    value: Any,
+    default: int,
+    name: str,
+    config: dict[str, Any],
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        config["_warnings"].append(
+            f"`{name}` имеет неверное значение. Используется безопасное значение {default}."
+        )
+        return default
+    if parsed < 0:
+        config["_warnings"].append(
+            f"`{name}` не может быть меньше 0. Используется безопасное значение {default}."
         )
         return default
     return parsed

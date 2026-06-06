@@ -2533,6 +2533,14 @@ class MainWindow(QMainWindow):
         self.settings_transcription_timeout_input.setRange(1, 3600)
         self.settings_transcription_upload_limit_input = QSpinBox()
         self.settings_transcription_upload_limit_input.setRange(1, 25)
+        self.settings_transcription_chunking_checkbox = QCheckBox(
+            "Нарезать длинные записи автоматически"
+        )
+        self.settings_transcription_chunk_duration_input = QSpinBox()
+        self.settings_transcription_chunk_duration_input.setRange(30, 3600)
+        self.settings_transcription_chunk_duration_input.setSuffix(" сек.")
+        self.settings_transcription_retry_attempts_input = QSpinBox()
+        self.settings_transcription_retry_attempts_input.setRange(0, 10)
         self.settings_transcription_vad_checkbox = QCheckBox(
             "Для faster-whisper отсекать тишину и неречевой шум"
         )
@@ -2571,6 +2579,24 @@ class MainWindow(QMainWindow):
             transcription_layout,
             "Макс. размер аудио, МБ:",
             self.settings_transcription_upload_limit_input,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "",
+            self.settings_transcription_chunking_checkbox,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Длительность части:",
+            self.settings_transcription_chunk_duration_input,
+            {"aitunnel"},
+        )
+        self._add_transcription_settings_row(
+            transcription_layout,
+            "Повторов при временной ошибке:",
+            self.settings_transcription_retry_attempts_input,
             {"aitunnel"},
         )
         transcription_layout.addRow("", transcription_hint)
@@ -2709,6 +2735,15 @@ class MainWindow(QMainWindow):
             self.settings_transcription_upload_limit_input.setValue(
                 int(profile.get("max_upload_mb") or 25)
             )
+            self.settings_transcription_chunking_checkbox.setChecked(
+                bool(profile.get("chunking_enabled", True))
+            )
+            self.settings_transcription_chunk_duration_input.setValue(
+                int(profile.get("chunk_duration_seconds") or 600)
+            )
+            self.settings_transcription_retry_attempts_input.setValue(
+                int(profile.get("retry_attempts") or 2)
+            )
 
     def _set_transcription_model_options(self, backend: str, selected_model: str) -> None:
         if backend == "aitunnel":
@@ -2737,6 +2772,10 @@ class MainWindow(QMainWindow):
                     "env_file": "",
                     "timeout_seconds": self.settings_transcription_timeout_input.value(),
                     "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
+                    "chunking_enabled": self.settings_transcription_chunking_checkbox.isChecked(),
+                    "chunk_duration_seconds": self.settings_transcription_chunk_duration_input.value(),
+                    "retry_attempts": self.settings_transcription_retry_attempts_input.value(),
+                    "retry_sleep_seconds": 1,
                 }
             )
         elif backend == "faster_whisper":
@@ -3057,6 +3096,9 @@ class MainWindow(QMainWindow):
             "audio_running": ("audio", "Выполняется", message, "active"),
             "audio_done": ("audio", None, message, None),
             "transcription_running": ("transcription", "Выполняется", message, "active"),
+            "transcription_chunk_started": ("transcription", "Выполняется", message, "active"),
+            "transcription_chunk_retry": ("transcription", "Выполняется", message, "active"),
+            "transcription_chunk_done": ("transcription", "Выполняется", message, "active"),
             "transcription_done": ("transcription", None, message, None),
             "summary_running": ("summary", "Выполняется", message, "active"),
             "summary_done": ("summary", None, message, None),

@@ -166,16 +166,18 @@ PR #37, ветка `codex/summary-aitunnel-config`, был смержен пос
 
 В ветке `codex/aitunnel-transcription-backend` готовится точечная доработка этапа 8: добавляется optional backend `aitunnel` для внешней транскрипции `audio.wav` через AI Tunnel STT endpoint. Локальные backend `whisper_cli` и `faster_whisper` сохраняются, backend по умолчанию остается `whisper_cli`. Настройки транскрипции разделены на отдельные backend-профили, поэтому модель и параметры `whisper_cli`, `faster_whisper` и `aitunnel` не перетирают друг друга при переключении. Экран `Настройки` показывает только поля, релевантные выбранному backend; язык транскрипции фиксирован как русский, `whisper_command`, `compute_type`, `api_key_env`, `base_url` и сервисный `env_file` скрыты из обычного UI. Для AI Tunnel в UI доступен выпадающий список моделей с ценами: `Whisper Large V3 Turbo — 0.13 ₽/мин`, `Whisper Large V3 — 0.36 ₽/мин`, `Whisper 1 — 1.15 ₽/мин`; по умолчанию используется `whisper-large-v3-turbo`. Блок `Summary` в настройках также упрощен: технические поля API key, Base URL и `.env` скрыты, используется `AITUNNEL_KEY`, `https://api.aitunnel.ru/v1/` и общий `secrets.env_file`; в UI доступны рекомендуемые модели `GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход`, `GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход` и пункт `Другая модель AI Tunnel` для ручного ID модели. После ручной проверки исправлена рассинхронизация readiness/runtime: реальный Summary pipeline теперь подхватывает общий `secrets.env_file`, если `summary.env_file` пустой, поэтому статус `API key найден` в готовности соответствует реальной генерации итогов. При `aitunnel` во внешний сервис отправляется только `audio.wav`; видео не отправляется. Chunking длинного аудио в этом PR не реализуется, для файла действует лимит 25 МБ. Общий блок `secrets.env_file` используется для локального `.env` с API-ключами; readiness и runtime внешней транскрипции используют его для `AITUNNEL_KEY`. После `Сохранить настройки` тема применяется сразу; если нет активной встречи или фоновой обработки, следующие встречи используют новую транскрипционную конфигурацию сразу, а если обработка еще идет, текущий pipeline завершается со старой конфигурацией.
 
+В ветке `codex/aitunnel-audio-chunking` готовится точечная доработка этапа 8: для внешней транскрипции через AI Tunnel добавлен chunking длинного `audio.wav`, отображение прогресса в pipeline встречи (`Выполнено: N/M (%)`), автоматический retry временных ошибок `408`, `429`, `502` и понятные metadata/UI-ошибки AI Tunnel для транскрипции и Summary. Chunking применяется только при явно выбранном backend `aitunnel`; локальные backend `whisper_cli` и `faster_whisper` не меняют поведение. При `aitunnel` во внешний сервис отправляется аудио WAV-частями, видео не отправляется; Summary по-прежнему отправляет только текст transcript или тексты summary встреч.
+
 Этап 9 `Manual smoke test` остается в статусе `Сделать` и не начинался.
 
 Последняя проверка:
 
-- `python -m pytest`: `112 passed`.
+- `python -m pytest`: `119 passed`.
 - `python -m compileall -q app`: успешно.
 
 ## 10. Следующий шаг
 
-Проверить PR с веткой `codex/aitunnel-transcription-backend`: external transcription backend `aitunnel` должен включаться только явно через настройки/config, общий `secrets.env_file` должен подхватывать локальный `.env` с ключом `AITUNNEL_KEY`, настройки разных backend транскрипции должны храниться отдельно, UI должен показывать только актуальные поля выбранного backend, блок `Summary` должен иметь простой выбор модели AI Tunnel и custom ID без технических полей ключа/endpoint, локальные backend должны сохраниться, а chunking длинного аудио должен остаться будущей отдельной доработкой. Этап 9 не начинать до принятия доработок этапа 8.
+Проверить PR с веткой `codex/aitunnel-audio-chunking`: при backend `aitunnel` длинный `audio.wav` должен нарезаться на части, pipeline встречи должен показывать прогресс `Выполнено: N/M (%)`, временные ошибки AI Tunnel `408`, `429`, `502` должны автоматически повторяться, а ошибки баланса, ключа, лимитов и провайдера должны отображаться понятно в metadata и UI. Локальные backend `whisper_cli` и `faster_whisper` должны сохраниться без изменения поведения. Этап 9 не начинать до принятия доработок этапа 8.
 
 ## 11. Текущая структура файлов
 
@@ -192,12 +194,14 @@ PR #37, ветка `codex/summary-aitunnel-config`, был смержен пос
 - `app/services/recorder.py` — безопасная OBS-интеграция и Noop-режим.
 - `app/services/readiness.py` — безопасная проверка готовности локальной среды.
 - `app/services/audio.py` — локальное извлечение `audio.wav` через FFmpeg.
+- `app/services/ai_errors.py` — общая классификация ошибок AI Tunnel / OpenAI-compatible endpoint и retry-логика.
 - `app/services/transcription.py` — слой транскрипции через optional Whisper CLI, optional faster-whisper или optional AI Tunnel STT backend.
 - `app/services/summarization.py` — слой генерации итогов встречи через безопасный `Summarizer` и OpenAI backend.
 - `tests/test_storage.py` — тесты локального хранения.
 - `tests/test_launcher.py` — тест launcher для поиска локальных CLI-инструментов из `.venv\Scripts`.
 - `tests/test_readiness.py` — тесты проверки готовности и защиты отображения API key.
 - `tests/test_summarization.py` — тесты генерации итогов, включая суммирование usage при chunking.
+- `tests/test_transcription.py` — тесты локальной и внешней транскрипции, включая AI Tunnel chunking и retry.
 
 ## 12. Структура локальных данных
 
@@ -229,7 +233,7 @@ MeetingSummaries/YYYY-MM-DD/
 - Markdown для итогов.
 - OBS WebSocket для локального управления записью встреч.
 - FFmpeg для локального извлечения `audio.wav` из OBS-записи.
-- Транскрипция выполняется локально через optional Whisper CLI или optional faster-whisper backend; optional AI Tunnel STT backend можно включить явно через `transcription.backend: aitunnel`.
+- Транскрипция выполняется локально через optional Whisper CLI или optional faster-whisper backend; optional AI Tunnel STT backend можно включить явно через `transcription.backend: aitunnel`. Для AI Tunnel длинный WAV-файл может автоматически нарезаться на части с отображением прогресса в pipeline.
 - AI Tunnel / OpenAI-compatible endpoint используется для генерации `summary_draft.md` одной встречи из готового текстового transcript и для генерации `00_day_summary_draft.md` из текстов summary встреч, если summary явно включен в локальном `config.yaml`. ProxyAPI остается возможным альтернативным custom endpoint.
 - Сначала ручной сценарий, автоматизация позже.
 
@@ -243,8 +247,8 @@ MeetingSummaries/YYYY-MM-DD/
 - `config.yaml.example` остается безопасным шаблоном без пароля; локальный рабочий `config.yaml` создается рядом с ним и не заменяет шаблон в репозитории.
 - Путь записи настраивается в OBS; приложение сохраняет `recording_path`, только если OBS возвращает его после остановки записи.
 - Большие записи могут потребовать политику очистки.
-- Длинное аудио может потребовать разбиение на части; внешний AI Tunnel STT backend в текущей доработке отправляет целый `audio.wav` и ограничен 25 МБ.
-- Локальный Whisper CLI на модели `base` может обрабатывать запись примерно в режиме real-time; optional faster-whisper добавлен как первый локальный путь ускорения. Chunking и более тонкая настройка моделей остаются возможными будущими улучшениями.
+- Длинное WAV-аудио для внешнего AI Tunnel STT backend нарезается на части перед отправкой. Если отдельная часть все равно превышает лимит 25 МБ или формат не поддерживает локальную нарезку, встреча должна получить понятный статус ошибки без потери локальных файлов.
+- Локальный Whisper CLI на модели `base` может обрабатывать запись примерно в режиме real-time; optional faster-whisper добавлен как первый локальный путь ускорения. Более тонкая настройка моделей и будущие внешние STT-провайдеры остаются возможными будущими улучшениями.
 - Качество prompt для итогов нужно будет улучшать итерационно.
 - AI Tunnel / OpenAI-compatible API key должен храниться только во внешнем окружении или локальном `.env.local`, который не добавляется в git.
 - Генерация итогов не должна отправлять во внешний AI endpoint аудио или видео; для итогов встречи отправляется только текстовый transcript, для итогов дня — только тексты summary встреч.
@@ -253,6 +257,7 @@ MeetingSummaries/YYYY-MM-DD/
 
 ## 15. Changelog
 
+- Ветка `codex/aitunnel-audio-chunking`: точечная доработка этапа 8 для внешней транскрипции через AI Tunnel. Добавлен chunking длинного `audio.wav` на локальные WAV-части, последовательная отправка частей в AI Tunnel STT, сбор единого `transcript.md` и `transcript.json`, metadata `transcription_mode`, `transcription_chunk_count`, `transcription_completed_chunks` и суммирование `transcription_usage`. Pipeline встречи показывает прогресс chunk-транскрипции (`Выполнено: N/M (%)`) и retry временных ошибок. Ошибки AI Tunnel `400`, `401`, `402`, `403`, `408`, `429`, `502` классифицируются и сохраняются понятным текстом для транскрипции и Summary; временные ошибки `408`, `429`, `502` повторяются автоматически. Локальные backend `whisper_cli` и `faster_whisper`, OBS, FFmpeg, lifecycle встреч и локальное хранение не менялись. Этап 8 остается `На проверке`, этап 9 не начинался. Проверки: `python -m pytest` — `119 passed`; `python -m compileall -q app` — успешно.
 - PR #1: создан skeleton / foundation.
 - PR #2: добавлен локальный жизненный цикл рабочего дня и встреч с восстановлением после перезапуска.
 - PR #4: `main` синхронизирован с прежней default branch.

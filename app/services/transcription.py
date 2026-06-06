@@ -1,11 +1,15 @@
 import json
+import math
 import shutil
 import subprocess
+import time
+import wave
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from app.services.ai_errors import ai_error_metadata, is_retryable_ai_error
 from app.services.summarization import load_api_key
 
 
@@ -34,13 +38,23 @@ AITUNNEL_FILE_TOO_LARGE_ERROR = (
 
 
 class Transcriber(Protocol):
-    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
 class NoopTranscriber:
-    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
-        del audio_path, meeting_folder
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
+        del audio_path, meeting_folder, progress_callback
         return skipped_transcription_metadata()
 
 
@@ -57,7 +71,13 @@ class LocalWhisperTranscriber:
         self.model_name = model_name
         self.language = language
 
-    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
+        del progress_callback
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             return {
@@ -181,7 +201,13 @@ class FasterWhisperTranscriber:
         self.compute_type = compute_type
         self.vad_filter = vad_filter
 
-    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
+        del progress_callback
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             return {
@@ -269,6 +295,10 @@ class AITunnelTranscriber:
         env_file: str = "",
         timeout_seconds: int = 300,
         max_upload_mb: float = 25,
+        chunking_enabled: bool = True,
+        chunk_duration_seconds: int = 600,
+        retry_attempts: int = 2,
+        retry_sleep_seconds: float = 1.0,
         client_factory: Callable[..., Any] | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -283,10 +313,19 @@ class AITunnelTranscriber:
         self.env_file = env_file
         self.timeout_seconds = timeout_seconds
         self.max_upload_mb = max_upload_mb
+        self.chunking_enabled = chunking_enabled
+        self.chunk_duration_seconds = max(1, int(chunk_duration_seconds))
+        self.retry_attempts = max(0, int(retry_attempts))
+        self.retry_sleep_seconds = max(0.0, float(retry_sleep_seconds))
         self.client_factory = client_factory or self._default_client_factory
         self.now = now or datetime.now
 
-    def transcribe(self, audio_path: str | Path, meeting_folder: Path) -> dict[str, Any]:
+    def transcribe(
+        self,
+        audio_path: str | Path,
+        meeting_folder: Path,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             return {
@@ -296,11 +335,6 @@ class AITunnelTranscriber:
 
         audio_size = audio_path.stat().st_size
         max_bytes = int(float(self.max_upload_mb) * 1024 * 1024)
-        if audio_size > max_bytes:
-            return {
-                "transcription_status": "file_too_large",
-                "transcription_error": AITUNNEL_FILE_TOO_LARGE_ERROR,
-            }
 
         api_key = load_api_key(self.api_key_env, self.env_file)
         if not api_key:
@@ -317,19 +351,27 @@ class AITunnelTranscriber:
             if self.base_url:
                 client_kwargs["base_url"] = self.base_url
             client = self.client_factory(**client_kwargs)
-            with audio_path.open("rb") as audio_file:
-                response = client.audio.transcriptions.create(
-                    model=self.model_name,
-                    file=audio_file,
-                    language=self.language,
-                    response_format="json",
+            if self._should_transcribe_in_chunks(audio_path, audio_size, max_bytes):
+                return self._transcribe_chunked(
+                    audio_path,
+                    meeting_folder,
+                    audio_size,
+                    max_bytes,
+                    client,
+                    progress_callback,
                 )
+            if audio_size > max_bytes:
+                return {
+                    "transcription_status": "file_too_large",
+                    "transcription_error": AITUNNEL_FILE_TOO_LARGE_ERROR,
+                }
+            response = self._transcribe_file_with_retries(client, audio_path)
             text = _extract_transcription_text(response)
             usage = _extract_transcription_usage(response)
-        except Exception:
+        except Exception as error:
             return {
                 "transcription_status": "failed",
-                "transcription_error": AITUNNEL_FAILED_ERROR,
+                **ai_error_metadata("transcription", error, AITUNNEL_FAILED_ERROR),
             }
 
         segment_items: list[dict[str, Any]] = []
@@ -341,6 +383,7 @@ class AITunnelTranscriber:
             "provider": AITUNNEL_PROVIDER,
             "model": self.model_name,
             "language": self.language,
+            "mode": "single_file",
             "text": text,
             "segments": segment_items,
             **quality,
@@ -366,6 +409,7 @@ class AITunnelTranscriber:
             "transcription_language": self.language,
             "transcription_base_url": self.base_url,
             "transcription_audio_bytes": audio_size,
+            "transcription_mode": "single_file",
             "transcription_quality": quality["quality"],
             "transcription_quality_warnings": quality["quality_warnings"],
             "transcript_path": str(transcript_md_path),
@@ -375,6 +419,182 @@ class AITunnelTranscriber:
         if usage:
             result["transcription_usage"] = usage
         return result
+
+    def _should_transcribe_in_chunks(
+        self,
+        audio_path: Path,
+        audio_size: int,
+        max_bytes: int,
+    ) -> bool:
+        if not self.chunking_enabled:
+            return False
+        duration_seconds = _wav_duration_seconds(audio_path)
+        if duration_seconds is None:
+            return False
+        return duration_seconds > self.chunk_duration_seconds or audio_size > max_bytes
+
+    def _transcribe_chunked(
+        self,
+        audio_path: Path,
+        meeting_folder: Path,
+        audio_size: int,
+        max_bytes: int,
+        client: Any,
+        progress_callback: Callable[[str, str], None] | None,
+    ) -> dict[str, Any]:
+        chunks = _split_wav_into_chunks(
+            audio_path,
+            meeting_folder / "audio_chunks",
+            self.chunk_duration_seconds,
+        )
+        if not chunks:
+            return {
+                "transcription_status": "failed",
+                "transcription_error": AITUNNEL_FAILED_ERROR,
+            }
+        if any(chunk.stat().st_size > max_bytes for chunk in chunks):
+            return {
+                "transcription_status": "file_too_large",
+                "transcription_error": AITUNNEL_FILE_TOO_LARGE_ERROR,
+                "transcription_mode": "chunked",
+                "transcription_chunk_count": len(chunks),
+                "transcription_completed_chunks": 0,
+            }
+
+        chunk_results: list[dict[str, Any]] = []
+        total_usage: dict[str, Any] = {}
+        completed_chunks = 0
+        total_chunks = len(chunks)
+        for index, chunk_path in enumerate(chunks, start=1):
+            _emit_progress(
+                progress_callback,
+                "transcription_chunk_started",
+                f"Обрабатываем часть {index}/{total_chunks}.",
+            )
+            try:
+                response = self._transcribe_file_with_retries(
+                    client,
+                    chunk_path,
+                    chunk_index=index,
+                    chunk_count=total_chunks,
+                    progress_callback=progress_callback,
+                )
+            except Exception as error:
+                return {
+                    "transcription_status": "failed",
+                    "transcription_mode": "chunked",
+                    "transcription_chunk_count": total_chunks,
+                    "transcription_completed_chunks": completed_chunks,
+                    "transcription_failed_chunk": index,
+                    **ai_error_metadata("transcription", error, AITUNNEL_FAILED_ERROR),
+                }
+
+            completed_chunks += 1
+            text = _extract_transcription_text(response)
+            usage = _extract_transcription_usage(response)
+            total_usage = _merge_transcription_usage(total_usage, usage)
+            chunk_results.append(
+                {
+                    "index": index,
+                    "file": str(chunk_path),
+                    "text": text,
+                    "usage": usage,
+                }
+            )
+            percent = int(round(completed_chunks / total_chunks * 100))
+            _emit_progress(
+                progress_callback,
+                "transcription_chunk_done",
+                f"Выполнено: {completed_chunks}/{total_chunks} ({percent}%).",
+            )
+
+        text = "\n\n".join(
+            str(chunk.get("text") or "").strip()
+            for chunk in chunk_results
+            if str(chunk.get("text") or "").strip()
+        ).strip()
+        segment_items: list[dict[str, Any]] = []
+        quality = transcript_quality(text, segment_items)
+        transcript_json_path = meeting_folder / "transcript.json"
+        transcript_md_path = meeting_folder / "transcript.md"
+        canonical_result: dict[str, Any] = {
+            "status": "completed",
+            "provider": AITUNNEL_PROVIDER,
+            "model": self.model_name,
+            "language": self.language,
+            "mode": "chunked",
+            "text": text,
+            "segments": segment_items,
+            "chunks": chunk_results,
+            **quality,
+        }
+        if total_usage:
+            canonical_result["usage"] = total_usage
+        transcript_json_path.write_text(
+            json.dumps(canonical_result, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        transcript_md_path.write_text(
+            LocalWhisperTranscriber._render_markdown(
+                canonical_result,
+                source_note="внешняя транскрипция AI Tunnel",
+            ),
+            encoding="utf-8",
+        )
+
+        result: dict[str, Any] = {
+            "transcription_status": "completed",
+            "transcription_provider": AITUNNEL_PROVIDER,
+            "transcription_model": self.model_name,
+            "transcription_language": self.language,
+            "transcription_base_url": self.base_url,
+            "transcription_audio_bytes": audio_size,
+            "transcription_mode": "chunked",
+            "transcription_chunk_count": total_chunks,
+            "transcription_completed_chunks": completed_chunks,
+            "transcription_quality": quality["quality"],
+            "transcription_quality_warnings": quality["quality_warnings"],
+            "transcript_path": str(transcript_md_path),
+            "transcript_json_path": str(transcript_json_path),
+            "transcribed_at": self.now().isoformat(),
+        }
+        if total_usage:
+            result["transcription_usage"] = total_usage
+        return result
+
+    def _transcribe_file_with_retries(
+        self,
+        client: Any,
+        audio_path: Path,
+        chunk_index: int | None = None,
+        chunk_count: int | None = None,
+        progress_callback: Callable[[str, str], None] | None = None,
+    ) -> Any:
+        max_attempts = self.retry_attempts + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._transcribe_file(client, audio_path)
+            except Exception as error:
+                if attempt >= max_attempts or not is_retryable_ai_error(error):
+                    raise
+                if chunk_index is not None and chunk_count is not None:
+                    _emit_progress(
+                        progress_callback,
+                        "transcription_chunk_retry",
+                        f"Повторяем часть {chunk_index}/{chunk_count}: попытка {attempt + 1} из {max_attempts}.",
+                    )
+                if self.retry_sleep_seconds:
+                    time.sleep(self.retry_sleep_seconds)
+        raise RuntimeError("AI transcription retry loop did not return a response.")
+
+    def _transcribe_file(self, client: Any, audio_path: Path) -> Any:
+        with audio_path.open("rb") as audio_file:
+            return client.audio.transcriptions.create(
+                model=self.model_name,
+                file=audio_file,
+                language=self.language,
+                response_format="json",
+            )
 
     @staticmethod
     def _default_client_factory(**kwargs: Any) -> Any:
@@ -403,6 +623,10 @@ def create_transcriber(config: dict[str, Any]) -> Transcriber:
             env_file=str(config.get("env_file") or ""),
             timeout_seconds=int(config.get("timeout_seconds") or 300),
             max_upload_mb=float(config.get("max_upload_mb") or 25),
+            chunking_enabled=bool(config.get("chunking_enabled", True)),
+            chunk_duration_seconds=int(config.get("chunk_duration_seconds") or 600),
+            retry_attempts=int(config.get("retry_attempts", 2)),
+            retry_sleep_seconds=float(config.get("retry_sleep_seconds", 1)),
         )
     return LocalWhisperTranscriber(
         whisper_command=str(config.get("whisper_command") or "whisper"),
@@ -506,5 +730,68 @@ def _extract_transcription_usage(response: Any) -> dict[str, Any]:
         else:
             value = getattr(usage, key, None)
         if value is not None:
+            result[key] = value
+    return result
+
+
+def _emit_progress(
+    progress_callback: Callable[[str, str], None] | None,
+    event: str,
+    message: str,
+) -> None:
+    if progress_callback is not None:
+        progress_callback(event, message)
+
+
+def _wav_duration_seconds(audio_path: Path) -> float | None:
+    try:
+        with wave.open(str(audio_path), "rb") as source:
+            frame_rate = source.getframerate()
+            if frame_rate <= 0:
+                return None
+            return source.getnframes() / frame_rate
+    except (wave.Error, OSError):
+        return None
+
+
+def _split_wav_into_chunks(
+    audio_path: Path,
+    chunks_folder: Path,
+    chunk_duration_seconds: int,
+) -> list[Path]:
+    chunks_folder.mkdir(parents=True, exist_ok=True)
+    for old_chunk in chunks_folder.glob("chunk_*.wav"):
+        old_chunk.unlink()
+
+    chunk_paths: list[Path] = []
+    with wave.open(str(audio_path), "rb") as source:
+        params = source.getparams()
+        frames_per_chunk = max(1, int(params.framerate * chunk_duration_seconds))
+        total_chunks = max(1, math.ceil(params.nframes / frames_per_chunk))
+        for index in range(1, total_chunks + 1):
+            frames = source.readframes(frames_per_chunk)
+            if not frames:
+                break
+            chunk_path = chunks_folder / f"chunk_{index:03d}.wav"
+            with wave.open(str(chunk_path), "wb") as target:
+                target.setparams(params)
+                target.writeframes(frames)
+            chunk_paths.append(chunk_path)
+    return chunk_paths
+
+
+def _merge_transcription_usage(
+    total: dict[str, Any],
+    usage: dict[str, Any],
+) -> dict[str, Any]:
+    result = dict(total)
+    for key, value in usage.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            result[key] = int(result.get(key, 0)) + value
+        elif isinstance(value, float):
+            result[key] = round(float(result.get(key, 0.0)) + value, 6)
+        else:
             result[key] = value
     return result

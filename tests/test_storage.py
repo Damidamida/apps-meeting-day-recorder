@@ -314,8 +314,8 @@ def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) ->
             return {"audio_status": "extracted", "audio_path": str(audio_path)}
 
     class FakeTranscriber:
-        def transcribe(self, audio_path, meeting_folder):
-            del audio_path
+        def transcribe(self, audio_path, meeting_folder, progress_callback=None):
+            del audio_path, progress_callback
             (meeting_folder / "transcript.json").write_text(
                 json.dumps(
                     {"status": "completed", "text": "Обсудили план.", "segments": []},

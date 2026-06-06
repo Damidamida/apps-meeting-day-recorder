@@ -2,7 +2,9 @@ import json
 import subprocess
 import sys
 import types
+import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services.transcription import (
@@ -12,6 +14,15 @@ from app.services.transcription import (
     create_transcriber,
     transcript_quality,
 )
+
+
+def _write_pcm_wav(path: Path, duration_seconds: int, sample_rate: int = 16000) -> None:
+    frame_count = duration_seconds * sample_rate
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b"\0\0" * frame_count)
 
 
 def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> None:
@@ -285,6 +296,157 @@ def test_aitunnel_transcriber_rejects_audio_over_upload_limit(tmp_path: Path, mo
             "Нужна нарезка аудио на части."
         ),
     }
+
+
+def test_aitunnel_transcriber_chunks_long_audio_and_reports_progress(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path, duration_seconds=5)
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+    uploaded_names: list[str] = []
+    progress: list[tuple[str, str]] = []
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            chunk_name = Path(kwargs["file"].name).name
+            uploaded_names.append(chunk_name)
+            return SimpleNamespace(
+                text=f"Текст {chunk_name}",
+                usage=SimpleNamespace(seconds=2.0, cost_rub=0.26),
+            )
+
+    class FakeClient:
+        audio = SimpleNamespace(transcriptions=FakeTranscriptions())
+
+    transcriber = AITunnelTranscriber(
+        chunking_enabled=True,
+        chunk_duration_seconds=2,
+        client_factory=lambda **kwargs: FakeClient(),
+        now=lambda: SimpleNamespace(isoformat=lambda: "2026-06-06T12:00:00"),
+    )
+
+    metadata = transcriber.transcribe(
+        audio_path,
+        tmp_path,
+        progress_callback=lambda event, message: progress.append((event, message)),
+    )
+
+    transcript_json = json.loads((tmp_path / "transcript.json").read_text(encoding="utf-8"))
+    transcript_md = (tmp_path / "transcript.md").read_text(encoding="utf-8")
+    assert uploaded_names == ["chunk_001.wav", "chunk_002.wav", "chunk_003.wav"]
+    assert metadata["transcription_status"] == "completed"
+    assert metadata["transcription_mode"] == "chunked"
+    assert metadata["transcription_chunk_count"] == 3
+    assert metadata["transcription_completed_chunks"] == 3
+    assert metadata["transcription_usage"] == {"seconds": 6.0, "cost_rub": 0.78}
+    assert transcript_json["mode"] == "chunked"
+    assert [chunk["index"] for chunk in transcript_json["chunks"]] == [1, 2, 3]
+    assert "Текст chunk_001.wav" in transcript_json["text"]
+    assert "Текст chunk_003.wav" in transcript_md
+    assert ("transcription_chunk_done", "Выполнено: 1/3 (33%).") in progress
+    assert ("transcription_chunk_done", "Выполнено: 3/3 (100%).") in progress
+
+
+def test_aitunnel_transcriber_retries_temporary_chunk_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = tmp_path / "audio.wav"
+    _write_pcm_wav(audio_path, duration_seconds=3)
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+    attempts = 0
+    progress: list[tuple[str, str]] = []
+
+    class FakeAITunnelError(Exception):
+        status_code = 502
+
+        def __init__(self) -> None:
+            super().__init__("provider unavailable")
+            self.body = {
+                "error": {
+                    "code": 502,
+                    "message": "Provider unavailable",
+                    "metadata": {"provider_name": "openai"},
+                }
+            }
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            del kwargs
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise FakeAITunnelError()
+            return SimpleNamespace(text="Текст после retry", usage={})
+
+    class FakeClient:
+        audio = SimpleNamespace(transcriptions=FakeTranscriptions())
+
+    transcriber = AITunnelTranscriber(
+        chunking_enabled=True,
+        chunk_duration_seconds=2,
+        retry_attempts=1,
+        retry_sleep_seconds=0,
+        client_factory=lambda **kwargs: FakeClient(),
+    )
+
+    metadata = transcriber.transcribe(
+        audio_path,
+        tmp_path,
+        progress_callback=lambda event, message: progress.append((event, message)),
+    )
+
+    assert metadata["transcription_status"] == "completed"
+    assert attempts == 3
+    assert any(
+        event == "transcription_chunk_retry"
+        and "Повторяем часть 1/2: попытка 2 из 2." in message
+        for event, message in progress
+    )
+
+
+def test_aitunnel_transcriber_returns_specific_error_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake-audio")
+    monkeypatch.setenv("AITUNNEL_KEY", "test-aitunnel-key")
+
+    class FakeAITunnelError(Exception):
+        status_code = 402
+
+        def __init__(self) -> None:
+            super().__init__("no balance")
+            self.body = {
+                "error": {
+                    "code": 402,
+                    "message": "Insufficient balance",
+                    "metadata": {"provider_name": "aitunnel"},
+                }
+            }
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            del kwargs
+            raise FakeAITunnelError()
+
+    class FakeClient:
+        audio = SimpleNamespace(transcriptions=FakeTranscriptions())
+
+    metadata = AITunnelTranscriber(
+        client_factory=lambda **kwargs: FakeClient(),
+    ).transcribe(audio_path, tmp_path)
+
+    assert metadata["transcription_status"] == "failed"
+    assert metadata["transcription_error_kind"] == "insufficient_balance"
+    assert metadata["transcription_error_code"] == 402
+    assert metadata["transcription_error_provider"] == "aitunnel"
+    assert metadata["transcription_error"] == (
+        "AI Tunnel: недостаточно баланса. Пополните баланс и повторите обработку."
+    )
 
 
 def test_transcript_quality_marks_repeated_long_transcript_as_suspect() -> None:

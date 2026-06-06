@@ -262,6 +262,117 @@ def test_api_failure_returns_failed_metadata(tmp_path: Path, monkeypatch) -> Non
     }
 
 
+def test_summary_returns_specific_aitunnel_error_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
+    _write_completed_transcript(tmp_path)
+
+    class FakeAITunnelError(Exception):
+        status_code = 402
+
+        def __init__(self) -> None:
+            super().__init__("no balance")
+            self.body = {
+                "error": {
+                    "code": 402,
+                    "message": "Insufficient balance",
+                    "metadata": {"provider_name": "aitunnel"},
+                }
+            }
+
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: (_ for _ in ()).throw(FakeAITunnelError()))
+    )
+    summarizer = OpenAISummarizer(_summary_config(), client_factory=lambda **kwargs: client)
+
+    metadata = summarizer.summarize_meeting(tmp_path, {"transcription_status": "completed"})
+
+    assert metadata == {
+        "summary_status": "failed",
+        "summary_error": "AI Tunnel: недостаточно баланса. Пополните баланс и повторите обработку.",
+        "summary_error_code": 402,
+        "summary_error_kind": "insufficient_balance",
+        "summary_error_provider": "aitunnel",
+    }
+
+
+def test_day_summary_returns_specific_aitunnel_error_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
+
+    class FakeAITunnelError(Exception):
+        status_code = 429
+
+        def __init__(self) -> None:
+            super().__init__("rate limited")
+            self.body = {
+                "error": {
+                    "code": 429,
+                    "message": "Too many requests",
+                    "metadata": {"provider_name": "openai"},
+                }
+            }
+
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **kwargs: (_ for _ in ()).throw(FakeAITunnelError()))
+    )
+    summarizer = OpenAISummarizer(
+        _summary_config(retry_attempts=0),
+        client_factory=lambda **kwargs: client,
+    )
+
+    metadata = summarizer.summarize_day(
+        tmp_path,
+        "# Итоги дня",
+        [{"title": "Встреча", "summary_text": "Обсудили план."}],
+    )
+
+    assert metadata == {
+        "day_summary_status": "failed",
+        "day_summary_error": "AI Tunnel: превышен лимит запросов. Подождите и повторите обработку.",
+        "day_summary_error_code": 429,
+        "day_summary_error_kind": "rate_limited",
+        "day_summary_error_provider": "openai",
+    }
+
+
+def test_summary_retries_temporary_aitunnel_error(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
+    _write_completed_transcript(tmp_path)
+    calls = 0
+
+    class FakeAITunnelError(Exception):
+        status_code = 502
+
+        def __init__(self) -> None:
+            super().__init__("provider unavailable")
+            self.body = {"error": {"code": 502, "message": "Provider unavailable"}}
+
+    def create_response(**kwargs):
+        del kwargs
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise FakeAITunnelError()
+        return SimpleNamespace(output_text="# Итоги встречи\n\nГотово.", usage={})
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
+    summarizer = OpenAISummarizer(
+        _summary_config(retry_attempts=1, retry_sleep_seconds=0),
+        client_factory=lambda **kwargs: client,
+    )
+
+    metadata = summarizer.summarize_meeting(tmp_path, {"transcription_status": "completed"})
+
+    assert calls == 2
+    assert metadata["summary_status"] == "draft_created"
+    assert "# Итоги встречи" in (tmp_path / "summary_draft.md").read_text(encoding="utf-8")
+
+
 def test_env_file_parser_reads_plain_and_quoted_values(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("AITUNNEL_KEY", raising=False)
     env_path = tmp_path / ".env.local"

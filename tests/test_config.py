@@ -119,6 +119,26 @@ def test_transcription_config_supports_aitunnel_backend(tmp_path) -> None:
     assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
 
 
+def test_config_allows_zero_retry_attempts(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "summary:\n"
+        "  retry_attempts: 0\n"
+        "transcription:\n"
+        "  backend: aitunnel\n"
+        "  backends:\n"
+        "    aitunnel:\n"
+        "      retry_attempts: 0\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["summary"]["retry_attempts"] == 0
+    assert config["transcription"]["retry_attempts"] == 0
+    assert config["transcription"]["backends"]["aitunnel"]["retry_attempts"] == 0
+
+
 def test_transcription_config_supports_backend_profiles(tmp_path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
