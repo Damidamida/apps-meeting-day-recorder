@@ -580,6 +580,31 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     app.processEvents()
 
 
+def test_dark_theme_styles_scroll_page_surfaces_and_form_labels(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.config["ui"]["theme"] = "dark"
+
+    window._apply_theme_settings()
+
+    workday_scroll = window.pages.widget(0)
+    settings_scroll = window.pages.widget(3)
+    assert isinstance(workday_scroll, QScrollArea)
+    assert isinstance(settings_scroll, QScrollArea)
+    assert workday_scroll.widget().objectName() == "pageSurface"
+    assert settings_scroll.widget().objectName() == "pageSurface"
+    assert workday_scroll.viewport().objectName() == "scrollViewport"
+    assert settings_scroll.viewport().objectName() == "scrollViewport"
+    assert "QWidget#pageSurface" in window.styleSheet()
+    assert "QWidget#scrollViewport" in window.styleSheet()
+    assert "QLabel {" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
 def test_archive_and_help_pages_explain_placeholders_and_local_flow(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

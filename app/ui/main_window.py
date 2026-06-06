@@ -1057,6 +1057,8 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _create_placeholder_page(title: str, message: str) -> QWidget:
         page = QWidget()
+        page.setObjectName("pageSurface")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout()
         layout.setSpacing(14)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1072,6 +1074,24 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         page.setLayout(layout)
         return page
+
+    @staticmethod
+    def _prepare_page_surface(page: QWidget) -> QWidget:
+        page.setObjectName("pageSurface")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        return page
+
+    @staticmethod
+    def _create_page_scroll_area(object_name: str, page: QWidget) -> QScrollArea:
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName(object_name)
+        scroll_area.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        scroll_area.viewport().setObjectName("scrollViewport")
+        scroll_area.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setWidget(MainWindow._prepare_page_surface(page))
+        return scroll_area
 
     def _configured_theme(self) -> str:
         theme = str(self.config.get("ui", {}).get("theme", "light")).strip().lower()
@@ -1149,8 +1169,14 @@ class MainWindow(QMainWindow):
             }
             QWidget#appRoot,
             QWidget#content,
-            QStackedWidget#pages {
+            QStackedWidget#pages,
+            QWidget#pageSurface,
+            QWidget#scrollViewport {
                 background: %(bg)s;
+            }
+            QLabel {
+                background: transparent;
+                color: %(text)s;
             }
             QWidget#sidebar {
                 background: %(surface)s;
@@ -1397,6 +1423,10 @@ class MainWindow(QMainWindow):
             QScrollArea {
                 background: %(bg)s;
                 border: none;
+            }
+            QScrollArea#workdayScrollArea,
+            QScrollArea#settingsScrollArea {
+                background: %(bg)s;
             }
             QScrollBar:vertical {
                 background: %(bg)s;
@@ -2097,6 +2127,7 @@ class MainWindow(QMainWindow):
 
     def _create_workday_page(self) -> QWidget:
         page = QWidget()
+        self._prepare_page_surface(page)
         page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2314,16 +2345,13 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         page.setLayout(layout)
 
-        scroll_area = QScrollArea()
-        scroll_area.setObjectName("workdayScrollArea")
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setWidget(page)
+        scroll_area = self._create_page_scroll_area("workdayScrollArea", page)
         self.workday_scroll_area = scroll_area
         return scroll_area
 
     def _create_review_page(self) -> QWidget:
         page = QWidget()
+        self._prepare_page_surface(page)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -2387,6 +2415,7 @@ class MainWindow(QMainWindow):
 
     def _create_settings_page(self) -> QWidget:
         page = QWidget()
+        self._prepare_page_surface(page)
         page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2523,12 +2552,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.settings_status_label)
 
         page.setLayout(layout)
-        scroll_area = QScrollArea()
-        scroll_area.setObjectName("settingsScrollArea")
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setWidget(page)
-        return scroll_area
+        return self._create_page_scroll_area("settingsScrollArea", page)
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -2546,6 +2570,7 @@ class MainWindow(QMainWindow):
 
     def _create_archive_page(self) -> QWidget:
         page = QWidget()
+        self._prepare_page_surface(page)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -2585,6 +2610,7 @@ class MainWindow(QMainWindow):
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()
+        self._prepare_page_surface(page)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
