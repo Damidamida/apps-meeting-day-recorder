@@ -1886,12 +1886,13 @@ class MainWindow(QMainWindow):
         if expanded:
             actions_layout = QHBoxLayout()
             actions_layout.setSpacing(8)
-            reprocess_button = self._add_button(
-                actions_layout,
-                "Повторить обработку",
-                lambda checked=False, folder=meeting_folder: self.reprocess_meeting(folder),
-                "primaryButton",
-            )
+            if self._should_show_reprocess_button(meeting_folder, metadata):
+                self._add_button(
+                    actions_layout,
+                    "Повторить обработку",
+                    lambda checked=False, folder=meeting_folder: self.reprocess_meeting(folder),
+                    "primaryButton",
+                )
             open_meeting_button = self._add_button(
                 actions_layout,
                 "Открыть папку встречи",
@@ -1903,7 +1904,6 @@ class MainWindow(QMainWindow):
                 self.open_day_folder,
             )
             actions_layout.addStretch(1)
-            reprocess_button.setEnabled(self._can_reprocess_meeting(meeting_folder, metadata))
             open_meeting_button.setEnabled(True)
             open_day_button.setEnabled(self.storage.get_today_day_folder() is not None)
             card_layout.addLayout(actions_layout)
@@ -1944,17 +1944,41 @@ class MainWindow(QMainWindow):
         metadata = metadata or self.storage.read_meeting_metadata(meeting_folder)
         return (
             metadata.get("status") == "ended"
+            and metadata.get("processing_status") not in {"pending", "running"}
             and not self.day_summary_running
             and meeting_folder != self.pipeline_meeting_folder
             and meeting_folder not in self.processing_queue
+            and self._is_reprocessable_result(metadata)
+            and self._meeting_has_reprocess_source(metadata)
         )
+
+    def _should_show_reprocess_button(
+        self,
+        meeting_folder: Path,
+        metadata: dict[str, object] | None = None,
+    ) -> bool:
+        return self._can_reprocess_meeting(meeting_folder, metadata)
+
+    def _is_reprocessable_result(self, metadata: dict[str, object]) -> bool:
+        badge_text, _ = self._meeting_badge(metadata)
+        return badge_text in {"Требует внимания", "Итоги готовы"}
+
+    @staticmethod
+    def _meeting_has_reprocess_source(metadata: dict[str, object]) -> bool:
+        recording_path = metadata.get("recording_path")
+        if not recording_path:
+            return False
+        try:
+            return Path(str(recording_path)).is_file()
+        except OSError:
+            return False
 
     def reprocess_meeting(self, meeting_folder: Path) -> None:
         metadata = self.storage.read_meeting_metadata(meeting_folder)
         if not self._can_reprocess_meeting(meeting_folder, metadata):
             self.status_label.setText(
-                "Эту встречу сейчас нельзя повторно обработать: она активна, уже находится в очереди "
-                "или сейчас обновляются итоги дня."
+                "Эту встречу сейчас нельзя повторно обработать: проверьте статус встречи, очередь "
+                "обработки и наличие файла записи."
             )
             return
         self.storage.mark_meeting_for_reprocessing(meeting_folder)
