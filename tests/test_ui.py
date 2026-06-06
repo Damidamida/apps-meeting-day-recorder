@@ -9,7 +9,7 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import StorageService
@@ -439,6 +439,159 @@ def test_meeting_badge_uses_result_status_not_ended_state(tmp_path: Path) -> Non
             "summary_status": "skipped",
         }
     ) == ("Требует внимания", "error")
+
+    window.close()
+    app.processEvents()
+
+
+def test_reprocess_button_is_hidden_for_unsafe_meeting_states(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    window = MainWindow(storage, recorder)
+    recording_path = tmp_path / "recording.mkv"
+    recording_path.write_bytes(b"fake recording")
+    cases = [
+        {
+            "title": "Активная",
+            "metadata": {
+                "status": "active",
+                "recording_status": "recording",
+            },
+        },
+        {
+            "title": "Без записи",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "completed",
+                "recording_status": "stop_failed",
+                "audio_status": "skipped",
+                "transcription_status": "skipped",
+                "summary_status": "skipped",
+            },
+        },
+        {
+            "title": "Итоги выключены",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "completed",
+                "recording_status": "stopped",
+                "recording_path": str(recording_path),
+                "audio_status": "extracted",
+                "transcription_status": "completed",
+                "summary_status": "disabled",
+            },
+        },
+        {
+            "title": "В очереди",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "pending",
+                "recording_status": "stopped",
+                "recording_path": str(recording_path),
+                "audio_status": "extracted",
+                "transcription_status": "completed",
+                "summary_status": "draft_created",
+            },
+        },
+        {
+            "title": "Обрабатывается",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "running",
+                "recording_status": "stopped",
+                "recording_path": str(recording_path),
+                "audio_status": "extracted",
+                "transcription_status": "completed",
+                "summary_status": "draft_created",
+            },
+        },
+        {
+            "title": "Итоги готовы без файла записи",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "completed",
+                "recording_status": "stopped",
+                "recording_path": str(tmp_path / "missing-recording.mkv"),
+                "audio_status": "extracted",
+                "transcription_status": "completed",
+                "summary_status": "draft_created",
+            },
+        },
+    ]
+
+    for index, case in enumerate(cases, start=9):
+        meeting_folder = storage.create_meeting_folder(
+            case["title"],
+            started_at=datetime.combine(
+                datetime.now().date(),
+                datetime.min.time(),
+            ).replace(hour=index),
+            metadata=case["metadata"],
+        )
+        card = window._create_meeting_card(meeting_folder, expanded=True)
+        button_texts = {button.text() for button in card.findChildren(QPushButton)}
+
+        assert "Повторить обработку" not in button_texts
+
+    window.close()
+    app.processEvents()
+
+
+def test_reprocess_button_is_visible_for_attention_and_ready_results_with_recording(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    window = MainWindow(storage, recorder)
+    recording_path = tmp_path / "recording.mkv"
+    recording_path.write_bytes(b"fake recording")
+    cases = [
+        {
+            "title": "Ошибка транскрипции",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "completed",
+                "recording_status": "stopped",
+                "recording_path": str(recording_path),
+                "audio_status": "extracted",
+                "transcription_status": "failed",
+                "summary_status": "skipped",
+            },
+        },
+        {
+            "title": "Итоги готовы",
+            "metadata": {
+                "status": "ended",
+                "processing_status": "completed",
+                "recording_status": "stopped",
+                "recording_path": str(recording_path),
+                "audio_status": "extracted",
+                "transcription_status": "completed",
+                "summary_status": "draft_created",
+            },
+        },
+    ]
+
+    for index, case in enumerate(cases, start=14):
+        meeting_folder = storage.create_meeting_folder(
+            case["title"],
+            started_at=datetime.combine(
+                datetime.now().date(),
+                datetime.min.time(),
+            ).replace(hour=index),
+            metadata=case["metadata"],
+        )
+        card = window._create_meeting_card(meeting_folder, expanded=True)
+        buttons = {
+            button.text(): button for button in card.findChildren(QPushButton)
+        }
+
+        assert "Повторить обработку" in buttons
+        assert buttons["Повторить обработку"].isEnabled()
 
     window.close()
     app.processEvents()
