@@ -59,6 +59,11 @@ AITUNNEL_MODEL_OPTIONS = [
     ("Whisper Large V3 — 0.36 ₽/мин", "whisper-large-v3"),
     ("Whisper 1 — 1.15 ₽/мин", "whisper-1"),
 ]
+SUMMARY_MODEL_OPTIONS = [
+    ("GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход", "gpt-5.4-mini"),
+    ("GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход", "gpt-5.4-nano"),
+    ("Другая модель AI Tunnel", "__custom__"),
+]
 
 
 class MeetingPipelineWorker(QObject):
@@ -2577,23 +2582,39 @@ class MainWindow(QMainWindow):
         summary_layout.setVerticalSpacing(8)
         self.settings_summary_enabled_checkbox = QCheckBox("Генерация итогов включена")
         self.settings_summary_enabled_checkbox.setChecked(bool(self.config["summary"]["enabled"]))
-        self.settings_summary_model_input = QLineEdit(str(self.config["summary"]["model"]))
-        self.settings_summary_api_key_env_input = QLineEdit(str(self.config["summary"]["api_key_env"]))
-        self.settings_summary_base_url_input = QLineEdit(str(self.config["summary"]["base_url"]))
-        self.settings_summary_env_file_input = QLineEdit(str(self.config["summary"]["env_file"]))
+        self.settings_summary_model_select = QComboBox()
+        for label, value in SUMMARY_MODEL_OPTIONS:
+            self.settings_summary_model_select.addItem(label, value)
+        self.settings_summary_custom_model_input = QLineEdit()
+        self.settings_summary_custom_model_input.setPlaceholderText(
+            "Например: deepseek-r1, gemini-..., claude-..."
+        )
         self.settings_summary_timeout_input = QSpinBox()
         self.settings_summary_timeout_input.setRange(1, 3600)
         self.settings_summary_timeout_input.setValue(int(self.config["summary"]["timeout_seconds"]))
         self.settings_summary_chunk_input = QSpinBox()
         self.settings_summary_chunk_input.setRange(1000, 200000)
         self.settings_summary_chunk_input.setValue(int(self.config["summary"]["max_chars_per_chunk"]))
+        summary_hint = QLabel(
+            "Summary использует AI Tunnel. API key берется из блока `Секреты` "
+            "и переменной AITUNNEL_KEY."
+        )
+        summary_hint.setObjectName("sectionHint")
+        summary_hint.setWordWrap(True)
         summary_layout.addRow("", self.settings_summary_enabled_checkbox)
-        summary_layout.addRow("Модель:", self.settings_summary_model_input)
-        summary_layout.addRow("Переменная API key:", self.settings_summary_api_key_env_input)
-        summary_layout.addRow("Base URL:", self.settings_summary_base_url_input)
-        summary_layout.addRow(".env файл:", self.settings_summary_env_file_input)
+        summary_layout.addRow("Модель:", self.settings_summary_model_select)
+        self.settings_summary_custom_model_label = QLabel("ID модели:")
+        summary_layout.addRow(
+            self.settings_summary_custom_model_label,
+            self.settings_summary_custom_model_input,
+        )
         summary_layout.addRow("Timeout, секунд:", self.settings_summary_timeout_input)
         summary_layout.addRow("Символов на chunk:", self.settings_summary_chunk_input)
+        summary_layout.addRow("", summary_hint)
+        self._load_summary_model_settings(str(self.config["summary"]["model"]))
+        self.settings_summary_model_select.currentIndexChanged.connect(
+            self._update_summary_custom_model_visibility
+        )
         layout.addWidget(self._create_card("Summary", summary_layout))
 
         ui_layout = QFormLayout()
@@ -2751,6 +2772,27 @@ class MainWindow(QMainWindow):
             field.setVisible(visible)
             if label is not None:
                 label.setVisible(visible)
+
+    def _load_summary_model_settings(self, model: str) -> None:
+        known_models = {value for _, value in SUMMARY_MODEL_OPTIONS if value != "__custom__"}
+        if model in known_models:
+            self._set_combo_value(self.settings_summary_model_select, model)
+            self.settings_summary_custom_model_input.clear()
+        else:
+            self._set_combo_value(self.settings_summary_model_select, "__custom__")
+            self.settings_summary_custom_model_input.setText(model)
+        self._update_summary_custom_model_visibility()
+
+    def _update_summary_custom_model_visibility(self) -> None:
+        visible = self._combo_value(self.settings_summary_model_select) == "__custom__"
+        self.settings_summary_custom_model_label.setVisible(visible)
+        self.settings_summary_custom_model_input.setVisible(visible)
+
+    def _summary_model_from_settings(self) -> str:
+        selected_model = self._combo_value(self.settings_summary_model_select)
+        if selected_model == "__custom__":
+            return self.settings_summary_custom_model_input.text().strip() or "gpt-5.4-mini"
+        return selected_model or "gpt-5.4-mini"
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -3698,16 +3740,10 @@ class MainWindow(QMainWindow):
             "summary": {
                 "enabled": self.settings_summary_enabled_checkbox.isChecked(),
                 "provider": "openai",
-                "model": self.settings_summary_model_input.text().strip() or "gpt-5.4-mini",
-                "api_key_env": (
-                    self.settings_summary_api_key_env_input.text().strip()
-                    or str(DEFAULT_CONFIG["summary"]["api_key_env"])
-                ),
-                "base_url": (
-                    self.settings_summary_base_url_input.text().strip()
-                    or str(DEFAULT_CONFIG["summary"]["base_url"])
-                ),
-                "env_file": self.settings_summary_env_file_input.text().strip(),
+                "model": self._summary_model_from_settings(),
+                "api_key_env": str(DEFAULT_CONFIG["summary"]["api_key_env"]),
+                "base_url": str(DEFAULT_CONFIG["summary"]["base_url"]),
+                "env_file": "",
                 "timeout_seconds": self.settings_summary_timeout_input.value(),
                 "max_chars_per_chunk": self.settings_summary_chunk_input.value(),
             },

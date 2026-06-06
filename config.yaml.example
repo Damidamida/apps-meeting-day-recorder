@@ -43,14 +43,16 @@ transcription:
 summary:
   enabled: false
   provider: "openai"
+  # В UI доступны рекомендуемые модели AI Tunnel:
+  # - gpt-5.4-mini: 144 ₽/1M вход, 864 ₽/1M выход, значение по умолчанию;
+  # - gpt-5.4-nano: 38.4 ₽/1M вход, 240 ₽/1M выход.
+  # Для других моделей AI Tunnel выберите в UI "Другая модель AI Tunnel"
+  # и укажите ID модели из каталога AI Tunnel.
   model: "gpt-5.4-mini"
+  # В обычном UI эти поля не показываются: используется AI Tunnel, а ключ берется
+  # из общего secrets.env_file или переменной окружения Windows AITUNNEL_KEY.
   api_key_env: "AITUNNEL_KEY"
-  # По умолчанию используется AI Tunnel как OpenAI-compatible endpoint.
   base_url: "https://api.aitunnel.ru/v1/"
-  # Для ProxyAPI как альтернативного endpoint используйте:
-  # api_key_env: "PROXYAPI_KEY"
-  # base_url: "https://api.proxyapi.ru/openai/v1"
-  # Обычно используется общий secrets.env_file. Это поле оставлено для редких отдельных summary-ключей.
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000

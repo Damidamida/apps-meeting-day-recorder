@@ -177,7 +177,15 @@ API key не хранится в репозитории. Для AI Tunnel исп
 
 Видео и аудио во внешний AI endpoint не отправляются. Отправляется только текст из `transcript.md` / `transcript.json`.
 
-По умолчанию генерация итогов выключена. Для включения настройте `config.yaml`:
+По умолчанию генерация итогов выключена. В разделе `Настройки -> Summary` можно включить генерацию и выбрать модель. В обычном UI доступны:
+
+- `GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход`, значение по умолчанию;
+- `GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход`, эконом-вариант;
+- `Другая модель AI Tunnel` — для ручного ввода ID модели из каталога AI Tunnel, например DeepSeek, Google или Anthropic-моделей, доступных через AI Tunnel.
+
+API key, Base URL и отдельный `.env` для Summary в обычном UI не показываются. Приложение использует `AITUNNEL_KEY`, `https://api.aitunnel.ru/v1/` и общий `secrets.env_file`.
+
+Пример локального `config.yaml`:
 
 ```yaml
 summary:
@@ -190,24 +198,18 @@ summary:
   max_chars_per_chunk: 20000
 ```
 
-API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `AITUNNEL_KEY`.
-
-Для локального использования укажите путь к внешнему `.env.local` в общем `secrets.env_file`, но сам `.env.local` нельзя добавлять в git.
-
-Если нужно временно вернуться на ProxyAPI, укажите ключ ProxyAPI и базовый URL ProxyAPI в локальном `config.yaml`:
+Для другой модели AI Tunnel достаточно заменить `model` на ID модели из каталога AI Tunnel:
 
 ```yaml
 summary:
   enabled: true
   provider: "openai"
-  model: "gpt-5.4-mini"
-  api_key_env: "PROXYAPI_KEY"
-  base_url: "https://api.proxyapi.ru/openai/v1"
-  timeout_seconds: 120
-  max_chars_per_chunk: 20000
+  model: "deepseek-r1"
 ```
 
-В обоих режимах приложение продолжает использовать официальный OpenAI SDK, но отправляет запросы в выбранный OpenAI-compatible endpoint. Видео и аудио по-прежнему не отправляются для генерации итогов.
+API key не хранится в репозитории. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`. Сам `.env.local` нельзя добавлять в git.
+
+Приложение продолжает использовать официальный OpenAI SDK, но отправляет запросы в AI Tunnel как OpenAI-compatible endpoint. Видео и аудио по-прежнему не отправляются для генерации итогов.
 
 ## Ручная проверка полного сценария
 

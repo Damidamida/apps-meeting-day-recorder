@@ -555,8 +555,7 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_transcription_vad_checkbox.setChecked(False)
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window.settings_summary_enabled_checkbox.setChecked(True)
-    window.settings_summary_api_key_env_input.setText("PROXYAPI_KEY")
-    window.settings_summary_base_url_input.setText("https://api.proxyapi.ru/openai/v1")
+    window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
     window.settings_theme_select.setCurrentIndex(window.settings_theme_select.findData("dark"))
     window.settings_floating_theme_select.setCurrentIndex(
         window.settings_floating_theme_select.findData("dark")
@@ -587,8 +586,10 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["transcription"]["backends"]["faster_whisper"]["vad_filter"] is False
     assert config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
     assert config["summary"]["enabled"] is True
-    assert config["summary"]["api_key_env"] == "PROXYAPI_KEY"
-    assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
+    assert config["summary"]["model"] == "gpt-5.4-nano"
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["summary"]["env_file"] == ""
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"
@@ -697,7 +698,7 @@ def test_settings_save_defers_transcription_runtime_change_while_processing(
     app.processEvents()
 
 
-def test_settings_screen_uses_aitunnel_summary_defaults_when_fields_are_empty(
+def test_settings_screen_uses_simplified_aitunnel_summary_settings(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -708,12 +709,49 @@ def test_settings_screen_uses_aitunnel_summary_defaults_when_fields_are_empty(
     window = MainWindow(storage, recorder)
 
     window.settings_summary_enabled_checkbox.setChecked(True)
-    window.settings_summary_api_key_env_input.clear()
-    window.settings_summary_base_url_input.clear()
+    assert not hasattr(window, "settings_summary_api_key_env_input")
+    assert not hasattr(window, "settings_summary_base_url_input")
+    assert not hasattr(window, "settings_summary_env_file_input")
+    assert window.settings_summary_model_select.currentData() == "gpt-5.4-mini"
+    assert "144 ₽/1M вход" in window.settings_summary_model_select.itemText(
+        window.settings_summary_model_select.currentIndex()
+    )
+
+    window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
 
     window.save_settings()
 
     config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["summary"]["model"] == "gpt-5.4-nano"
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert config["summary"]["env_file"] == ""
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_supports_custom_aitunnel_summary_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.settings_summary_custom_model_input.isHidden()
+
+    window._set_combo_value(window.settings_summary_model_select, "__custom__")
+    app.processEvents()
+    assert not window.settings_summary_custom_model_input.isHidden()
+    window.settings_summary_custom_model_input.setText("deepseek-r1")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["summary"]["model"] == "deepseek-r1"
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
 
