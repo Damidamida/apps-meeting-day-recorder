@@ -44,7 +44,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "root": "MeetingSummaries",
     },
     "obs": {
-        "enabled": False,
         "websocket_host": "localhost",
         "websocket_port": 4455,
         "websocket_password": "",
@@ -155,7 +154,7 @@ def _section(loaded: dict[str, Any], name: str, config: dict[str, Any]) -> dict[
 
 
 def _normalize_obs(obs: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    obs["enabled"] = _safe_bool(obs.get("enabled"), False)
+    obs.pop("enabled", None)
     obs["websocket_host"] = str(obs.get("websocket_host") or "localhost").strip() or "localhost"
     obs["websocket_port"] = _safe_int(
         obs.get("websocket_port"),

@@ -39,7 +39,7 @@ def check_readiness(config: dict[str, Any], recorder: Recorder, data_root: Path)
 
 def _obs_status(recorder: Recorder) -> dict[str, str]:
     if not recorder.enabled:
-        return _status("OBS", "skipped", "OBS выключен в config.")
+        return _status("OBS", "skipped", "OBS не используется в тестовом режиме.")
     try:
         recorder.check_connection()
     except RecorderError:
