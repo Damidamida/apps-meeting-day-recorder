@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
 
@@ -35,6 +36,29 @@ from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import StorageService
 from app.services.summarization import create_summarizer
 from app.services.transcription import create_transcriber
+
+
+WHISPER_CLI_MODEL_OPTIONS = [
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large", "large"),
+    ("turbo", "turbo"),
+]
+FASTER_WHISPER_MODEL_OPTIONS = [
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large-v3", "large-v3"),
+    ("turbo", "turbo"),
+]
+AITUNNEL_MODEL_OPTIONS = [
+    ("Whisper Large V3 Turbo — 0.13 ₽/мин", "whisper-large-v3-turbo"),
+    ("Whisper Large V3 — 0.36 ₽/мин", "whisper-large-v3"),
+    ("Whisper 1 — 1.15 ₽/мин", "whisper-1"),
+]
 
 
 class MeetingPipelineWorker(QObject):
@@ -2476,6 +2500,12 @@ class MainWindow(QMainWindow):
         transcription_layout = QFormLayout()
         transcription_layout.setHorizontalSpacing(18)
         transcription_layout.setVerticalSpacing(8)
+        self.settings_transcription_profiles = deepcopy(
+            self.config["transcription"].get("backends", {})
+        )
+        self.settings_current_transcription_backend = str(
+            self.config["transcription"]["backend"]
+        )
         self.settings_transcription_rows: list[tuple[QLabel | None, QWidget, set[str]]] = []
         self.settings_transcription_backend_select = QComboBox()
         self.settings_transcription_backend_select.addItems(
@@ -2485,63 +2515,33 @@ class MainWindow(QMainWindow):
             self.settings_transcription_backend_select,
             str(self.config["transcription"]["backend"]),
         )
-        self.settings_transcription_model_input = QLineEdit(str(self.config["transcription"]["model"]))
-        self.settings_transcription_language_input = QLineEdit(str(self.config["transcription"]["language"]))
-        self.settings_transcription_device_input = QLineEdit(str(self.config["transcription"]["device"]))
-        self.settings_transcription_compute_type_input = QLineEdit(
-            str(self.config["transcription"]["compute_type"])
-        )
-        self.settings_transcription_command_input = QLineEdit(
-            str(self.config["transcription"]["whisper_command"])
-        )
-        self.settings_transcription_api_key_env_input = QLineEdit(
-            str(self.config["transcription"].get("api_key_env", "AITUNNEL_KEY"))
-        )
-        self.settings_transcription_base_url_input = QLineEdit(
-            str(self.config["transcription"].get("base_url", "https://api.aitunnel.ru/v1/"))
-        )
-        self.settings_transcription_env_file_input = QLineEdit(
-            str(self.config["transcription"].get("env_file", ""))
-        )
+        self.settings_transcription_model_select = QComboBox()
+        self.settings_transcription_device_select = QComboBox()
+        self.settings_transcription_device_select.addItems(["cpu", "cuda"])
         self.settings_transcription_timeout_input = QSpinBox()
         self.settings_transcription_timeout_input.setRange(1, 3600)
-        self.settings_transcription_timeout_input.setValue(
-            int(self.config["transcription"].get("timeout_seconds", 300))
-        )
         self.settings_transcription_upload_limit_input = QSpinBox()
         self.settings_transcription_upload_limit_input.setRange(1, 25)
-        self.settings_transcription_upload_limit_input.setValue(
-            int(self.config["transcription"].get("max_upload_mb", 25))
-        )
         self.settings_transcription_vad_checkbox = QCheckBox(
             "Для faster-whisper отсекать тишину и неречевой шум"
         )
-        self.settings_transcription_vad_checkbox.setChecked(
-            bool(self.config["transcription"].get("vad_filter", True))
+        transcription_hint = QLabel(
+            "Язык транскрипции всегда русский. API key для AI Tunnel берется из блока "
+            "`Секреты` и переменной AITUNNEL_KEY."
         )
+        transcription_hint.setObjectName("sectionHint")
+        transcription_hint.setWordWrap(True)
         transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
         self._add_transcription_settings_row(
             transcription_layout,
             "Модель:",
-            self.settings_transcription_model_input,
-            {"whisper_cli", "faster_whisper", "aitunnel"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            "Язык:",
-            self.settings_transcription_language_input,
+            self.settings_transcription_model_select,
             {"whisper_cli", "faster_whisper", "aitunnel"},
         )
         self._add_transcription_settings_row(
             transcription_layout,
             "Устройство:",
-            self.settings_transcription_device_input,
-            {"faster_whisper"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            "Compute type:",
-            self.settings_transcription_compute_type_input,
+            self.settings_transcription_device_select,
             {"faster_whisper"},
         )
         self._add_transcription_settings_row(
@@ -2549,30 +2549,6 @@ class MainWindow(QMainWindow):
             "",
             self.settings_transcription_vad_checkbox,
             {"faster_whisper"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            "Whisper command:",
-            self.settings_transcription_command_input,
-            {"whisper_cli"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            "Переменная API key:",
-            self.settings_transcription_api_key_env_input,
-            {"aitunnel"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            "Base URL:",
-            self.settings_transcription_base_url_input,
-            {"aitunnel"},
-        )
-        self._add_transcription_settings_row(
-            transcription_layout,
-            ".env файл:",
-            self.settings_transcription_env_file_input,
-            {"aitunnel"},
         )
         self._add_transcription_settings_row(
             transcription_layout,
@@ -2586,8 +2562,12 @@ class MainWindow(QMainWindow):
             self.settings_transcription_upload_limit_input,
             {"aitunnel"},
         )
+        transcription_layout.addRow("", transcription_hint)
+        self._load_transcription_profile_into_settings(
+            self.settings_current_transcription_backend
+        )
         self.settings_transcription_backend_select.currentTextChanged.connect(
-            self._update_transcription_settings_visibility
+            self._on_transcription_backend_changed
         )
         self._update_transcription_settings_visibility()
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
@@ -2636,7 +2616,7 @@ class MainWindow(QMainWindow):
         )
         theme_hint = QLabel(
             "Тема основного окна и floating control применяется сразу после сохранения. "
-            "Настройки OBS, transcription, summary и папки данных применяются после перезапуска."
+            "Настройки transcription применяются для следующих встреч после сохранения."
         )
         theme_hint.setObjectName("sectionHint")
         theme_hint.setWordWrap(True)
@@ -2672,6 +2652,95 @@ class MainWindow(QMainWindow):
         layout.addRow(label_text, field)
         label = layout.labelForField(field)
         self.settings_transcription_rows.append((label, field, backends))
+
+    def _on_transcription_backend_changed(self, backend: str) -> None:
+        previous_backend = getattr(self, "settings_current_transcription_backend", "")
+        if previous_backend:
+            self._save_current_transcription_profile(previous_backend)
+        self.settings_current_transcription_backend = backend
+        self._load_transcription_profile_into_settings(backend)
+        self._update_transcription_settings_visibility()
+
+    def _load_transcription_profile_into_settings(self, backend: str) -> None:
+        profile = self._transcription_settings_profile(backend)
+        self._set_transcription_model_options(
+            backend,
+            str(profile.get("model") or "base"),
+        )
+        if backend == "faster_whisper":
+            self._set_combo_value(
+                self.settings_transcription_device_select,
+                str(profile.get("device") or "cpu"),
+            )
+            self.settings_transcription_vad_checkbox.setChecked(
+                bool(profile.get("vad_filter", True))
+            )
+        if backend == "aitunnel":
+            self.settings_transcription_timeout_input.setValue(
+                int(profile.get("timeout_seconds") or 300)
+            )
+            self.settings_transcription_upload_limit_input.setValue(
+                int(profile.get("max_upload_mb") or 25)
+            )
+
+    def _set_transcription_model_options(self, backend: str, selected_model: str) -> None:
+        if backend == "aitunnel":
+            options = AITUNNEL_MODEL_OPTIONS
+        elif backend == "faster_whisper":
+            options = FASTER_WHISPER_MODEL_OPTIONS
+        else:
+            options = WHISPER_CLI_MODEL_OPTIONS
+        self.settings_transcription_model_select.clear()
+        for label, value in options:
+            self.settings_transcription_model_select.addItem(label, value)
+        self._set_combo_value(self.settings_transcription_model_select, selected_model)
+
+    def _save_current_transcription_profile(self, backend: str) -> None:
+        if not hasattr(self, "settings_transcription_profiles"):
+            return
+        profile = self._transcription_settings_profile(backend)
+        model = self._combo_value(self.settings_transcription_model_select)
+        if backend == "aitunnel":
+            profile.update(
+                {
+                    "model": model or "whisper-large-v3-turbo",
+                    "language": "ru",
+                    "api_key_env": "AITUNNEL_KEY",
+                    "base_url": "https://api.aitunnel.ru/v1/",
+                    "env_file": "",
+                    "timeout_seconds": self.settings_transcription_timeout_input.value(),
+                    "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
+                }
+            )
+        elif backend == "faster_whisper":
+            device = self._combo_value(self.settings_transcription_device_select) or "cpu"
+            profile.update(
+                {
+                    "model": model or "base",
+                    "language": "ru",
+                    "device": device,
+                    "compute_type": "float16" if device == "cuda" else "int8",
+                    "vad_filter": self.settings_transcription_vad_checkbox.isChecked(),
+                }
+            )
+        else:
+            profile.update(
+                {
+                    "model": model or "base",
+                    "language": "ru",
+                    "whisper_command": "whisper",
+                }
+            )
+        self.settings_transcription_profiles[backend] = profile
+
+    def _transcription_settings_profile(self, backend: str) -> dict[str, object]:
+        profiles = getattr(self, "settings_transcription_profiles", {})
+        profile = profiles.get(backend)
+        if isinstance(profile, dict):
+            return dict(profile)
+        defaults = DEFAULT_CONFIG["transcription"]["backends"]
+        default_profile = defaults.get(backend, defaults["whisper_cli"])
+        return dict(default_profile)
 
     def _update_transcription_settings_visibility(self) -> None:
         if not hasattr(self, "settings_transcription_rows"):
@@ -3602,14 +3671,13 @@ class MainWindow(QMainWindow):
         )
         self.config = load_config(config_path)
         self._apply_theme_settings()
-        self.settings_status_label.setText(
-            "Настройки сохранены в config.yaml. "
-            "Тема интерфейса применена сразу. "
-            "Для OBS, transcription, summary и папки данных перезапустите приложение, "
-            "чтобы все сервисы точно использовали новые значения."
-        )
+        self._apply_runtime_settings_after_save()
 
     def _settings_config_from_ui(self) -> dict[str, object]:
+        if hasattr(self, "settings_current_transcription_backend"):
+            self._save_current_transcription_profile(
+                self.settings_current_transcription_backend
+            )
         return {
             "storage": {
                 "root": self.settings_storage_root_input.text().strip() or "MeetingSummaries",
@@ -3625,25 +3693,7 @@ class MainWindow(QMainWindow):
             },
             "transcription": {
                 "backend": self.settings_transcription_backend_select.currentText(),
-                "model": self.settings_transcription_model_input.text().strip() or "base",
-                "language": self.settings_transcription_language_input.text().strip() or "ru",
-                "device": self.settings_transcription_device_input.text().strip() or "cpu",
-                "compute_type": self.settings_transcription_compute_type_input.text().strip() or "int8",
-                "vad_filter": self.settings_transcription_vad_checkbox.isChecked(),
-                "whisper_command": (
-                    self.settings_transcription_command_input.text().strip() or "whisper"
-                ),
-                "api_key_env": (
-                    self.settings_transcription_api_key_env_input.text().strip()
-                    or str(DEFAULT_CONFIG["transcription"]["api_key_env"])
-                ),
-                "base_url": (
-                    self.settings_transcription_base_url_input.text().strip()
-                    or str(DEFAULT_CONFIG["transcription"]["base_url"])
-                ),
-                "env_file": self.settings_transcription_env_file_input.text().strip(),
-                "timeout_seconds": self.settings_transcription_timeout_input.value(),
-                "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
+                "backends": deepcopy(self.settings_transcription_profiles),
             },
             "summary": {
                 "enabled": self.settings_summary_enabled_checkbox.isChecked(),
@@ -3666,6 +3716,21 @@ class MainWindow(QMainWindow):
                 "floating_theme": self._combo_value(self.settings_floating_theme_select),
             },
         }
+
+    def _apply_runtime_settings_after_save(self) -> None:
+        if self._has_processing_work():
+            self.settings_status_label.setText(
+                "Настройки сохранены. Тема интерфейса применена сразу. "
+                "Текущая обработка завершится со старой конфигурацией, "
+                "следующие встречи будут использовать обновленные настройки."
+            )
+            return
+        self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+        self.storage.summarizer = create_summarizer(self.config["summary"])
+        self.settings_status_label.setText(
+            "Настройки сохранены. Тема интерфейса применена сразу. "
+            "Следующие встречи будут использовать обновленные настройки."
+        )
 
     def open_day_folder(self) -> None:
         day_folder = self.storage.get_today_day_folder()

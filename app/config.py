@@ -4,6 +4,37 @@ from typing import Any
 import yaml
 
 
+TRANSCRIPTION_BACKENDS = {"whisper_cli", "faster_whisper", "aitunnel"}
+LOCAL_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large", "turbo"}
+FASTER_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3", "turbo"}
+AITUNNEL_TRANSCRIPTION_MODELS = {
+    "whisper-large-v3-turbo",
+    "whisper-large-v3",
+    "whisper-1",
+}
+DEFAULT_TRANSCRIPTION_BACKENDS: dict[str, dict[str, Any]] = {
+    "whisper_cli": {
+        "model": "base",
+        "language": "ru",
+        "whisper_command": "whisper",
+    },
+    "faster_whisper": {
+        "model": "base",
+        "language": "ru",
+        "device": "cpu",
+        "compute_type": "int8",
+        "vad_filter": True,
+    },
+    "aitunnel": {
+        "model": "whisper-large-v3-turbo",
+        "language": "ru",
+        "api_key_env": "AITUNNEL_KEY",
+        "base_url": "https://api.aitunnel.ru/v1/",
+        "env_file": "",
+        "timeout_seconds": 300,
+        "max_upload_mb": 25,
+    },
+}
 DEFAULT_CONFIG: dict[str, Any] = {
     "storage": {
         "root": "MeetingSummaries",
@@ -40,6 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "env_file": "",
         "timeout_seconds": 300,
         "max_upload_mb": 25,
+        "backends": DEFAULT_TRANSCRIPTION_BACKENDS,
     },
     "ui": {
         "theme": "light",
@@ -55,7 +87,10 @@ def _default_config() -> dict[str, Any]:
         "obs": dict(DEFAULT_CONFIG["obs"]),
         "secrets": dict(DEFAULT_CONFIG["secrets"]),
         "summary": dict(DEFAULT_CONFIG["summary"]),
-        "transcription": dict(DEFAULT_CONFIG["transcription"]),
+        "transcription": {
+            **DEFAULT_CONFIG["transcription"],
+            "backends": _default_transcription_backends(),
+        },
         "ui": dict(DEFAULT_CONFIG["ui"]),
         "_warnings": [],
     }
@@ -92,10 +127,7 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     config["obs"] = _normalize_obs({**DEFAULT_CONFIG["obs"], **obs}, config)
     config["secrets"] = _normalize_secrets({**DEFAULT_CONFIG["secrets"], **secrets})
     config["summary"] = _normalize_summary({**DEFAULT_CONFIG["summary"], **summary}, config)
-    config["transcription"] = _normalize_transcription(
-        {**DEFAULT_CONFIG["transcription"], **transcription},
-        config,
-    )
+    config["transcription"] = _normalize_transcription(transcription, config)
     config["ui"] = _normalize_ui({**DEFAULT_CONFIG["ui"], **ui})
     return config
 
@@ -155,56 +187,143 @@ def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[
     return summary
 
 
+def _default_transcription_backends() -> dict[str, dict[str, Any]]:
+    return {
+        backend: dict(profile)
+        for backend, profile in DEFAULT_TRANSCRIPTION_BACKENDS.items()
+    }
+
+
 def _normalize_transcription(
     transcription: dict[str, Any],
     config: dict[str, Any],
 ) -> dict[str, Any]:
     backend = str(transcription.get("backend") or "whisper_cli").strip().lower()
-    if backend not in {"whisper_cli", "faster_whisper", "aitunnel"}:
+    if backend not in TRANSCRIPTION_BACKENDS:
         backend = "whisper_cli"
-    transcription["backend"] = backend
-    transcription["model"] = str(
-        transcription.get("model") or DEFAULT_CONFIG["transcription"]["model"]
-    ).strip()
-    transcription["language"] = str(
-        transcription.get("language") or DEFAULT_CONFIG["transcription"]["language"]
-    ).strip()
-    transcription["device"] = str(
-        transcription.get("device") or DEFAULT_CONFIG["transcription"]["device"]
-    ).strip()
-    transcription["compute_type"] = str(
-        transcription.get("compute_type") or DEFAULT_CONFIG["transcription"]["compute_type"]
-    ).strip()
-    transcription["whisper_command"] = str(
-        transcription.get("whisper_command")
-        or DEFAULT_CONFIG["transcription"]["whisper_command"]
-    ).strip()
-    transcription["vad_filter"] = _safe_bool(
-        transcription.get("vad_filter"),
-        bool(DEFAULT_CONFIG["transcription"]["vad_filter"]),
-    )
-    default_api_key_env = str(DEFAULT_CONFIG["transcription"]["api_key_env"])
-    transcription["api_key_env"] = (
-        str(transcription.get("api_key_env") or default_api_key_env).strip()
-        or default_api_key_env
-    )
-    transcription["base_url"] = str(
-        transcription.get("base_url") or DEFAULT_CONFIG["transcription"]["base_url"]
-    ).strip()
-    transcription["env_file"] = str(transcription.get("env_file") or "").strip()
-    transcription["timeout_seconds"] = _safe_int(
-        transcription.get("timeout_seconds"),
-        int(DEFAULT_CONFIG["transcription"]["timeout_seconds"]),
-        "transcription.timeout_seconds",
-        config,
-    )
-    transcription["max_upload_mb"] = _safe_int(
-        transcription.get("max_upload_mb"),
-        int(DEFAULT_CONFIG["transcription"]["max_upload_mb"]),
-        "transcription.max_upload_mb",
-        config,
-    )
-    return transcription
+    raw_backends = transcription.get("backends")
+    if not isinstance(raw_backends, dict):
+        raw_backends = {}
+
+    backends = _default_transcription_backends()
+    for backend_name in TRANSCRIPTION_BACKENDS:
+        raw_profile = raw_backends.get(backend_name, {})
+        if raw_profile is None:
+            raw_profile = {}
+        if not isinstance(raw_profile, dict):
+            config["_warnings"].append(
+                f"`transcription.backends.{backend_name}` имеет неверный тип. "
+                "Используются безопасные значения."
+            )
+            raw_profile = {}
+        backends[backend_name] = _normalize_transcription_profile(
+            backend_name,
+            raw_profile,
+            config,
+        )
+
+    legacy_profile = {
+        key: transcription[key]
+        for key in _transcription_profile_keys(backend)
+        if key in transcription
+    }
+    if legacy_profile:
+        backends[backend] = _normalize_transcription_profile(
+            backend,
+            {**backends[backend], **legacy_profile},
+            config,
+        )
+
+    active_profile = backends[backend]
+    return {
+        **DEFAULT_CONFIG["transcription"],
+        **active_profile,
+        "backend": backend,
+        "backends": backends,
+    }
+
+
+def _transcription_profile_keys(backend: str) -> set[str]:
+    if backend == "faster_whisper":
+        return {"model", "language", "device", "compute_type", "vad_filter"}
+    if backend == "aitunnel":
+        return {
+            "model",
+            "language",
+            "api_key_env",
+            "base_url",
+            "env_file",
+            "timeout_seconds",
+            "max_upload_mb",
+        }
+    return {"model", "language", "whisper_command"}
+
+
+def _normalize_transcription_profile(
+    backend: str,
+    profile: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if backend == "faster_whisper":
+        device = _allowed_value(profile.get("device"), {"cpu", "cuda"}, "cpu")
+        default_compute_type = "float16" if device == "cuda" else "int8"
+        return {
+            "model": _allowed_value(profile.get("model"), FASTER_WHISPER_MODELS, "base"),
+            "language": "ru",
+            "device": device,
+            "compute_type": str(profile.get("compute_type") or default_compute_type).strip()
+            or default_compute_type,
+            "vad_filter": _safe_bool(profile.get("vad_filter"), True),
+        }
+    if backend == "aitunnel":
+        default_api_key_env = str(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["api_key_env"])
+        return {
+            "model": _allowed_value(
+                profile.get("model"),
+                AITUNNEL_TRANSCRIPTION_MODELS,
+                "whisper-large-v3-turbo",
+            ),
+            "language": "ru",
+            "api_key_env": (
+                str(profile.get("api_key_env") or default_api_key_env).strip()
+                or default_api_key_env
+            ),
+            "base_url": str(
+                profile.get("base_url")
+                or DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["base_url"]
+            ).strip(),
+            "env_file": str(profile.get("env_file") or "").strip(),
+            "timeout_seconds": _safe_int(
+                profile.get(
+                    "timeout_seconds",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["timeout_seconds"],
+                ),
+                int(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["timeout_seconds"]),
+                "transcription.backends.aitunnel.timeout_seconds",
+                config,
+            ),
+            "max_upload_mb": _safe_int(
+                profile.get(
+                    "max_upload_mb",
+                    DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["max_upload_mb"],
+                ),
+                int(DEFAULT_TRANSCRIPTION_BACKENDS["aitunnel"]["max_upload_mb"]),
+                "transcription.backends.aitunnel.max_upload_mb",
+                config,
+            ),
+        }
+    return {
+        "model": _allowed_value(profile.get("model"), LOCAL_WHISPER_MODELS, "base"),
+        "language": "ru",
+        "whisper_command": str(profile.get("whisper_command") or "whisper").strip()
+        or "whisper",
+    }
+
+
+def _allowed_value(value: Any, allowed: set[str], default: str) -> str:
+    normalized = str(value or default).strip()
+    return normalized if normalized in allowed else default
+
 
 
 def _normalize_ui(ui: dict[str, Any]) -> dict[str, Any]:

@@ -13,27 +13,32 @@ secrets:
   env_file: ""
 
 transcription:
-  # Варианты:
-  # backend: "whisper_cli"      # старый CLI-вариант
-  # backend: "faster_whisper"   # ускоренный локальный backend, требует optional-зависимость
-  # backend: "aitunnel"         # внешняя транскрипция через AI Tunnel, отправляет audio.wav
+  # Активный backend транскрипции.
+  # Варианты: "whisper_cli", "faster_whisper", "aitunnel".
   backend: "whisper_cli"
-  model: "base"
-  # Для AI Tunnel используйте, например:
-  # model: "whisper-large-v3-turbo"
-  language: "ru"
-  device: "cpu"
-  compute_type: "int8"
-  # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
-  vad_filter: true
-  whisper_command: "whisper"
-  api_key_env: "AITUNNEL_KEY"
-  base_url: "https://api.aitunnel.ru/v1/"
-  # Обычно используется общий secrets.env_file. Это поле оставлено для редких отдельных STT-ключей.
-  env_file: ""
-  timeout_seconds: 300
-  # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
-  max_upload_mb: 25
+  # У каждого backend свой профиль настроек. Переключение backend не перетирает модель
+  # и параметры других backend.
+  backends:
+    whisper_cli:
+      # Локальный Whisper CLI. Язык всегда ru, команда по умолчанию whisper.
+      model: "base"
+    faster_whisper:
+      # Ускоренный локальный backend, требует optional-зависимость:
+      # python -m pip install -e ".[faster-whisper]"
+      model: "base"
+      device: "cpu"
+      # Для faster-whisper: отсекать тишину и неречевой шум перед распознаванием.
+      vad_filter: true
+    aitunnel:
+      # Внешняя транскрипция через AI Tunnel. Во внешний сервис отправляется audio.wav.
+      # Доступные модели в UI:
+      # - whisper-large-v3-turbo: 0.13 ₽/мин, значение по умолчанию;
+      # - whisper-large-v3: 0.36 ₽/мин;
+      # - whisper-1: 1.15 ₽/мин.
+      model: "whisper-large-v3-turbo"
+      timeout_seconds: 300
+      # Лимит AI Tunnel/OpenAI-compatible transcription endpoint: 25 МБ на файл.
+      max_upload_mb: 25
 
 summary:
   enabled: false

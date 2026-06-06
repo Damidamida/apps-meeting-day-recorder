@@ -111,21 +111,26 @@ obs:
 
 Если `whisper` не установлен или недоступен в `PATH`, приложение не падает: встреча завершается, placeholder-файлы остаются на месте, а в metadata фиксируется причина, почему транскрипция не выполнена.
 
+В разделе `Настройки` приложение показывает только те поля, которые относятся к выбранному backend транскрипции. Модель для `whisper_cli`, модель для `faster_whisper` и модель для `aitunnel` хранятся отдельно и не перетирают друг друга при переключении. Язык транскрипции зафиксирован как русский.
+
+После нажатия `Сохранить настройки` тема применяется сразу. Если сейчас не идет активная встреча или фоновая обработка, новые настройки транскрипции будут использоваться уже для следующих встреч. Если обработка встречи еще выполняется, она завершится со старой конфигурацией, а следующие встречи будут использовать обновленные настройки.
+
 Для ускоренного локального backend установите optional-зависимость:
 
 ```powershell
 python -m pip install -e ".[faster-whisper]"
 ```
 
-Затем в локальном `config.yaml` укажите:
+Затем выберите `faster_whisper` в настройках приложения или укажите в локальном `config.yaml`:
 
 ```yaml
 transcription:
   backend: "faster_whisper"
-  model: "base"
-  language: "ru"
-  device: "cpu"
-  compute_type: "int8"
+  backends:
+    faster_whisper:
+      model: "base"
+      device: "cpu"
+      vad_filter: true
 ```
 
 Для возврата к старому CLI-варианту:
@@ -133,8 +138,9 @@ transcription:
 ```yaml
 transcription:
   backend: "whisper_cli"
-  model: "base"
-  whisper_command: "whisper"
+  backends:
+    whisper_cli:
+      model: "base"
 ```
 
 ### Внешняя транскрипция через AI Tunnel
@@ -145,20 +151,25 @@ transcription:
 
 По документации AI Tunnel endpoint `POST /v1/audio/transcriptions` совместим с OpenAI SDK, принимает `multipart/form-data`, поддерживает `wav`, `mp3`, `flac`, `m4a`, `ogg`, `webm`, `aac`, `mp4`, `mpga` и имеет лимит 25 МБ на файл. Для длинных записей позже нужен отдельный chunking-режим; в текущем PR отправляется целый `audio.wav`.
 
+В выпадающем списке AI Tunnel доступны три модели с ориентировочной ценой за минуту аудио:
+
+- `Whisper Large V3 Turbo — 0.13 ₽/мин`, значение по умолчанию;
+- `Whisper Large V3 — 0.36 ₽/мин`;
+- `Whisper 1 — 1.15 ₽/мин`.
+
 Пример настройки:
 
 ```yaml
 transcription:
   backend: "aitunnel"
-  model: "whisper-large-v3-turbo"
-  language: "ru"
-  api_key_env: "AITUNNEL_KEY"
-  base_url: "https://api.aitunnel.ru/v1/"
-  timeout_seconds: 300
-  max_upload_mb: 25
+  backends:
+    aitunnel:
+      model: "whisper-large-v3-turbo"
+      timeout_seconds: 300
+      max_upload_mb: 25
 ```
 
-API key не хранится в репозитории. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`.
+API key не хранится в репозитории. Для AI Tunnel используется переменная `AITUNNEL_KEY`. Рекомендуемый способ — общий внешний `.env.local`, путь к которому указан в `secrets.env_file`; отдельно вводить имя переменной ключа в блоке транскрипции обычно не нужно.
 
 ## Генерация итогов через AI Tunnel
 
@@ -229,7 +240,7 @@ whisper --help
 python -m pip install -e ".[faster-whisper]"
 ```
 
-Для `aitunnel` укажите `transcription.api_key_env`, `transcription.base_url` и общий `secrets.env_file`, затем нажмите в приложении `Проверить готовность`.
+Для `aitunnel` укажите общий `secrets.env_file` с ключом `AITUNNEL_KEY`, выберите backend `aitunnel` в настройках приложения и нажмите `Проверить готовность`.
 
 6. Если нужна генерация итогов, настройте `summary` в `config.yaml` и храните ключ только во внешнем окружении или общем `.env.local`, который не добавляется в git.
 7. Запустите приложение двойным кликом через `start_meeting_day_recorder.cmd`.
