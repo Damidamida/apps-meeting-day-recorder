@@ -276,7 +276,7 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
     window.workday_meeting_cards[storage.active_meeting_folder].clicked.emit()
 
     assert window.selected_workday_meeting_folder == storage.active_meeting_folder
-    assert "Пропущено" in window.pipeline_labels["recording"].text()
+    assert "Без записи" in window.pipeline_labels["recording"].text()
 
     window.close()
     app.processEvents()
@@ -394,6 +394,114 @@ def test_pipeline_steps_are_rendered_as_prototype_cards(tmp_path: Path) -> None:
     assert window.pipeline_messages["audio"].text() == "Тестовая обработка audio.wav."
     assert window.pipeline_messages["audio"].wordWrap()
 
+    window.close()
+    app.processEvents()
+
+
+def test_meeting_badge_uses_result_status_not_ended_state(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "summary_status": "draft_created",
+        }
+    ) == ("Итоги готовы", "ok")
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "summary_status": "disabled",
+        }
+    ) == ("Итоги выключены", "skip")
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "disabled",
+            "audio_status": "skipped",
+            "transcription_status": "skipped",
+            "summary_status": "disabled",
+        }
+    ) == ("Без записи", "error")
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "stopped",
+            "recording_path": str(tmp_path / "recording.mkv"),
+            "audio_status": "extracted",
+            "transcription_status": "failed",
+            "summary_status": "skipped",
+        }
+    ) == ("Требует внимания", "error")
+
+    window.close()
+    app.processEvents()
+
+
+def test_pipeline_wait_messages_do_not_claim_ready_audio_is_missing(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    metadata = {
+        "status": "ended",
+        "processing_status": "pending",
+        "recording_status": "stopped",
+        "audio_status": "extracted",
+    }
+
+    assert window._step_message("transcription", metadata) == (
+        "Ждет обработки встречи."
+    )
+    assert window._step_message("summary", metadata) == "Ждет transcript."
+
+    window.close()
+    app.processEvents()
+
+
+def test_pending_today_meetings_are_restored_to_processing_queue_on_startup(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    entered = Event()
+    release = Event()
+
+    class BlockingStorage(StorageService):
+        def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            del progress_callback
+            entered.set()
+            release.wait(5)
+            return meeting_folder
+
+    storage = BlockingStorage(tmp_path, recorder)
+    storage.start_workday(datetime.now())
+    pending_meeting = storage.start_meeting("Восстановить", datetime.now())
+    storage.finish_active_meeting_recording(datetime.now())
+
+    window = MainWindow(storage, recorder)
+    deadline = time.time() + 2
+    while not entered.is_set() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert entered.is_set()
+    assert window.pipeline_meeting_folder == pending_meeting
+    assert window.pipeline_running
+
+    release.set()
+    if window.pipeline_thread is not None:
+        window.pipeline_thread.quit()
+        window.pipeline_thread.wait(1000)
     window.close()
     app.processEvents()
 
