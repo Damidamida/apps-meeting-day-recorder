@@ -474,7 +474,11 @@ class StorageService:
         )
         self._write_json(self.day_summary_metadata_path(day_folder), metadata)
 
-        self._emit_pipeline(progress_callback, "day_summary_generating", "Готовим итоги дня через OpenAI.")
+        self._emit_pipeline(
+            progress_callback,
+            "day_summary_generating",
+            "Готовим итоги дня через внешний AI endpoint.",
+        )
         current_summary = self.read_day_summary_draft(day_folder)
         summary_metadata = self.summarizer.summarize_day(
             day_folder,

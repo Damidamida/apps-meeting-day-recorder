@@ -9,8 +9,8 @@ def test_obs_is_disabled_by_default(tmp_path) -> None:
     assert config["obs"]["websocket_port"] == 4455
     assert config["summary"]["enabled"] is False
     assert config["summary"]["provider"] == "openai"
-    assert config["summary"]["api_key_env"] == "OPENAI_API_KEY"
-    assert config["summary"]["base_url"] == ""
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["transcription"]["backend"] == "whisper_cli"
     assert config["transcription"]["model"] == "base"
     assert config["transcription"]["compute_type"] == "int8"
@@ -39,7 +39,8 @@ def test_partial_summary_config_uses_safe_defaults(tmp_path) -> None:
     assert config["summary"]["enabled"] is True
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["model"] == "gpt-5.4-mini"
-    assert config["summary"]["base_url"] == ""
+    assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
+    assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["summary"]["env_file"] == ""
 
 

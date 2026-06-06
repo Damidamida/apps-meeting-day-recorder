@@ -55,7 +55,7 @@ pytest
 - Визуальная статусная модель pipeline встречи: запись, извлечение аудио, транскрипция, генерация итогов и финальный статус.
 - Локальное извлечение `audio.wav` из OBS-записи через FFmpeg.
 - Локальная транскрипция `audio.wav` через optional Whisper CLI или optional faster-whisper.
-- Генерация `summary_draft.md` одной встречи через OpenAI из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
+- Генерация `summary_draft.md` одной встречи через AI Tunnel / OpenAI-compatible endpoint из готового текстового транскрипта, если summary явно включен в локальном `config.yaml`.
 - Тяжелые шаги обработки встречи выполняются в фоне, чтобы UI не зависал.
 - После остановки записи можно сразу начать следующую встречу; FFmpeg, Whisper и summary по предыдущей встрече продолжают выполняться в очереди.
 - Локальные папки по датам и безопасные имена папок встреч.
@@ -121,11 +121,11 @@ transcription:
 
 На этом этапе приложение не отправляет аудио во внешние сервисы и не использует OpenAI API для транскрипции.
 
-## Генерация итогов через OpenAI
+## Генерация итогов через AI Tunnel
 
-На этапе 7 приложение может использовать OpenAI API для подготовки `summary_draft.md` из локального текстового транскрипта встречи.
+Приложение может использовать AI Tunnel как OpenAI-compatible endpoint для подготовки `summary_draft.md` из локального текстового транскрипта встречи.
 
-Видео и аудио в OpenAI не отправляются. Отправляется только текст из `transcript.md` / `transcript.json`.
+Видео и аудио во внешний AI endpoint не отправляются. Отправляется только текст из `transcript.md` / `transcript.json`.
 
 По умолчанию генерация итогов выключена. Для включения настройте `config.yaml`:
 
@@ -134,18 +134,18 @@ summary:
   enabled: true
   provider: "openai"
   model: "gpt-5.4-mini"
-  api_key_env: "OPENAI_API_KEY"
-  base_url: ""
+  api_key_env: "AITUNNEL_KEY"
+  base_url: "https://api.aitunnel.ru/v1/"
   env_file: ""
   timeout_seconds: 120
   max_chars_per_chunk: 20000
 ```
 
-API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `OPENAI_API_KEY`.
+API key не хранится в репозитории. Рекомендуемый способ — переменная окружения `AITUNNEL_KEY`.
 
 Для локального использования можно указать путь к внешнему `.env.local` в `summary.env_file`, но сам `.env.local` нельзя добавлять в git.
 
-Если используется ProxyAPI, укажите ключ ProxyAPI и базовый URL ProxyAPI в локальном `config.yaml`:
+Если нужно временно вернуться на ProxyAPI, укажите ключ ProxyAPI и базовый URL ProxyAPI в локальном `config.yaml`:
 
 ```yaml
 summary:
@@ -159,7 +159,7 @@ summary:
   max_chars_per_chunk: 20000
 ```
 
-В этом режиме приложение продолжает использовать официальный OpenAI SDK, но отправляет текстовые запросы через ProxyAPI. Видео и аудио по-прежнему не отправляются.
+В обоих режимах приложение продолжает использовать официальный OpenAI SDK, но отправляет запросы в выбранный OpenAI-compatible endpoint. Видео и аудио по-прежнему не отправляются для генерации итогов.
 
 ## Ручная проверка полного сценария
 
@@ -224,11 +224,11 @@ python -m pip install -e ".[faster-whisper]"
 - `summary_status: openai_unavailable` — API key не найден;
 - `summary_status: skipped` — transcript не готов или пустой.
 
-Если transcript пустой, приложение не отправляет запрос во внешний OpenAI-compatible endpoint / ProxyAPI.
+Если transcript пустой, приложение не отправляет запрос во внешний AI endpoint.
 
 ## Намеренно не реализовано
 
 - Диаризация.
-- Day summary и агрегация задач через OpenAI.
+- Внешняя транскрипция через AI Tunnel или другой STT-провайдер.
 - OCR.
 - Интеграции с почтой, календарями и мессенджерами.
