@@ -9,6 +9,9 @@ SUMMARY_PROVIDER = "openai"
 SUMMARY_DISABLED_ERROR = "Генерация итогов выключена в настройках."
 TRANSCRIPT_NOT_READY_ERROR = "Транскрипт еще не готов."
 TRANSCRIPT_EMPTY_ERROR = "Транскрипт пустой. Итоги не будут отправлены во внешний сервис."
+TRANSCRIPT_SUSPECT_ERROR = (
+    "Транскрипция требует проверки. Итоги не будут отправлены во внешний сервис."
+)
 OPENAI_KEY_MISSING_ERROR = "OpenAI API key не найден."
 OPENAI_FAILED_ERROR = "Не удалось подготовить черновик итогов через OpenAI."
 
@@ -131,8 +134,12 @@ class OpenAISummarizer:
             return disabled_summary_metadata()
         if metadata.get("transcription_status") != "completed":
             return skipped_summary_metadata()
+        if metadata.get("transcription_quality") == "suspect":
+            return self._write_suspect_summary(meeting_folder)
 
         transcript_state = transcript_readiness(meeting_folder)
+        if transcript_state["status"] == "suspect":
+            return self._write_suspect_summary(meeting_folder)
         transcript = transcript_state.get("text")
         if transcript_state["status"] != "ready" or not transcript:
             return skipped_summary_metadata(transcript_state["message"])
@@ -177,6 +184,25 @@ class OpenAISummarizer:
         if usage:
             result["summary_usage"] = usage
         return result
+
+    def _write_suspect_summary(self, meeting_folder: Path) -> dict[str, Any]:
+        summary_path = meeting_folder / "summary_draft.md"
+        summary_path.write_text(
+            "# Итоги встречи\n\n"
+            "Транскрипция требует проверки. Итоги не сформированы, "
+            "потому что transcript выглядит подозрительно.\n\n"
+            "Что можно сделать:\n\n"
+            "- открыть transcript и проверить качество распознавания;\n"
+            "- повторить обработку встречи после исправления настроек транскрипции;\n"
+            "- при необходимости подготовить итоги вручную.\n",
+            encoding="utf-8",
+        )
+        return {
+            "summary_status": "skipped",
+            "summary_error": TRANSCRIPT_SUSPECT_ERROR,
+            "summary_path": str(summary_path),
+            "summary_generated_at": self.now().isoformat(),
+        }
 
     def summarize_day(
         self,
@@ -310,7 +336,7 @@ def summary_message(metadata: dict[str, Any]) -> str:
     if status == "disabled":
         return "Итоги не подготовлены: генерация итогов выключена в настройках."
     if status == "skipped":
-        return "Итоги не подготовлены: транскрипт еще не готов."
+        return f"Итоги не подготовлены: {metadata.get('summary_error') or TRANSCRIPT_NOT_READY_ERROR}"
     if status == "openai_unavailable":
         return "Итоги не подготовлены: OpenAI API key не найден."
     if status == "failed":
@@ -450,6 +476,8 @@ def _transcript_json_state(path: Path) -> dict[str, str]:
         return {"status": "placeholder", "message": "Транскрипт не готов."}
 
     text = str(payload.get("text") or "").strip()
+    if payload.get("quality") == "suspect":
+        return {"status": "suspect", "message": TRANSCRIPT_SUSPECT_ERROR}
     if text:
         return {"status": "ready", "message": "Транскрипция завершена.", "text": text}
 

@@ -9,6 +9,7 @@ from app.services.transcription import (
     FasterWhisperTranscriber,
     LocalWhisperTranscriber,
     create_transcriber,
+    transcript_quality,
 )
 
 
@@ -49,6 +50,8 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
     transcript_md = (tmp_path / "transcript.md").read_text(encoding="utf-8")
     assert metadata["transcription_status"] == "completed"
     assert metadata["transcription_provider"] == "local_whisper_cli"
+    assert metadata["transcription_quality"] == "ok"
+    assert metadata["transcription_quality_warnings"] == []
     assert metadata["transcript_path"] == str(tmp_path / "transcript.md")
     assert metadata["transcript_json_path"] == str(tmp_path / "transcript.json")
     assert "transcribed_at" in metadata
@@ -57,6 +60,8 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
         "provider": "local_whisper_cli",
         "text": "Текст встречи",
         "segments": [{"start": 1.2, "end": 5.8, "text": "Первый сегмент"}],
+        "quality": "ok",
+        "quality_warnings": [],
     }
     assert "# Транскрипт" in transcript_md
     assert "Первый сегмент" in transcript_md
@@ -140,9 +145,10 @@ def test_faster_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> 
             assert device == "cpu"
             assert compute_type == "int8"
 
-        def transcribe(self, audio, language):
+        def transcribe(self, audio, language, vad_filter):
             assert audio == str(audio_path)
             assert language == "ru"
+            assert vad_filter is True
             return [FakeSegment()], FakeInfo()
 
     fake_module = types.SimpleNamespace(WhisperModel=FakeWhisperModel)
@@ -154,8 +160,13 @@ def test_faster_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> 
     assert metadata["transcription_status"] == "completed"
     assert metadata["transcription_provider"] == "local_faster_whisper"
     assert metadata["transcription_model"] == "base"
+    assert metadata["transcription_vad_filter"] is True
+    assert metadata["transcription_quality"] == "ok"
+    assert metadata["transcription_quality_warnings"] == []
     assert transcript_json["provider"] == "local_faster_whisper"
     assert transcript_json["text"] == "Быстрый сегмент"
+    assert transcript_json["quality"] == "ok"
+    assert transcript_json["quality_warnings"] == []
     assert transcript_json["segments"] == [
         {"start": 0.5, "end": 2.0, "text": "Быстрый сегмент"}
     ]
@@ -178,6 +189,19 @@ def test_faster_whisper_transcriber_reports_missing_dependency(tmp_path: Path) -
     }
 
 
+def test_transcript_quality_marks_repeated_long_transcript_as_suspect() -> None:
+    segments = [
+        {"start": index * 30.0, "end": (index + 1) * 30.0, "text": "ТЕЛЕФОННЫЙ ЗВОНОК"}
+        for index in range(40)
+    ]
+
+    quality = transcript_quality(" ".join(segment["text"] for segment in segments), segments)
+
+    assert quality["quality"] == "suspect"
+    assert "В transcript слишком много одинаковых сегментов." in quality["quality_warnings"]
+    assert "Длинная запись дала слишком короткий transcript." in quality["quality_warnings"]
+
+
 def test_create_transcriber_uses_configured_backend() -> None:
     transcriber = create_transcriber(
         {
@@ -186,8 +210,10 @@ def test_create_transcriber_uses_configured_backend() -> None:
             "language": "ru",
             "device": "cpu",
             "compute_type": "int8",
+            "vad_filter": False,
         }
     )
 
     assert isinstance(transcriber, FasterWhisperTranscriber)
     assert transcriber.model_name == "small"
+    assert transcriber.vad_filter is False

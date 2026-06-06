@@ -113,6 +113,46 @@ def test_empty_completed_transcript_is_skipped_without_calling_openai(
     assert read_transcript_text(tmp_path) is None
 
 
+def test_suspect_transcript_is_skipped_without_calling_openai(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+    (tmp_path / "transcript.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "quality": "suspect",
+                "quality_warnings": ["В transcript слишком много одинаковых сегментов."],
+                "text": "ТЕЛЕФОННЫЙ ЗВОНОК " * 20,
+                "segments": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def forbidden_client(**kwargs):
+        raise AssertionError("OpenAI client should not be created for suspect transcript")
+
+    metadata = OpenAISummarizer(_summary_config(), client_factory=forbidden_client).summarize_meeting(
+        tmp_path,
+        {
+            "transcription_status": "completed",
+            "transcription_quality": "suspect",
+        },
+    )
+
+    assert metadata["summary_status"] == "skipped"
+    assert metadata["summary_error"] == (
+        "Транскрипция требует проверки. Итоги не будут отправлены во внешний сервис."
+    )
+    assert "Транскрипция требует проверки" in (
+        tmp_path / "summary_draft.md"
+    ).read_text(encoding="utf-8")
+    assert read_transcript_text(tmp_path) is None
+
+
 def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
     _write_completed_transcript(tmp_path)
