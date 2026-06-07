@@ -1842,17 +1842,23 @@ class MainWindow(QMainWindow):
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
         title_label = QLabel(component)
         title_label.setObjectName("readinessTitle")
+        title_label.setFixedHeight(34)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         badge_label = QLabel("Не проверено")
         badge_label.setObjectName("statusBadge")
-        badge_label.setMinimumWidth(32)
+        badge_label.setProperty("readinessBadge", True)
+        badge_label.setFixedHeight(28)
+        badge_label.setMinimumWidth(42)
+        badge_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._apply_badge_style(badge_label, "wait")
-        header_layout.addWidget(title_label)
+        header_layout.addWidget(title_label, 1, Qt.AlignmentFlag.AlignTop)
         header_layout.addStretch()
-        header_layout.addWidget(badge_label)
+        header_layout.addWidget(badge_label, 0, Qt.AlignmentFlag.AlignTop)
 
         details_widget = QWidget()
         details_layout = QGridLayout()
@@ -1878,8 +1884,9 @@ class MainWindow(QMainWindow):
         self.readiness_badges[component] = badge_label
         self.readiness_detail_rows[component] = details_widget
         self.readiness_detail_values[component] = value_labels
-        tile_layout.addLayout(header_layout)
-        tile_layout.addWidget(details_widget)
+        tile_layout.addLayout(header_layout, 0)
+        tile_layout.addWidget(details_widget, 0, Qt.AlignmentFlag.AlignTop)
+        tile_layout.addStretch(1)
         tile.setLayout(tile_layout)
         return tile
 
@@ -3890,8 +3897,9 @@ class MainWindow(QMainWindow):
     def _apply_badge_style(self, label: QLabel, state: str) -> None:
         colors = self._status_colors()
         background, color = colors.get(state, colors["wait"])
+        radius = 14 if label.property("readinessBadge") else 10
         label.setStyleSheet(
-            f"border-radius: 10px; padding: 3px 8px; font-size: 11px; "
+            f"border-radius: {radius}px; padding: 3px 8px; font-size: 11px; "
             f"font-weight: 800; background: {background}; color: {color};"
         )
 
