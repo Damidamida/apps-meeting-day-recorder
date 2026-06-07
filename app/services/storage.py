@@ -590,7 +590,8 @@ class StorageService:
         meeting_folder: Path,
         metadata: dict[str, Any] | None = None,
     ) -> bool:
-        metadata = metadata or self.read_meeting_metadata(meeting_folder)
+        if metadata is None:
+            metadata = self.read_meeting_metadata(meeting_folder)
         return self._summary_is_ready(metadata, meeting_folder)
 
     def _sync_day_meeting_metadata(self, meeting_folder: Path, metadata: dict[str, Any]) -> None:
