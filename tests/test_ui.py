@@ -78,13 +78,13 @@ def _meeting_start_readiness_statuses(
     return [
         {
             "component": card["component"],
-            "state": states[str(card["component"])],
-            "message": messages[states[str(card["component"])]],
+            "state": states[card["component"]],
+            "message": messages[states[card["component"]]],
             "details": [
                 {
                     "label": label,
-                    "value": messages[states[str(card["component"])]],
-                    "state": states[str(card["component"])],
+                    "value": messages[states[card["component"]]],
+                    "state": states[card["component"]],
                 }
                 for label in card["initial_details"]
             ],
@@ -228,6 +228,10 @@ def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
+    window._render_readiness_statuses(
+        _meeting_start_readiness_statuses(),
+        recorder.status_text,
+    )
 
     window.floating_control.primary_button.click()
     assert storage.workday_active
@@ -351,6 +355,30 @@ def test_readiness_check_runs_in_background_and_disables_repeated_start(
     )
     assert window.readiness_badges["Запись разговора (OBS)"].text() == "OK"
     assert "Проверка готовности завершена" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_floating_control_start_meeting_requires_readiness_check(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.floating_control.show()
+    app.processEvents()
+
+    window.floating_control.primary_button.click()
+    assert storage.workday_active
+
+    window.floating_control.primary_button.click()
+    window.floating_control.title_input.setText("Созвон без проверки")
+    window.floating_control.primary_button.click()
+
+    assert not storage.meeting_active
+    assert "Сначала дождитесь проверки готовности системы" in window.status_label.text()
 
     window.close()
     app.processEvents()

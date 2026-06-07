@@ -1198,7 +1198,7 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def _start_meeting_from_floating(self, title: str) -> None:
-        self._start_meeting_with_title(title)
+        self._start_meeting_with_title(title, source="floating")
         self._refresh_floating_control()
 
     def _refresh_floating_control(self) -> None:
@@ -3307,14 +3307,14 @@ class MainWindow(QMainWindow):
         self._schedule_readiness_autocheck("workday")
 
     def start_meeting(self) -> None:
-        block_reason = self._meeting_start_block_reason()
+        block_reason = self._meeting_start_block_reason(source="main")
         if block_reason is not None:
             self.status_label.setText(block_reason)
             return
         self.start_meeting_overlay.open_for_recorder(self.recorder)
 
-    def _start_meeting_with_title(self, title: str) -> None:
-        block_reason = self._meeting_start_block_reason()
+    def _start_meeting_with_title(self, title: str, source: str = "main") -> None:
+        block_reason = self._meeting_start_block_reason(source=source)
         if block_reason is not None:
             self.status_label.setText(block_reason)
             return
@@ -3346,11 +3346,11 @@ class MainWindow(QMainWindow):
             self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
         self.status_label.setText(message)
 
-    def _meeting_start_block_reason(self) -> str | None:
+    def _meeting_start_block_reason(self, source: str = "main") -> str | None:
         if self.readiness_check_running:
             return "Дождитесь завершения проверки готовности перед стартом встречи."
         if self.last_readiness_statuses is None or self.readiness_check_stale:
-            if not self.isVisible():
+            if source != "floating" and not self.isVisible():
                 return None
             self._schedule_readiness_autocheck("meeting")
             return (
@@ -3556,7 +3556,7 @@ class MainWindow(QMainWindow):
         self._request_readiness_check("manual")
 
     def _schedule_readiness_autocheck(self, reason: str) -> None:
-        if not self.isVisible():
+        if not self._can_run_readiness_autocheck(reason):
             return
         if self.readiness_check_running:
             self.readiness_check_rerun_requested = True
@@ -3567,6 +3567,15 @@ class MainWindow(QMainWindow):
             )
             return
         self._request_readiness_check(reason)
+
+    def _can_run_readiness_autocheck(self, reason: str) -> bool:
+        if self.isVisible():
+            return True
+        return (
+            reason == "meeting"
+            and hasattr(self, "floating_control")
+            and self.floating_control.isVisible()
+        )
 
     def _request_readiness_check(self, reason: str) -> None:
         if self.readiness_check_running:
@@ -3630,7 +3639,9 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"Проверка готовности не завершилась: {message}")
         self.readiness_check_worker = None
         self.readiness_check_thread = None
-        if self.readiness_check_rerun_requested and self.isVisible():
+        if self.readiness_check_rerun_requested and self._can_run_readiness_autocheck(
+            self.readiness_check_rerun_reason or "settings"
+        ):
             reason = self.readiness_check_rerun_reason or "settings"
             self.readiness_check_rerun_requested = False
             self.readiness_check_rerun_reason = ""
