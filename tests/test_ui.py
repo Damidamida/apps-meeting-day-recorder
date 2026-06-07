@@ -1653,6 +1653,13 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window.settings_summary_enabled_checkbox.setChecked(True)
     window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
+    window.settings_summary_template_title_inputs["meeting"].setText("Мой формат встречи")
+    meeting_section_title, meeting_section_instruction = (
+        window.settings_summary_template_section_inputs["meeting"][0]
+    )
+    meeting_section_title.setText("Главные решения")
+    meeting_section_instruction.setPlainText("Пиши только подтвержденные решения.")
+    window.settings_summary_template_rules_inputs["meeting"].setPlainText("Пиши кратко.")
     window.settings_theme_select.setCurrentIndex(window.settings_theme_select.findData("dark"))
     window.settings_floating_theme_select.setCurrentIndex(
         window.settings_floating_theme_select.findData("dark")
@@ -1689,6 +1696,12 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["summary"]["env_file"] == ""
+    assert config["summary"]["templates"]["meeting"]["title"] == "Мой формат встречи"
+    assert config["summary"]["templates"]["meeting"]["sections"][0] == {
+        "title": "Главные решения",
+        "instruction": "Пиши только подтвержденные решения.",
+    }
+    assert config["summary"]["templates"]["meeting"]["rules"] == "Пиши кратко."
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"

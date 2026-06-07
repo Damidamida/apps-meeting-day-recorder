@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from app.config import DEFAULT_SUMMARY_TEMPLATES
 from app.services.ai_errors import ai_error_metadata, is_retryable_ai_error
 
 
@@ -92,6 +93,25 @@ DAY_SUMMARY_SYSTEM_PROMPT = """Ты готовишь полезную выжим
 - не пиши, что ты AI-модель;
 - итог должен быть короткой выжимкой, а не копией всех summary подряд.
 """
+
+BASE_MEETING_RULES = [
+    "ответ должен быть на русском языке и в Markdown",
+    "не выдумывай факты",
+    "если данных недостаточно, пиши \"Не зафиксировано\"",
+    "не добавляй предупреждения от себя",
+    "не пиши, что ты AI-модель",
+    "итог должен быть пригоден для ручного ревью",
+]
+
+BASE_DAY_RULES = [
+    "ответ должен быть на русском языке и в Markdown",
+    "используй только переданные итоги встреч",
+    "не выдумывай факты",
+    "если у встречи отсутствует summary, явно укажи это",
+    "не добавляй предупреждения от себя",
+    "не пиши, что ты AI-модель",
+    "итог должен быть короткой выжимкой, а не копией всех summary подряд",
+]
 
 
 class Summarizer(Protocol):
@@ -241,7 +261,7 @@ class OpenAISummarizer:
             response = self._create_response_with_retries(
                 client,
                 _day_summary_input(current_summary, meeting_summaries),
-                DAY_SUMMARY_SYSTEM_PROMPT,
+                self._system_prompt("day"),
             )
             summary_text = extract_response_text(response)
             usage = extract_usage(response)
@@ -270,8 +290,13 @@ class OpenAISummarizer:
 
     def _summarize_text(self, client: Any, transcript: str) -> tuple[str, dict[str, int]]:
         chunks = split_text(transcript, int(self.config.get("max_chars_per_chunk") or 20000))
+        system_prompt = self._system_prompt("meeting")
         if len(chunks) == 1:
-            response = self._create_response_with_retries(client, _meeting_summary_input(chunks[0]))
+            response = self._create_response_with_retries(
+                client,
+                _meeting_summary_input(chunks[0]),
+                system_prompt,
+            )
             return extract_response_text(response), extract_usage(response)
 
         chunk_summaries = []
@@ -280,6 +305,7 @@ class OpenAISummarizer:
             response = self._create_response_with_retries(
                 client,
                 _chunk_summary_input(index, len(chunks), chunk),
+                system_prompt,
             )
             chunk_summaries.append(extract_response_text(response))
             total_usage = merge_usage(total_usage, extract_usage(response))
@@ -288,7 +314,11 @@ class OpenAISummarizer:
             f"## Часть {index}\n\n{summary}"
             for index, summary in enumerate(chunk_summaries, start=1)
         )
-        response = self._create_response_with_retries(client, _final_summary_input(combined))
+        response = self._create_response_with_retries(
+            client,
+            _final_summary_input(combined),
+            system_prompt,
+        )
         total_usage = merge_usage(total_usage, extract_usage(response))
         return extract_response_text(response), total_usage
 
@@ -323,6 +353,9 @@ class OpenAISummarizer:
             ],
         )
 
+    def _system_prompt(self, kind: str) -> str:
+        return build_summary_system_prompt(self.config, kind)
+
     @staticmethod
     def _default_client_factory(**kwargs: Any) -> Any:
         from openai import OpenAI
@@ -336,6 +369,82 @@ def create_summarizer(config: dict[str, Any]) -> Summarizer:
     if config.get("provider") != SUMMARY_PROVIDER:
         return NoopSummarizer()
     return OpenAISummarizer(config)
+
+
+def build_summary_system_prompt(config: dict[str, Any], kind: str) -> str:
+    template = summary_template_from_config(config, kind)
+    title = str(template.get("title") or "").strip()
+    sections = template.get("sections") or []
+    rules = str(template.get("rules") or "").strip()
+    if not title:
+        title = str(DEFAULT_SUMMARY_TEMPLATES[kind]["title"])
+
+    context = (
+        "Ты готовишь полезный черновик итогов встречи для project manager."
+        if kind == "meeting"
+        else "Ты готовишь полезную выжимку рабочего дня для project manager."
+    )
+    base_rules = BASE_MEETING_RULES if kind == "meeting" else BASE_DAY_RULES
+
+    lines = [
+        context,
+        "",
+        "Используй строго такую структуру:",
+        "",
+        f"# {title}",
+        "",
+    ]
+    for section in sections:
+        section_title = str(section.get("title") or "").strip()
+        if not section_title:
+            continue
+        lines.append(f"## {section_title}")
+        instruction = str(section.get("instruction") or "").strip()
+        if instruction:
+            lines.append(f"Что писать в разделе: {instruction}")
+        lines.append("")
+
+    lines.extend(["Базовые правила:"])
+    lines.extend(f"- {rule}" for rule in base_rules)
+    if rules:
+        lines.extend(["", "Дополнительные правила пользователя:"])
+        lines.extend(line for line in rules.splitlines() if line.strip())
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def summary_template_from_config(config: dict[str, Any], kind: str) -> dict[str, Any]:
+    if kind not in {"meeting", "day"}:
+        kind = "meeting"
+    templates = config.get("templates")
+    if not isinstance(templates, dict):
+        return DEFAULT_SUMMARY_TEMPLATES[kind]
+    template = templates.get(kind)
+    if not isinstance(template, dict):
+        return DEFAULT_SUMMARY_TEMPLATES[kind]
+    sections = template.get("sections")
+    if not isinstance(sections, list) or not sections:
+        return DEFAULT_SUMMARY_TEMPLATES[kind]
+    normalized_sections = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        title = str(section.get("title") or "").strip()
+        if not title:
+            continue
+        normalized_sections.append(
+            {
+                "title": title,
+                "instruction": str(section.get("instruction") or "").strip(),
+            }
+        )
+    if not normalized_sections:
+        return DEFAULT_SUMMARY_TEMPLATES[kind]
+    return {
+        "title": str(template.get("title") or DEFAULT_SUMMARY_TEMPLATES[kind]["title"]).strip(),
+        "sections": normalized_sections,
+        "rules": str(template.get("rules") or "").strip()
+        or str(DEFAULT_SUMMARY_TEMPLATES[kind].get("rules") or ""),
+    }
 
 
 def disabled_summary_metadata() -> dict[str, str]:

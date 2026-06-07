@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.services.summarization import (
     OPENAI_KEY_MISSING_ERROR,
     OpenAISummarizer,
+    build_summary_system_prompt,
     load_api_key,
     read_transcript_text,
     split_text,
@@ -50,6 +51,32 @@ def test_disabled_summary_does_not_call_openai(tmp_path: Path) -> None:
         "summary_status": "disabled",
         "summary_error": "Генерация итогов выключена в настройках.",
     }
+
+
+def test_custom_meeting_summary_template_changes_system_prompt() -> None:
+    prompt = build_summary_system_prompt(
+        _summary_config(
+            templates={
+                "meeting": {
+                    "title": "Мой формат встречи",
+                    "sections": [
+                        {
+                            "title": "Только решения",
+                            "instruction": "Выведи только подтвержденные решения.",
+                        }
+                    ],
+                    "rules": "Не используй длинные вступления.",
+                }
+            }
+        ),
+        "meeting",
+    )
+
+    assert "# Мой формат встречи" in prompt
+    assert "## Только решения" in prompt
+    assert "Выведи только подтвержденные решения." in prompt
+    assert "Не используй длинные вступления." in prompt
+    assert "не выдумывай факты" in prompt
 
 
 def test_missing_api_key_returns_unavailable_without_printing_key(tmp_path: Path, monkeypatch) -> None:

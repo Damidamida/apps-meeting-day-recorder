@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,78 @@ DEFAULT_TRANSCRIPTION_BACKENDS: dict[str, dict[str, Any]] = {
         "retry_sleep_seconds": 1,
     },
 }
+DEFAULT_SUMMARY_TEMPLATES: dict[str, dict[str, Any]] = {
+    "meeting": {
+        "title": "Итоги встречи",
+        "sections": [
+            {
+                "title": "Кратко",
+                "instruction": "Сформулируй 2-4 главных вывода встречи без лишних деталей.",
+            },
+            {
+                "title": "Обсуждалось",
+                "instruction": "Перечисли основные темы обсуждения без дословного пересказа transcript.",
+            },
+            {
+                "title": "Решения",
+                "instruction": "Перечисли зафиксированные решения. Если решений нет, напиши \"Не зафиксировано\".",
+            },
+            {
+                "title": "Задачи",
+                "instruction": "Сформулируй action items, исполнителей и сроки. Если исполнитель или срок не указаны, явно отметь это.",
+            },
+            {
+                "title": "Риски / вопросы",
+                "instruction": "Перечисли открытые вопросы, риски и блокеры.",
+            },
+            {
+                "title": "Требует проверки",
+                "instruction": "Отметь неясные места и спорные выводы, которые нужно проверить вручную.",
+            },
+        ],
+        "rules": (
+            "- если данных недостаточно, пиши \"Не зафиксировано\";\n"
+            "- задачи формулируй как action items;\n"
+            "- сохраняй смысл технических терминов;\n"
+            "- итог должен быть пригоден для ручного ревью."
+        ),
+    },
+    "day": {
+        "title": "Итоги встреч",
+        "sections": [
+            {
+                "title": "Главное за день",
+                "instruction": "Сделай короткую выжимку самого важного за рабочий день.",
+            },
+            {
+                "title": "По встречам",
+                "instruction": "Кратко перечисли, что было важно по каждой встрече.",
+            },
+            {
+                "title": "Решения",
+                "instruction": "Собери решения из всех встреч за день.",
+            },
+            {
+                "title": "Задачи и договоренности",
+                "instruction": "Собери задачи, договоренности, исполнителей и сроки из всех встреч.",
+            },
+            {
+                "title": "Риски / вопросы",
+                "instruction": "Собери открытые вопросы, риски и блокеры за день.",
+            },
+            {
+                "title": "Что требует проверки",
+                "instruction": "Отметь спорные или неполные данные, которые нужно проверить вручную.",
+            },
+        ],
+        "rules": (
+            "- используй только переданные итоги встреч;\n"
+            "- если у встречи отсутствует summary, явно укажи это;\n"
+            "- если в текущем черновике уже есть ручные правки, сохрани их смысл;\n"
+            "- итог должен быть короткой выжимкой, а не копией всех summary подряд."
+        ),
+    },
+}
 DEFAULT_CONFIG: dict[str, Any] = {
     "storage": {
         "root": "MeetingSummaries",
@@ -62,6 +135,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_chars_per_chunk": 20000,
         "retry_attempts": 2,
         "retry_sleep_seconds": 1,
+        "templates": DEFAULT_SUMMARY_TEMPLATES,
     },
     "transcription": {
         "backend": "whisper_cli",
@@ -95,7 +169,7 @@ def _default_config() -> dict[str, Any]:
         "storage": dict(DEFAULT_CONFIG["storage"]),
         "obs": dict(DEFAULT_CONFIG["obs"]),
         "secrets": dict(DEFAULT_CONFIG["secrets"]),
-        "summary": dict(DEFAULT_CONFIG["summary"]),
+        "summary": deepcopy(DEFAULT_CONFIG["summary"]),
         "transcription": {
             **DEFAULT_CONFIG["transcription"],
             "backends": _default_transcription_backends(),
@@ -205,7 +279,62 @@ def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[
         "summary.retry_sleep_seconds",
         config,
     )
+    summary["templates"] = _normalize_summary_templates(summary.get("templates"), config)
     return summary
+
+
+def _normalize_summary_templates(value: Any, config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return deepcopy(DEFAULT_SUMMARY_TEMPLATES)
+    return {
+        "meeting": _normalize_summary_template(
+            value.get("meeting"),
+            DEFAULT_SUMMARY_TEMPLATES["meeting"],
+            "summary.templates.meeting",
+            config,
+        ),
+        "day": _normalize_summary_template(
+            value.get("day"),
+            DEFAULT_SUMMARY_TEMPLATES["day"],
+            "summary.templates.day",
+            config,
+        ),
+    }
+
+
+def _normalize_summary_template(
+    value: Any,
+    default: dict[str, Any],
+    name: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return deepcopy(default)
+    title = str(value.get("title") or default["title"]).strip() or str(default["title"])
+    rules = str(value.get("rules") or "").strip()
+    raw_sections = value.get("sections")
+    sections: list[dict[str, str]] = []
+    if isinstance(raw_sections, list):
+        for item in raw_sections:
+            if not isinstance(item, dict):
+                continue
+            section_title = str(item.get("title") or "").strip()
+            if not section_title:
+                continue
+            sections.append(
+                {
+                    "title": section_title,
+                    "instruction": str(item.get("instruction") or "").strip(),
+                }
+            )
+    if not sections:
+        config["_warnings"].append(
+            f"`{name}.sections` не содержит валидных разделов. Используется шаблон по умолчанию."
+        )
+        sections = deepcopy(default["sections"])
+    if not rules:
+        rules = str(default.get("rules") or "")
+    return {"title": title, "sections": sections, "rules": rules}
 
 
 def _default_transcription_backends() -> dict[str, dict[str, Any]]:

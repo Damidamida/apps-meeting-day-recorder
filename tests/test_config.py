@@ -60,6 +60,42 @@ def test_partial_summary_config_uses_safe_defaults(tmp_path) -> None:
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["summary"]["env_file"] == ""
+    assert config["summary"]["templates"]["meeting"]["title"] == "Итоги встречи"
+    assert config["summary"]["templates"]["day"]["title"] == "Итоги встреч"
+
+
+def test_summary_templates_are_loaded_from_config(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "summary:\n"
+        "  templates:\n"
+        "    meeting:\n"
+        "      title: Пользовательские итоги\n"
+        "      sections:\n"
+        "        - title: Главные решения\n"
+        "          instruction: Пиши только решения.\n"
+        "      rules: Пиши кратко.\n"
+        "    day:\n"
+        "      title: День кратко\n"
+        "      sections:\n"
+        "        - title: Выжимка\n"
+        "          instruction: Собери главное.\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    meeting_template = config["summary"]["templates"]["meeting"]
+    day_template = config["summary"]["templates"]["day"]
+    assert meeting_template["title"] == "Пользовательские итоги"
+    assert meeting_template["sections"] == [
+        {"title": "Главные решения", "instruction": "Пиши только решения."}
+    ]
+    assert meeting_template["rules"] == "Пиши кратко."
+    assert day_template["title"] == "День кратко"
+    assert day_template["sections"] == [
+        {"title": "Выжимка", "instruction": "Собери главное."}
+    ]
 
 
 def test_transcription_config_supports_faster_whisper_backend(tmp_path) -> None:

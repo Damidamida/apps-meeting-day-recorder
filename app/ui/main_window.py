@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QStackedWidget,
     QTabWidget,
     QTextBrowser,
@@ -66,6 +65,31 @@ SUMMARY_MODEL_OPTIONS = [
     ("GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход", "gpt-5.4-nano"),
     ("Другая модель AI Tunnel", "__custom__"),
 ]
+
+
+class NumericLineEdit(QLineEdit):
+    def __init__(self, value: int, minimum: int, maximum: int, parent: QWidget | None = None) -> None:
+        super().__init__(str(value), parent)
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def setValue(self, value: int) -> None:
+        self.setText(str(value))
+
+    def value(self) -> int:
+        return int(self.text().strip())
+
+    def validated_value(self, label: str) -> int:
+        raw_value = self.text().strip()
+        try:
+            value = int(raw_value)
+        except ValueError as error:
+            raise ValueError(f"{label}: укажите целое число.") from error
+        if value < self.minimum or value > self.maximum:
+            raise ValueError(
+                f"{label}: допустимое значение от {self.minimum} до {self.maximum}."
+            )
+        return value
 
 
 class MeetingPipelineWorker(QObject):
@@ -2787,6 +2811,38 @@ class MainWindow(QMainWindow):
             )
         )
 
+        settings_tabs = QTabWidget()
+        settings_tabs.setObjectName("settingsTabs")
+        settings_tabs.addTab(self._create_settings_basic_tab(), "Основное")
+        settings_tabs.addTab(self._create_settings_recording_tab(), "Запись")
+        settings_tabs.addTab(self._create_settings_transcription_tab(), "Транскрипция")
+        settings_tabs.addTab(self._create_settings_summary_tab(), "Итоги")
+        settings_tabs.setCurrentIndex(3)
+        layout.addWidget(settings_tabs)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(8)
+        self.save_settings_button = self._add_button(
+            actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
+        )
+        actions_layout.addStretch(1)
+        layout.addLayout(actions_layout)
+        self.settings_status_label = QLabel(
+            "Настройки сохраняются в локальный config.yaml. Файл не должен попадать в git."
+        )
+        self.settings_status_label.setWordWrap(True)
+        self.settings_status_label.setObjectName("inlineStatus")
+        layout.addWidget(self.settings_status_label)
+
+        page.setLayout(layout)
+        return self._create_page_scroll_area("settingsScrollArea", page)
+
+    def _create_settings_basic_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
         storage_layout = QFormLayout()
         storage_layout.setHorizontalSpacing(18)
         storage_layout.setVerticalSpacing(8)
@@ -2808,20 +2864,6 @@ class MainWindow(QMainWindow):
         storage_layout.addRow("Папка данных:", storage_root_row)
         layout.addWidget(self._create_card("Хранение", storage_layout))
 
-        obs_layout = QFormLayout()
-        obs_layout.setHorizontalSpacing(18)
-        obs_layout.setVerticalSpacing(8)
-        self.settings_obs_host_input = QLineEdit(str(self.config["obs"]["websocket_host"]))
-        self.settings_obs_port_input = QSpinBox()
-        self.settings_obs_port_input.setRange(1, 65535)
-        self.settings_obs_port_input.setValue(int(self.config["obs"]["websocket_port"]))
-        self.settings_obs_password_input = QLineEdit(str(self.config["obs"]["websocket_password"]))
-        self.settings_obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        obs_layout.addRow("WebSocket host:", self.settings_obs_host_input)
-        obs_layout.addRow("WebSocket port:", self.settings_obs_port_input)
-        obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
-        layout.addWidget(self._create_card("OBS", obs_layout))
-
         secrets_layout = QFormLayout()
         secrets_layout.setHorizontalSpacing(18)
         secrets_layout.setVerticalSpacing(8)
@@ -2837,6 +2879,76 @@ class MainWindow(QMainWindow):
         secrets_layout.addRow(".env файл:", self.settings_secrets_env_file_input)
         secrets_layout.addRow("", secrets_hint)
         layout.addWidget(self._create_card("Секреты", secrets_layout))
+
+        ui_layout = QFormLayout()
+        ui_layout.setHorizontalSpacing(18)
+        ui_layout.setVerticalSpacing(8)
+        self.settings_theme_select = QComboBox()
+        self.settings_theme_select.addItem("Светлая", "light")
+        self.settings_theme_select.addItem("Темная", "dark")
+        self._set_combo_value(
+            self.settings_theme_select,
+            str(self.config.get("ui", {}).get("theme", "light")),
+        )
+        self.settings_floating_theme_select = QComboBox()
+        self.settings_floating_theme_select.addItem("Как в приложении", "inherit")
+        self.settings_floating_theme_select.addItem("Светлая", "light")
+        self.settings_floating_theme_select.addItem("Темная", "dark")
+        self._set_combo_value(
+            self.settings_floating_theme_select,
+            str(self.config.get("ui", {}).get("floating_theme", "inherit")),
+        )
+        theme_hint = QLabel(
+            "Тема основного окна и floating control применяется сразу после сохранения."
+        )
+        theme_hint.setObjectName("sectionHint")
+        theme_hint.setWordWrap(True)
+        ui_layout.addRow("Тема приложения:", self.settings_theme_select)
+        ui_layout.addRow("Тема floating control:", self.settings_floating_theme_select)
+        ui_layout.addRow("", theme_hint)
+        layout.addWidget(self._create_card("Интерфейс", ui_layout))
+
+        layout.addStretch(1)
+        page.setLayout(layout)
+        return page
+
+    def _create_settings_recording_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        obs_layout = QFormLayout()
+        obs_layout.setHorizontalSpacing(18)
+        obs_layout.setVerticalSpacing(8)
+        self.settings_obs_host_input = QLineEdit(str(self.config["obs"]["websocket_host"]))
+        self.settings_obs_port_input = NumericLineEdit(
+            int(self.config["obs"]["websocket_port"]),
+            1,
+            65535,
+        )
+        self.settings_obs_password_input = QLineEdit(str(self.config["obs"]["websocket_password"]))
+        self.settings_obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        obs_hint = QLabel(
+            "OBS обязателен для записи разговора. Путь записи настраивается в самом OBS; приложение сохраняет путь, если OBS возвращает его после остановки записи."
+        )
+        obs_hint.setObjectName("sectionHint")
+        obs_hint.setWordWrap(True)
+        obs_layout.addRow("WebSocket host:", self.settings_obs_host_input)
+        obs_layout.addRow("WebSocket port:", self.settings_obs_port_input)
+        obs_layout.addRow("WebSocket password:", self.settings_obs_password_input)
+        obs_layout.addRow("", obs_hint)
+        layout.addWidget(self._create_card("Запись разговора (OBS)", obs_layout))
+
+        layout.addStretch(1)
+        page.setLayout(layout)
+        return page
+
+    def _create_settings_transcription_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
 
         transcription_layout = QFormLayout()
         transcription_layout.setHorizontalSpacing(18)
@@ -2859,18 +2971,13 @@ class MainWindow(QMainWindow):
         self.settings_transcription_model_select = QComboBox()
         self.settings_transcription_device_select = QComboBox()
         self.settings_transcription_device_select.addItems(["cpu", "cuda"])
-        self.settings_transcription_timeout_input = QSpinBox()
-        self.settings_transcription_timeout_input.setRange(1, 3600)
-        self.settings_transcription_upload_limit_input = QSpinBox()
-        self.settings_transcription_upload_limit_input.setRange(1, 25)
+        self.settings_transcription_timeout_input = NumericLineEdit(300, 1, 3600)
+        self.settings_transcription_upload_limit_input = NumericLineEdit(25, 1, 25)
         self.settings_transcription_chunking_checkbox = QCheckBox(
             "Нарезать длинные записи автоматически"
         )
-        self.settings_transcription_chunk_duration_input = QSpinBox()
-        self.settings_transcription_chunk_duration_input.setRange(30, 3600)
-        self.settings_transcription_chunk_duration_input.setSuffix(" сек.")
-        self.settings_transcription_retry_attempts_input = QSpinBox()
-        self.settings_transcription_retry_attempts_input.setRange(0, 10)
+        self.settings_transcription_chunk_duration_input = NumericLineEdit(300, 30, 3600)
+        self.settings_transcription_retry_attempts_input = NumericLineEdit(2, 0, 10)
         self.settings_transcription_vad_checkbox = QCheckBox(
             "Для faster-whisper отсекать тишину и неречевой шум"
         )
@@ -2901,7 +3008,7 @@ class MainWindow(QMainWindow):
         )
         self._add_transcription_settings_row(
             transcription_layout,
-            "Timeout, секунд:",
+            "Лимит ожидания ответа, сек.:",
             self.settings_transcription_timeout_input,
             {"aitunnel"},
         )
@@ -2919,7 +3026,7 @@ class MainWindow(QMainWindow):
         )
         self._add_transcription_settings_row(
             transcription_layout,
-            "Длительность части:",
+            "Длительность одной части, сек.:",
             self.settings_transcription_chunk_duration_input,
             {"aitunnel"},
         )
@@ -2939,6 +3046,16 @@ class MainWindow(QMainWindow):
         self._update_transcription_settings_visibility()
         layout.addWidget(self._create_card("Транскрипция", transcription_layout))
 
+        layout.addStretch(1)
+        page.setLayout(layout)
+        return page
+
+    def _create_settings_summary_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
         summary_layout = QFormLayout()
         summary_layout.setHorizontalSpacing(18)
         summary_layout.setVerticalSpacing(8)
@@ -2951,12 +3068,16 @@ class MainWindow(QMainWindow):
         self.settings_summary_custom_model_input.setPlaceholderText(
             "Например: deepseek-r1, gemini-..., claude-..."
         )
-        self.settings_summary_timeout_input = QSpinBox()
-        self.settings_summary_timeout_input.setRange(1, 3600)
-        self.settings_summary_timeout_input.setValue(int(self.config["summary"]["timeout_seconds"]))
-        self.settings_summary_chunk_input = QSpinBox()
-        self.settings_summary_chunk_input.setRange(1000, 200000)
-        self.settings_summary_chunk_input.setValue(int(self.config["summary"]["max_chars_per_chunk"]))
+        self.settings_summary_timeout_input = NumericLineEdit(
+            int(self.config["summary"]["timeout_seconds"]),
+            1,
+            3600,
+        )
+        self.settings_summary_chunk_input = NumericLineEdit(
+            int(self.config["summary"]["max_chars_per_chunk"]),
+            1000,
+            200000,
+        )
         summary_hint = QLabel(
             "Summary использует AI Tunnel. API key берется из блока `Секреты` "
             "и переменной AITUNNEL_KEY."
@@ -2970,60 +3091,28 @@ class MainWindow(QMainWindow):
             self.settings_summary_custom_model_label,
             self.settings_summary_custom_model_input,
         )
-        summary_layout.addRow("Timeout, секунд:", self.settings_summary_timeout_input)
-        summary_layout.addRow("Символов на chunk:", self.settings_summary_chunk_input)
+        summary_layout.addRow("Лимит ожидания ответа AI, сек.:", self.settings_summary_timeout_input)
+        summary_layout.addRow(
+            "Лимит текста в одном AI-запросе, символов:",
+            self.settings_summary_chunk_input,
+        )
+        summary_chunk_hint = QLabel(
+            "Если расшифровка встречи длиннее этого лимита, приложение разделит ее на части, отправит их в AI по очереди и соберет итог из нескольких ответов. Рекомендуемое значение: 20000 символов."
+        )
+        summary_chunk_hint.setObjectName("sectionHint")
+        summary_chunk_hint.setWordWrap(True)
+        summary_layout.addRow("", summary_chunk_hint)
         summary_layout.addRow("", summary_hint)
         self._load_summary_model_settings(str(self.config["summary"]["model"]))
         self.settings_summary_model_select.currentIndexChanged.connect(
             self._update_summary_custom_model_visibility
         )
-        layout.addWidget(self._create_card("Summary", summary_layout))
+        layout.addWidget(self._create_card("Генерация итогов", summary_layout))
 
-        ui_layout = QFormLayout()
-        ui_layout.setHorizontalSpacing(18)
-        ui_layout.setVerticalSpacing(8)
-        self.settings_theme_select = QComboBox()
-        self.settings_theme_select.addItem("Светлая", "light")
-        self.settings_theme_select.addItem("Темная", "dark")
-        self._set_combo_value(
-            self.settings_theme_select,
-            str(self.config.get("ui", {}).get("theme", "light")),
-        )
-        self.settings_floating_theme_select = QComboBox()
-        self.settings_floating_theme_select.addItem("Как в приложении", "inherit")
-        self.settings_floating_theme_select.addItem("Светлая", "light")
-        self.settings_floating_theme_select.addItem("Темная", "dark")
-        self._set_combo_value(
-            self.settings_floating_theme_select,
-            str(self.config.get("ui", {}).get("floating_theme", "inherit")),
-        )
-        theme_hint = QLabel(
-            "Тема основного окна и floating control применяется сразу после сохранения. "
-            "Настройки transcription применяются для следующих встреч после сохранения."
-        )
-        theme_hint.setObjectName("sectionHint")
-        theme_hint.setWordWrap(True)
-        ui_layout.addRow("Тема приложения:", self.settings_theme_select)
-        ui_layout.addRow("Тема floating control:", self.settings_floating_theme_select)
-        ui_layout.addRow("", theme_hint)
-        layout.addWidget(self._create_card("Интерфейс", ui_layout))
-
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(8)
-        self.save_settings_button = self._add_button(
-            actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
-        )
-        actions_layout.addStretch(1)
-        layout.addLayout(actions_layout)
-        self.settings_status_label = QLabel(
-            "Настройки сохраняются в локальный config.yaml. Файл не должен попадать в git."
-        )
-        self.settings_status_label.setWordWrap(True)
-        self.settings_status_label.setObjectName("inlineStatus")
-        layout.addWidget(self.settings_status_label)
+        layout.addWidget(self._create_summary_templates_settings_card())
 
         page.setLayout(layout)
-        return self._create_page_scroll_area("settingsScrollArea", page)
+        return page
 
     def _add_transcription_settings_row(
         self,
@@ -3100,11 +3189,23 @@ class MainWindow(QMainWindow):
                     "api_key_env": "AITUNNEL_KEY",
                     "base_url": "https://api.aitunnel.ru/v1/",
                     "env_file": "",
-                    "timeout_seconds": self.settings_transcription_timeout_input.value(),
-                    "max_upload_mb": self.settings_transcription_upload_limit_input.value(),
+                    "timeout_seconds": self._settings_numeric_value(
+                        self.settings_transcription_timeout_input,
+                        "Лимит ожидания ответа транскрипции",
+                    ),
+                    "max_upload_mb": self._settings_numeric_value(
+                        self.settings_transcription_upload_limit_input,
+                        "Лимит размера аудио",
+                    ),
                     "chunking_enabled": self.settings_transcription_chunking_checkbox.isChecked(),
-                    "chunk_duration_seconds": self.settings_transcription_chunk_duration_input.value(),
-                    "retry_attempts": self.settings_transcription_retry_attempts_input.value(),
+                    "chunk_duration_seconds": self._settings_numeric_value(
+                        self.settings_transcription_chunk_duration_input,
+                        "Длительность одной части",
+                    ),
+                    "retry_attempts": self._settings_numeric_value(
+                        self.settings_transcription_retry_attempts_input,
+                        "Количество повторов транскрипции",
+                    ),
                     "retry_sleep_seconds": 1,
                 }
             )
@@ -3168,6 +3269,279 @@ class MainWindow(QMainWindow):
         if selected_model == "__custom__":
             return self.settings_summary_custom_model_input.text().strip() or "gpt-5.4-mini"
         return selected_model or "gpt-5.4-mini"
+
+    def _create_summary_templates_settings_card(self) -> QWidget:
+        self.settings_summary_templates = self._summary_templates_for_settings()
+        self.settings_summary_template_title_inputs: dict[str, QLineEdit] = {}
+        self.settings_summary_template_rules_inputs: dict[str, QPlainTextEdit] = {}
+        self.settings_summary_template_section_inputs: dict[
+            str,
+            list[tuple[QLineEdit, QPlainTextEdit]],
+        ] = {}
+        self.settings_summary_template_section_layouts: dict[str, QVBoxLayout] = {}
+
+        layout = QVBoxLayout()
+        layout.setSpacing(12)
+        hint = QLabel(
+            "Настройте структуру итогов и правила для AI. Базовые защитные правила приложения остаются включенными."
+        )
+        hint.setObjectName("sectionHint")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._create_summary_template_editor("meeting"), "Одна встреча")
+        tabs.addTab(self._create_summary_template_editor("day"), "Итоги дня")
+        layout.addWidget(tabs)
+        return self._create_card("Шаблоны итогов", layout)
+
+    def _summary_templates_for_settings(self) -> dict[str, dict[str, object]]:
+        templates = self.config.get("summary", {}).get("templates")
+        if not isinstance(templates, dict):
+            templates = DEFAULT_CONFIG["summary"]["templates"]
+        result: dict[str, dict[str, object]] = {}
+        for kind in ("meeting", "day"):
+            default_template = DEFAULT_CONFIG["summary"]["templates"][kind]
+            template = templates.get(kind) if isinstance(templates, dict) else None
+            if not isinstance(template, dict):
+                template = default_template
+            sections = template.get("sections")
+            if not isinstance(sections, list) or not sections:
+                sections = default_template["sections"]
+            result[kind] = {
+                "title": str(template.get("title") or default_template["title"]),
+                "sections": [
+                    {
+                        "title": str(section.get("title") or "").strip(),
+                        "instruction": str(section.get("instruction") or "").strip(),
+                    }
+                    for section in sections
+                    if isinstance(section, dict) and str(section.get("title") or "").strip()
+                ],
+                "rules": str(template.get("rules") or default_template.get("rules") or ""),
+            }
+        return result
+
+    def _create_summary_template_editor(self, kind: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        template = self.settings_summary_templates[kind]
+        title_input = QLineEdit(str(template.get("title") or ""))
+        self.settings_summary_template_title_inputs[kind] = title_input
+        title_hint = QLabel(
+            "Это главный заголовок, который AI использует в итоговом Markdown-файле."
+        )
+        title_hint.setObjectName("sectionHint")
+        title_hint.setWordWrap(True)
+        title_layout = QFormLayout()
+        title_layout.setHorizontalSpacing(18)
+        title_layout.setVerticalSpacing(8)
+        title_layout.addRow("Заголовок итогов:", title_input)
+        title_layout.addRow("", title_hint)
+        layout.addLayout(title_layout)
+
+        sections_label = QLabel("Структура разделов")
+        sections_label.setObjectName("cardTitle")
+        layout.addWidget(sections_label)
+
+        sections_container = QWidget()
+        sections_layout = QVBoxLayout()
+        sections_layout.setContentsMargins(0, 0, 0, 0)
+        sections_layout.setSpacing(8)
+        sections_container.setLayout(sections_layout)
+        self.settings_summary_template_section_layouts[kind] = sections_layout
+        layout.addWidget(sections_container)
+
+        add_button = QPushButton("Добавить раздел")
+        add_button.setObjectName("secondaryButton")
+        add_button.clicked.connect(lambda _=False, current_kind=kind: self._add_summary_template_section(current_kind))
+        add_row = QHBoxLayout()
+        add_row.addWidget(add_button, 0, Qt.AlignmentFlag.AlignLeft)
+        add_row.addStretch(1)
+        layout.addLayout(add_row)
+
+        rules_label = QLabel("Правила для AI")
+        rules_label.setObjectName("cardTitle")
+        layout.addWidget(rules_label)
+        rules_input = QPlainTextEdit()
+        rules_input.setPlainText(str(template.get("rules") or ""))
+        rules_input.setPlaceholderText("Например: писать кратко, не использовать канцелярит, явно отмечать спорные места.")
+        rules_input.setMinimumHeight(110)
+        self.settings_summary_template_rules_inputs[kind] = rules_input
+        layout.addWidget(rules_input)
+
+        self._refresh_summary_template_sections(kind)
+        page.setLayout(layout)
+        return page
+
+    def _refresh_summary_template_sections(self, kind: str) -> None:
+        layout = self.settings_summary_template_section_layouts[kind]
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        section_inputs: list[tuple[QLineEdit, QPlainTextEdit]] = []
+        sections = self.settings_summary_templates[kind]["sections"]
+        if not isinstance(sections, list):
+            sections = []
+            self.settings_summary_templates[kind]["sections"] = sections
+
+        for index, section in enumerate(sections):
+            if not isinstance(section, dict):
+                continue
+            card = QFrame()
+            card.setObjectName("settingsSubCard")
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card_layout = QVBoxLayout()
+            card_layout.setContentsMargins(12, 10, 12, 10)
+            card_layout.setSpacing(8)
+
+            header = QHBoxLayout()
+            header.setSpacing(8)
+            section_number = QLabel(f"Раздел {index + 1}")
+            section_number.setObjectName("cardTitle")
+            header.addWidget(section_number)
+            header.addStretch(1)
+
+            move_up = QPushButton("Вверх")
+            move_up.setObjectName("secondaryButton")
+            move_up.setEnabled(index > 0)
+            move_up.clicked.connect(
+                lambda _=False, current_kind=kind, current_index=index: self._move_summary_template_section(
+                    current_kind,
+                    current_index,
+                    -1,
+                )
+            )
+            header.addWidget(move_up)
+
+            move_down = QPushButton("Вниз")
+            move_down.setObjectName("secondaryButton")
+            move_down.setEnabled(index < len(sections) - 1)
+            move_down.clicked.connect(
+                lambda _=False, current_kind=kind, current_index=index: self._move_summary_template_section(
+                    current_kind,
+                    current_index,
+                    1,
+                )
+            )
+            header.addWidget(move_down)
+
+            delete_button = QPushButton("Удалить")
+            delete_button.setObjectName("dangerButton")
+            delete_button.setEnabled(len(sections) > 1)
+            delete_button.clicked.connect(
+                lambda _=False, current_kind=kind, current_index=index: self._delete_summary_template_section(
+                    current_kind,
+                    current_index,
+                )
+            )
+            header.addWidget(delete_button)
+            card_layout.addLayout(header)
+
+            form = QFormLayout()
+            form.setHorizontalSpacing(18)
+            form.setVerticalSpacing(8)
+            title_input = QLineEdit(str(section.get("title") or ""))
+            title_input.setPlaceholderText("Например: Решения")
+            instruction_input = QPlainTextEdit(str(section.get("instruction") or ""))
+            instruction_input.setPlaceholderText(
+                "Необязательно. Если поле пустое, AI получит только название раздела и общие правила."
+            )
+            instruction_input.setMinimumHeight(82)
+            form.addRow("Название раздела:", title_input)
+            form.addRow("Что писать в разделе:", instruction_input)
+            card_layout.addLayout(form)
+
+            card.setLayout(card_layout)
+            layout.addWidget(card)
+            section_inputs.append((title_input, instruction_input))
+        self.settings_summary_template_section_inputs[kind] = section_inputs
+
+    def _save_summary_template_editor_state(self, kind: str) -> None:
+        section_inputs = self.settings_summary_template_section_inputs.get(kind, [])
+        self.settings_summary_templates[kind]["sections"] = [
+            {
+                "title": title_input.text().strip(),
+                "instruction": instruction_input.toPlainText().strip(),
+            }
+            for title_input, instruction_input in section_inputs
+        ]
+
+    def _add_summary_template_section(self, kind: str) -> None:
+        self._save_summary_template_editor_state(kind)
+        sections = self.settings_summary_templates[kind]["sections"]
+        if not isinstance(sections, list):
+            sections = []
+            self.settings_summary_templates[kind]["sections"] = sections
+        sections.append({"title": "Новый раздел", "instruction": ""})
+        self._refresh_summary_template_sections(kind)
+
+    def _move_summary_template_section(self, kind: str, index: int, direction: int) -> None:
+        self._save_summary_template_editor_state(kind)
+        sections = self.settings_summary_templates[kind]["sections"]
+        if not isinstance(sections, list):
+            return
+        new_index = index + direction
+        if new_index < 0 or new_index >= len(sections):
+            return
+        sections[index], sections[new_index] = sections[new_index], sections[index]
+        self._refresh_summary_template_sections(kind)
+
+    def _delete_summary_template_section(self, kind: str, index: int) -> None:
+        self._save_summary_template_editor_state(kind)
+        sections = self.settings_summary_templates[kind]["sections"]
+        if not isinstance(sections, list) or len(sections) <= 1:
+            return
+        sections.pop(index)
+        self._refresh_summary_template_sections(kind)
+
+    def _summary_templates_from_settings(self) -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        kind_labels = {"meeting": "Итоги одной встречи", "day": "Итоги дня"}
+        for kind in ("meeting", "day"):
+            self._save_summary_template_editor_state(kind)
+            title = self.settings_summary_template_title_inputs[kind].text().strip()
+            if not title:
+                raise ValueError(f"{kind_labels[kind]}: укажите заголовок итогов.")
+            sections = []
+            raw_sections = self.settings_summary_templates[kind].get("sections")
+            if isinstance(raw_sections, list):
+                for index, section in enumerate(raw_sections, start=1):
+                    if not isinstance(section, dict):
+                        continue
+                    section_title = str(section.get("title") or "").strip()
+                    if not section_title:
+                        raise ValueError(
+                            f"{kind_labels[kind]}: укажите название раздела {index}."
+                        )
+                    sections.append(
+                        {
+                            "title": section_title,
+                            "instruction": str(section.get("instruction") or "").strip(),
+                        }
+                    )
+            if not sections:
+                raise ValueError(f"{kind_labels[kind]}: добавьте хотя бы один раздел.")
+            result[kind] = {
+                "title": title,
+                "sections": sections,
+                "rules": self.settings_summary_template_rules_inputs[kind].toPlainText().strip(),
+            }
+        return result
+
+    @staticmethod
+    def _settings_numeric_value(field: QWidget, label: str) -> int:
+        if isinstance(field, NumericLineEdit):
+            return field.validated_value(label)
+        if hasattr(field, "value"):
+            return int(field.value())
+        raise ValueError(f"{label}: поле недоступно.")
 
     @staticmethod
     def _set_combo_value(combo: QComboBox, value: str) -> None:
@@ -4548,7 +4922,11 @@ class MainWindow(QMainWindow):
         storage_root_text, storage_root_path = storage_root
         readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         config_path = Path("config.yaml")
-        config_to_save = self._settings_config_from_ui(storage_root_text)
+        try:
+            config_to_save = self._settings_config_from_ui(storage_root_text)
+        except ValueError as error:
+            self.settings_status_label.setText(f"Настройки не сохранены: {error}")
+            return
         config_path.write_text(
             yaml.safe_dump(
                 config_to_save,
@@ -4598,7 +4976,10 @@ class MainWindow(QMainWindow):
             },
             "obs": {
                 "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
-                "websocket_port": self.settings_obs_port_input.value(),
+                "websocket_port": self._settings_numeric_value(
+                    self.settings_obs_port_input,
+                    "WebSocket port",
+                ),
                 "websocket_password": self.settings_obs_password_input.text(),
             },
             "secrets": {
@@ -4615,8 +4996,15 @@ class MainWindow(QMainWindow):
                 "api_key_env": str(DEFAULT_CONFIG["summary"]["api_key_env"]),
                 "base_url": str(DEFAULT_CONFIG["summary"]["base_url"]),
                 "env_file": "",
-                "timeout_seconds": self.settings_summary_timeout_input.value(),
-                "max_chars_per_chunk": self.settings_summary_chunk_input.value(),
+                "timeout_seconds": self._settings_numeric_value(
+                    self.settings_summary_timeout_input,
+                    "Лимит ожидания ответа AI",
+                ),
+                "max_chars_per_chunk": self._settings_numeric_value(
+                    self.settings_summary_chunk_input,
+                    "Лимит текста в одном AI-запросе",
+                ),
+                "templates": self._summary_templates_from_settings(),
             },
             "ui": {
                 "theme": self._combo_value(self.settings_theme_select),
