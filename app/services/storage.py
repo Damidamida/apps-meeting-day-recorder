@@ -579,9 +579,19 @@ class StorageService:
         summary_path = Path(str(metadata.get("summary_path") or meeting_folder / "summary_draft.md"))
         if metadata.get("summary_status") != "draft_created" or not summary_path.is_file():
             return False
-        return not StorageService._is_meeting_summary_placeholder(
-            summary_path.read_text(encoding="utf-8")
-        )
+        try:
+            summary_text = summary_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return False
+        return bool(summary_text) and not StorageService._is_meeting_summary_placeholder(summary_text)
+
+    def meeting_summary_is_ready(
+        self,
+        meeting_folder: Path,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        metadata = metadata or self.read_meeting_metadata(meeting_folder)
+        return self._summary_is_ready(metadata, meeting_folder)
 
     def _sync_day_meeting_metadata(self, meeting_folder: Path, metadata: dict[str, Any]) -> None:
         """

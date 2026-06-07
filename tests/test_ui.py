@@ -957,33 +957,70 @@ def test_restore_queue_keeps_corrupted_metadata_backup_message(tmp_path: Path) -
     assert "Восстановлена" in status_text
 
 
-def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path) -> None:
+def test_workday_meeting_card_hides_summary_action_until_summary_is_ready(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
-    window.start_workday()
-    window._start_meeting_with_title("Карточка")
-    meeting_folder = storage.active_meeting_folder
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Карточка",
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
 
-    assert meeting_folder in window.workday_meeting_cards
-    assert window.open_day_folder_button.isHidden()
-
-    window.workday_meeting_cards[meeting_folder].clicked.emit()
-
-    meeting_card = window.workday_meeting_cards[meeting_folder]
+    meeting_card = window._create_meeting_card(meeting_folder, expanded=True)
     meeting_buttons = {
         button.text()
         for button in meeting_card.findChildren(type(window.workday_action_button))
     }
-    assert "Открыть папку встречи" in meeting_buttons
-    assert "Открыть папку дня" in meeting_buttons
 
-    window.workday_meeting_cards[meeting_folder].clicked.emit()
+    assert "Открыть папку встречи" not in meeting_buttons
+    assert "Открыть папку дня" not in meeting_buttons
+    assert "Открыть итоги встречи" not in meeting_buttons
 
-    assert window.selected_workday_meeting_folder is None
-    assert window.pipeline_labels == {}
+    window.close()
+    app.processEvents()
+
+
+def test_workday_meeting_card_opens_ready_summary_in_review(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Карточка",
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
+    storage.save_meeting_summary_draft(meeting_folder, "# Итоги встречи\n\nГотовый итог.\n")
+
+    meeting_card = window._create_meeting_card(meeting_folder, expanded=True)
+    meeting_buttons = {
+        button.text(): button
+        for button in meeting_card.findChildren(type(window.workday_action_button))
+    }
+
+    assert "Открыть папку встречи" not in meeting_buttons
+    assert "Открыть папку дня" not in meeting_buttons
+    assert "Открыть итоги встречи" in meeting_buttons
+
+    meeting_buttons["Открыть итоги встречи"].click()
+
+    assert window.pages.currentIndex() == 1
+    assert window.selected_review_meeting_folder == meeting_folder
+    assert not window.review_day_summary_selected
+    assert window.review_tabs.currentIndex() == 0
+    assert window.meeting_summary_editor.toPlainText() == "# Итоги встречи\n\nГотовый итог.\n"
 
     window.close()
     app.processEvents()

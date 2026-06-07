@@ -2036,19 +2036,13 @@ class MainWindow(QMainWindow):
                     lambda checked=False, folder=meeting_folder: self.reprocess_meeting(folder),
                     "primaryButton",
                 )
-            open_meeting_button = self._add_button(
-                actions_layout,
-                "Открыть папку встречи",
-                lambda checked=False, folder=meeting_folder: self.open_meeting_folder(folder),
-            )
-            open_day_button = self._add_button(
-                actions_layout,
-                "Открыть папку дня",
-                self.open_day_folder,
-            )
+            if self._meeting_summary_is_ready(meeting_folder, metadata):
+                self._add_button(
+                    actions_layout,
+                    "Открыть итоги встречи",
+                    lambda checked=False, folder=meeting_folder: self.open_meeting_summary_review(folder),
+                )
             actions_layout.addStretch(1)
-            open_meeting_button.setEnabled(True)
-            open_day_button.setEnabled(self.storage.get_today_day_folder() is not None)
             card_layout.addLayout(actions_layout)
             pipeline_hint = QLabel(
                 "Pipeline этой встречи: запись, audio.wav, transcript и итоги."
@@ -2101,6 +2095,13 @@ class MainWindow(QMainWindow):
         metadata: dict[str, object] | None = None,
     ) -> bool:
         return self._can_reprocess_meeting(meeting_folder, metadata)
+
+    def _meeting_summary_is_ready(
+        self,
+        meeting_folder: Path,
+        metadata: dict[str, object],
+    ) -> bool:
+        return self.storage.meeting_summary_is_ready(meeting_folder, metadata)
 
     def _is_reprocessable_result(self, metadata: dict[str, object]) -> bool:
         badge_text, _ = self._meeting_badge(metadata)
@@ -3836,6 +3837,18 @@ class MainWindow(QMainWindow):
     def open_review(self) -> None:
         self.pages.setCurrentIndex(1)
         self.refresh_review()
+
+    def open_meeting_summary_review(self, meeting_folder: Path) -> None:
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        if not self._meeting_summary_is_ready(meeting_folder, metadata):
+            self.status_label.setText("Итоги этой встречи пока не готовы.")
+            return
+        self.pages.setCurrentIndex(1)
+        self.review_day_summary_selected = False
+        self.selected_review_meeting_folder = meeting_folder
+        self.refresh_review()
+        self.review_tabs.setCurrentIndex(0)
+        self.review_status_label.setText(f"Открыты итоги встречи: {meeting_folder.name}")
 
     def refresh_review(self) -> None:
         self._clear_layout(self.review_meeting_cards_layout)
