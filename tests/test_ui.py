@@ -58,6 +58,41 @@ def _readiness_statuses(state: str = "ok") -> list[dict[str, object]]:
     ]
 
 
+def _meeting_start_readiness_statuses(
+    obs_state: str = "ok",
+    ffmpeg_state: str = "ok",
+    transcription_state: str = "ok",
+    summary_state: str = "ok",
+) -> list[dict[str, object]]:
+    states = {
+        "Запись разговора (OBS)": obs_state,
+        "Извлечение аудио (FFmpeg)": ffmpeg_state,
+        "Транскрипция": transcription_state,
+        "Итоги встречи": summary_state,
+    }
+    messages = {
+        "ok": "Готово.",
+        "error": "Ошибка готовности.",
+        "skipped": "Пропущено.",
+    }
+    return [
+        {
+            "component": card["component"],
+            "state": states[card["component"]],
+            "message": messages[states[card["component"]]],
+            "details": [
+                {
+                    "label": label,
+                    "value": messages[states[card["component"]]],
+                    "state": states[card["component"]],
+                }
+                for label in card["initial_details"]
+            ],
+        }
+        for card in main_window_module.READINESS_CARDS
+    ]
+
+
 def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = StartMeetingOverlay(NoopRecorder())
@@ -193,6 +228,10 @@ def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
+    window._render_readiness_statuses(
+        _meeting_start_readiness_statuses(),
+        recorder.status_text,
+    )
 
     window.floating_control.primary_button.click()
     assert storage.workday_active
@@ -316,6 +355,121 @@ def test_readiness_check_runs_in_background_and_disables_repeated_start(
     )
     assert window.readiness_badges["Запись разговора (OBS)"].text() == "OK"
     assert "Проверка готовности завершена" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_floating_control_start_meeting_requires_readiness_check(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.floating_control.show()
+    app.processEvents()
+
+    window.floating_control.primary_button.click()
+    assert storage.workday_active
+
+    window.floating_control.primary_button.click()
+    window.floating_control.title_input.setText("Созвон без проверки")
+    window.floating_control.primary_button.click()
+
+    assert not storage.meeting_active
+    assert "Сначала дождитесь проверки готовности системы" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_readiness_check_auto_runs_when_main_window_is_shown(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    calls: list[Path] = []
+
+    def fake_check_readiness(config, recorder, data_root):
+        del config, recorder
+        calls.append(data_root)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", fake_check_readiness)
+
+    window = MainWindow(storage, recorder)
+    window.show()
+
+    assert _wait_for_qt(app, lambda: len(calls) == 1)
+    assert calls == [tmp_path]
+    assert _wait_for_qt(
+        app,
+        lambda: window.readiness_badges["Запись разговора (OBS)"].text() == "OK",
+    )
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_save_auto_runs_fresh_readiness_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    calls: list[Path] = []
+
+    def fake_check_readiness(config, recorder, data_root):
+        del config, recorder
+        calls.append(data_root)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", fake_check_readiness)
+
+    window = MainWindow(storage, recorder)
+    window.readiness_startup_check_done = True
+    window.show()
+    app.processEvents()
+
+    window.settings_storage_root_input.setText(str(tmp_path / "new-data"))
+    window.save_settings()
+
+    assert _wait_for_qt(app, lambda: len(calls) == 1)
+    assert calls == [tmp_path / "new-data"]
+    assert "Проверка готовности запущена автоматически" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_start_workday_auto_runs_readiness_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    calls: list[Path] = []
+
+    def fake_check_readiness(config, recorder, data_root):
+        del config, recorder
+        calls.append(data_root)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", fake_check_readiness)
+
+    window = MainWindow(storage, recorder)
+    window.readiness_startup_check_done = True
+    window.show()
+    app.processEvents()
+
+    window.start_workday()
+
+    assert _wait_for_qt(app, lambda: len(calls) == 1)
+    assert calls == [tmp_path]
+    assert "Проверка готовности" in window.status_label.text()
 
     window.close()
     app.processEvents()
@@ -481,6 +635,80 @@ def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -
 
     assert window.selected_workday_meeting_folder == storage.active_meeting_folder
     assert "Без записи" in window.pipeline_labels["recording"].text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_start_meeting_blocks_when_obs_readiness_has_error(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.start_workday()
+    window._render_readiness_statuses(
+        _meeting_start_readiness_statuses(obs_state="error"),
+        recorder.status_text,
+    )
+
+    window.start_meeting()
+
+    assert window.start_meeting_overlay.isHidden()
+    assert "OBS недоступен" in window.status_label.text()
+    assert "заблокирован" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_start_meeting_warns_on_processing_readiness_errors_before_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.start_workday()
+    window._render_readiness_statuses(
+        _meeting_start_readiness_statuses(
+            obs_state="ok",
+            ffmpeg_state="error",
+            transcription_state="error",
+        ),
+        recorder.status_text,
+    )
+    confirmed_warnings: list[list[str]] = []
+
+    def reject_warning(warnings: list[str]) -> bool:
+        confirmed_warnings.append(warnings)
+        return False
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_start_meeting_with_readiness_warnings",
+        reject_warning,
+    )
+
+    window._start_meeting_with_title("Созвон с предупреждением")
+
+    assert not storage.meeting_active
+    assert confirmed_warnings
+    assert any("FFmpeg" in warning for warning in confirmed_warnings[0])
+    assert any("Транскрипция" in warning for warning in confirmed_warnings[0])
+    assert "Созвон не начат" in window.status_label.text()
+
+    monkeypatch.setattr(
+        window,
+        "_confirm_start_meeting_with_readiness_warnings",
+        lambda warnings: True,
+    )
+
+    window._start_meeting_with_title("Созвон с подтверждением")
+
+    assert storage.meeting_active
+    assert storage.read_meeting_metadata(storage.active_meeting_folder)["title"] == (
+        "Созвон с подтверждением"
+    )
 
     window.close()
     app.processEvents()

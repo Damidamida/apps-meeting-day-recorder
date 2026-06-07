@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -1021,6 +1022,11 @@ class MainWindow(QMainWindow):
             tuple[int, list[dict[str, object]], str] | None
         ) = None
         self.readiness_check_pending_error: tuple[int, str] | None = None
+        self.readiness_check_rerun_requested = False
+        self.readiness_check_rerun_reason = ""
+        self.readiness_startup_check_done = False
+        self.last_readiness_statuses: list[dict[str, object]] | None = None
+        self.readiness_check_stale = True
         self.pending_storage_root_path: Path | None = None
         self.pending_runtime_settings = False
         self.recorder = recorder or (
@@ -1122,6 +1128,15 @@ class MainWindow(QMainWindow):
             config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
         return config
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self.readiness_startup_check_done:
+            self.readiness_startup_check_done = True
+            QTimer.singleShot(
+                0,
+                lambda: self._schedule_readiness_autocheck("startup"),
+            )
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._resize_start_meeting_overlay()
@@ -1183,7 +1198,7 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def _start_meeting_from_floating(self, title: str) -> None:
-        self._start_meeting_with_title(title)
+        self._start_meeting_with_title(title, source="floating")
         self._refresh_floating_control()
 
     def _refresh_floating_control(self) -> None:
@@ -3289,11 +3304,27 @@ class MainWindow(QMainWindow):
         else:
             self.status_label.setText(f"Рабочий день начат. Папка: {day_folder}")
         self._refresh_after_lifecycle_change()
+        self._schedule_readiness_autocheck("workday")
 
     def start_meeting(self) -> None:
+        block_reason = self._meeting_start_block_reason(source="main")
+        if block_reason is not None:
+            self.status_label.setText(block_reason)
+            return
         self.start_meeting_overlay.open_for_recorder(self.recorder)
 
-    def _start_meeting_with_title(self, title: str) -> None:
+    def _start_meeting_with_title(self, title: str, source: str = "main") -> None:
+        block_reason = self._meeting_start_block_reason(source=source)
+        if block_reason is not None:
+            self.status_label.setText(block_reason)
+            return
+        warnings = self._processing_readiness_warnings()
+        if warnings and not self._confirm_start_meeting_with_readiness_warnings(warnings):
+            self.status_label.setText(
+                "Созвон не начат. Исправьте готовность системы или подтвердите старт "
+                "с ограничениями."
+            )
+            return
         try:
             meeting_folder = self.storage.start_meeting(title)
         except ValueError as error:
@@ -3314,6 +3345,64 @@ class MainWindow(QMainWindow):
             self._set_pipeline_step("summary", "Ожидает", "Ждет transcript.", "wait")
             self._set_pipeline_step("done", "Ожидает", "Встреча еще идет.", "wait")
         self.status_label.setText(message)
+
+    def _meeting_start_block_reason(self, source: str = "main") -> str | None:
+        if self.readiness_check_running:
+            return "Дождитесь завершения проверки готовности перед стартом встречи."
+        if self.last_readiness_statuses is None or self.readiness_check_stale:
+            if source != "floating" and not self.isVisible():
+                return None
+            self._schedule_readiness_autocheck("meeting")
+            return (
+                "Сначала дождитесь проверки готовности системы. "
+                "После завершения проверки нажмите «Начать встречу» еще раз."
+            )
+        obs_state = self._readiness_component_state("Запись разговора (OBS)")
+        if obs_state == "error":
+            return (
+                "OBS недоступен. Старт встречи заблокирован: запустите OBS "
+                "и проверьте WebSocket."
+            )
+        return None
+
+    def _processing_readiness_warnings(self) -> list[str]:
+        warnings = []
+        ffmpeg_state = self._readiness_component_state("Извлечение аудио (FFmpeg)")
+        transcription_state = self._readiness_component_state("Транскрипция")
+        if ffmpeg_state == "error":
+            warnings.append(
+                "FFmpeg не готов: запись можно начать, но audio.wav может не извлечься."
+            )
+        if transcription_state == "error":
+            warnings.append(
+                "Транскрипция не готова: запись можно начать, но transcript и итоги могут не создаться."
+            )
+        return warnings
+
+    def _confirm_start_meeting_with_readiness_warnings(self, warnings: list[str]) -> bool:
+        message = (
+            "Есть проблемы с обработкой встречи:\n\n"
+            + "\n".join(f"• {warning}" for warning in warnings)
+            + "\n\nНачать встречу все равно?"
+        )
+        return (
+            QMessageBox.question(
+                self,
+                "Готовность системы",
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _readiness_component_state(self, component: str) -> str | None:
+        if self.last_readiness_statuses is None or self.readiness_check_stale:
+            return None
+        for status in self.last_readiness_statuses:
+            if status.get("component") == component:
+                return str(status.get("state") or "")
+        return None
 
     def end_meeting(self) -> None:
         if not self.storage.meeting_active:
@@ -3464,6 +3553,31 @@ class MainWindow(QMainWindow):
         self.pipeline_thread.start()
 
     def check_readiness(self) -> None:
+        self._request_readiness_check("manual")
+
+    def _schedule_readiness_autocheck(self, reason: str) -> None:
+        if not self._can_run_readiness_autocheck(reason):
+            return
+        if self.readiness_check_running:
+            self.readiness_check_rerun_requested = True
+            self.readiness_check_rerun_reason = reason
+            self.status_label.setText(
+                "Проверка готовности уже выполняется. "
+                "После завершения будет запущена повторная проверка."
+            )
+            return
+        self._request_readiness_check(reason)
+
+    def _can_run_readiness_autocheck(self, reason: str) -> bool:
+        if self.isVisible():
+            return True
+        return (
+            reason == "meeting"
+            and hasattr(self, "floating_control")
+            and self.floating_control.isVisible()
+        )
+
+    def _request_readiness_check(self, reason: str) -> None:
         if self.readiness_check_running:
             self.status_label.setText(
                 "Проверка готовности уже выполняется. Дождитесь завершения."
@@ -3472,7 +3586,8 @@ class MainWindow(QMainWindow):
         self.readiness_check_request_id += 1
         request_id = self.readiness_check_request_id
         self.readiness_check_running = True
-        self._set_readiness_check_in_progress()
+        self.readiness_check_stale = True
+        self._set_readiness_check_in_progress(reason)
         self.refresh_buttons()
 
         self.readiness_check_thread = QThread(self)
@@ -3524,12 +3639,20 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"Проверка готовности не завершилась: {message}")
         self.readiness_check_worker = None
         self.readiness_check_thread = None
+        if self.readiness_check_rerun_requested and self._can_run_readiness_autocheck(
+            self.readiness_check_rerun_reason or "settings"
+        ):
+            reason = self.readiness_check_rerun_reason or "settings"
+            self.readiness_check_rerun_requested = False
+            self.readiness_check_rerun_reason = ""
+            QTimer.singleShot(0, lambda: self._schedule_readiness_autocheck(reason))
 
     def _show_stale_readiness_result_message(self) -> None:
         self._reset_readiness_cards_to_unchecked()
+        self.readiness_check_stale = True
         self.status_label.setText(
             "Настройки изменились во время проверки готовности. "
-            "Запустите проверку готовности еще раз."
+            "Повторная проверка будет запущена автоматически."
         )
 
     def _complete_readiness_check(self) -> None:
@@ -3537,7 +3660,7 @@ class MainWindow(QMainWindow):
         self.check_readiness_button.setText("Проверить готовность")
         self.refresh_buttons()
 
-    def _set_readiness_check_in_progress(self) -> None:
+    def _set_readiness_check_in_progress(self, reason: str = "manual") -> None:
         self.check_readiness_button.setText("Проверяется...")
         self.check_readiness_button.setEnabled(False)
         for card in READINESS_CARDS:
@@ -3551,9 +3674,26 @@ class MainWindow(QMainWindow):
             if badge is not None:
                 badge.setText("Проверяется")
                 self._apply_badge_style(badge, "active")
-        self.status_label.setText("Проверка готовности выполняется...")
+        if reason == "startup":
+            self.status_label.setText("Проверка готовности запущена автоматически.")
+        elif reason == "settings":
+            self.status_label.setText(
+                "Проверка готовности запущена автоматически после сохранения настроек."
+            )
+        elif reason == "workday":
+            self.status_label.setText(
+                "Проверка готовности запущена автоматически после начала рабочего дня."
+            )
+        elif reason == "meeting":
+            self.status_label.setText(
+                "Проверка готовности запущена перед стартом встречи."
+            )
+        else:
+            self.status_label.setText("Проверка готовности выполняется...")
 
     def _reset_readiness_cards_to_unchecked(self) -> None:
+        self.last_readiness_statuses = None
+        self.readiness_check_stale = True
         for card in READINESS_CARDS:
             component = str(card["component"])
             details = [
@@ -3571,6 +3711,8 @@ class MainWindow(QMainWindow):
         statuses: list[dict[str, object]],
         recorder_status_text: str,
     ) -> None:
+        self.last_readiness_statuses = deepcopy(statuses)
+        self.readiness_check_stale = False
         messages = []
         for status in statuses:
             component = str(status["component"])
@@ -4421,13 +4563,19 @@ class MainWindow(QMainWindow):
         if readiness_invalidated:
             self._append_settings_status(
                 "Проверка готовности выполнялась со старыми настройками. "
-                "После завершения запустите проверку снова."
+                "После завершения будет запущена повторная проверка."
             )
+        elif self.isVisible():
+            self._append_settings_status("Проверка готовности запущена автоматически.")
+        self._schedule_readiness_autocheck("settings")
 
     def _invalidate_readiness_check_after_settings_change(self) -> bool:
+        self.readiness_check_stale = True
         if not self.readiness_check_running:
             return False
         self.readiness_check_request_id += 1
+        self.readiness_check_rerun_requested = True
+        self.readiness_check_rerun_reason = "settings"
         return True
 
     def _append_settings_status(self, message: str) -> None:
