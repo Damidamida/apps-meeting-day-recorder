@@ -231,8 +231,11 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
 
     with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
         window.check_readiness()
-    assert "Генерация итогов выключена" in window.readiness_labels["Summary"].text()
-    assert "API key не требуется" in window.readiness_labels["API key"].text()
+    assert (
+        window.readiness_detail_values["Итоги встречи"]["Генерация"].text()
+        == "Выключена настройками"
+    )
+    assert window.readiness_detail_values["Итоги встречи"]["API key"].text() == "Не требуется"
     assert window.pipeline_labels == {}
 
     window.start_workday()
@@ -300,17 +303,21 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert isinstance(window.pages.widget(0), QScrollArea)
     assert window.pages.widget(0).widgetResizable()
     assert set(window.readiness_badges) == {
-        "OBS",
-        "FFmpeg",
-        "Whisper",
-        "Summary",
-        "API key",
-        "Summary endpoint",
+        "Запись разговора (OBS)",
+        "Извлечение аудио (FFmpeg)",
+        "Транскрипция",
+        "Итоги встречи",
     }
-    assert window.readiness_badges["OBS"].text() == "Не проверено"
-    assert window.readiness_tiles["OBS"].minimumHeight() >= 82
-    assert window.readiness_tiles["OBS"].minimumWidth() >= 300
-    assert window.readiness_labels["OBS"].wordWrap()
+    assert window.readiness_badges["Запись разговора (OBS)"].text() == "Не проверено"
+    assert window.readiness_tiles["Запись разговора (OBS)"].minimumHeight() >= 150
+    assert window.readiness_tiles["Запись разговора (OBS)"].minimumWidth() >= 300
+    assert set(window.readiness_detail_values["Транскрипция"]) == {
+        "Backend",
+        "Модель",
+        "Доступ",
+        "Данные",
+    }
+    assert window.readiness_detail_values["Транскрипция"]["Backend"].text() == "Не проверено"
     assert window.check_readiness_button.text() == "Проверить готовность"
     assert window.check_readiness_button.objectName() == "headerPrimaryButton"
     assert window.check_readiness_button.height() <= 34

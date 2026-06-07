@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import DEFAULT_CONFIG, load_config
-from app.services.readiness import check_readiness
+from app.services.readiness import READINESS_CARDS, check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import create_summarizer
@@ -944,9 +944,9 @@ class FloatingMeetingControl(QWidget):
 
 
 class MainWindow(QMainWindow):
-    READINESS_CARD_EXPANDED_HEIGHT = 276
+    READINESS_CARD_EXPANDED_HEIGHT = 274
     READINESS_CARD_COLLAPSED_HEIGHT = 86
-    READINESS_GRID_HEIGHT = 182
+    READINESS_GRID_HEIGHT = 184
     DAY_OVERVIEW_CARD_MIN_HEIGHT = 226
     PIPELINE_STEPS = [
         ("recording", "OBS запись", "✓"),
@@ -998,9 +998,10 @@ class MainWindow(QMainWindow):
             summarizer=create_summarizer(self._summary_runtime_config()),
         )
         self.storage.load_today_state()
-        self.readiness_labels: dict[str, QLabel] = {}
         self.readiness_badges: dict[str, QLabel] = {}
         self.readiness_tiles: dict[str, QWidget] = {}
+        self.readiness_detail_rows: dict[str, QWidget] = {}
+        self.readiness_detail_values: dict[str, dict[str, QLabel]] = {}
         self.pipeline_labels: dict[str, QLabel] = {}
         self.pipeline_badges: dict[str, QLabel] = {}
         self.pipeline_messages: dict[str, QLabel] = {}
@@ -1479,17 +1480,21 @@ class MainWindow(QMainWindow):
                 background: %(surface)s;
                 border: 1px solid %(border)s;
                 border-radius: 8px;
-                min-height: 82px;
-                max-height: 82px;
+                min-height: 150px;
+                max-height: 150px;
                 min-width: 300px;
             }
             QLabel#readinessTitle {
                 color: %(text)s;
                 font-weight: 800;
             }
-            QLabel#readinessMessage {
+            QLabel#readinessDetailLabel {
                 color: %(hint)s;
-                min-height: 30px;
+                font-size: 12px;
+            }
+            QLabel#readinessDetailValue {
+                color: %(text)s;
+                font-size: 13px;
             }
             QLabel#statusBadge {
                 border-radius: 10px;
@@ -1649,9 +1654,10 @@ class MainWindow(QMainWindow):
             self.safety_close_overlay.apply_theme(self.current_theme)
         if hasattr(self, "floating_control"):
             self.floating_control.apply_theme(self._effective_floating_theme())
-        if hasattr(self, "readiness_labels"):
-            for label in self.readiness_labels.values():
-                self._apply_status_style(label, "wait")
+        if hasattr(self, "readiness_detail_values"):
+            for values in self.readiness_detail_values.values():
+                for label in values.values():
+                    self._apply_readiness_detail_style(label, "neutral")
         if hasattr(self, "readiness_badges"):
             for badge in self.readiness_badges.values():
                 self._apply_badge_style(badge, self._badge_state_from_text(badge.text()))
@@ -1817,18 +1823,22 @@ class MainWindow(QMainWindow):
         target_messages[key] = message_label
         return card
 
-    def _create_readiness_tile(self, component: str) -> QWidget:
+    def _create_readiness_tile(
+        self,
+        component: str,
+        detail_labels: tuple[str, ...],
+    ) -> QWidget:
         tile = QFrame()
         tile.setObjectName("readinessTile")
         tile.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         tile.setFrameShape(QFrame.Shape.StyledPanel)
         tile.setFrameShadow(QFrame.Shadow.Plain)
-        tile.setFixedHeight(82)
+        tile.setFixedHeight(150)
         tile.setMinimumWidth(300)
         tile.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         tile_layout = QVBoxLayout()
         tile_layout.setContentsMargins(12, 10, 12, 10)
-        tile_layout.setSpacing(7)
+        tile_layout.setSpacing(10)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -1844,17 +1854,32 @@ class MainWindow(QMainWindow):
         header_layout.addStretch()
         header_layout.addWidget(badge_label)
 
-        message_label = QLabel("Нажмите «Проверить готовность».")
-        message_label.setObjectName("readinessMessage")
-        message_label.setWordWrap(True)
-        message_label.setMinimumHeight(30)
-        message_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        details_widget = QWidget()
+        details_layout = QGridLayout()
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setHorizontalSpacing(8)
+        details_layout.setVerticalSpacing(5)
+        value_labels: dict[str, QLabel] = {}
+        for row, detail_label in enumerate(detail_labels):
+            label = QLabel(detail_label)
+            label.setObjectName("readinessDetailLabel")
+            label.setMinimumWidth(88)
+            value = QLabel("Не проверено")
+            value.setObjectName("readinessDetailValue")
+            value.setWordWrap(True)
+            value.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            details_layout.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
+            details_layout.addWidget(value, row, 1, Qt.AlignmentFlag.AlignTop)
+            value_labels[detail_label] = value
+        details_layout.setColumnStretch(1, 1)
+        details_widget.setLayout(details_layout)
 
         self.readiness_tiles[component] = tile
         self.readiness_badges[component] = badge_label
-        self.readiness_labels[component] = message_label
+        self.readiness_detail_rows[component] = details_widget
+        self.readiness_detail_values[component] = value_labels
         tile_layout.addLayout(header_layout)
-        tile_layout.addWidget(message_label)
+        tile_layout.addWidget(details_widget)
         tile.setLayout(tile_layout)
         return tile
 
@@ -2420,27 +2445,21 @@ class MainWindow(QMainWindow):
         readiness_layout.setContentsMargins(0, 0, 0, 0)
         readiness_layout.setHorizontalSpacing(10)
         readiness_layout.setVerticalSpacing(10)
-        readiness_rows = [
-            "OBS",
-            "FFmpeg",
-            "Whisper",
-            "Summary",
-            "API key",
-            "Summary endpoint",
-        ]
-        for index, component in enumerate(readiness_rows):
-            row = index // 3
-            column = index % 3
+        for index, card in enumerate(READINESS_CARDS):
+            row = index // 4
+            column = index % 4
             readiness_layout.addWidget(
-                self._create_readiness_tile(component),
+                self._create_readiness_tile(
+                    str(card["component"]),
+                    tuple(card["initial_details"]),
+                ),
                 row,
                 column,
                 Qt.AlignmentFlag.AlignTop,
             )
-        for column in range(3):
+        for column in range(4):
             readiness_layout.setColumnStretch(column, 1)
-        for row in range(2):
-            readiness_layout.setRowMinimumHeight(row, 82)
+        readiness_layout.setRowMinimumHeight(0, 150)
         layout.addWidget(self._create_readiness_card(readiness_layout))
 
         status_layout = QVBoxLayout()
@@ -3399,12 +3418,8 @@ class MainWindow(QMainWindow):
         messages = []
         for status in statuses:
             component = status["component"]
-            label = self.readiness_labels.get(component)
-            if label is None:
-                continue
             state = status["state"]
-            label.setText(self._readiness_state_text(state, status["message"]))
-            self._apply_status_style(label, state)
+            self._render_readiness_details(component, status.get("details", []))
             badge = self.readiness_badges.get(component)
             if badge is not None:
                 badge.setText(self._badge_state_text(state))
@@ -3412,6 +3427,61 @@ class MainWindow(QMainWindow):
             messages.append(status["message"])
         self.obs_status_value.setText(self.recorder.status_text)
         self.status_label.setText("Проверка готовности завершена. " + " ".join(messages))
+
+    def _render_readiness_details(
+        self,
+        component: str,
+        details: list[dict[str, str]],
+    ) -> None:
+        values = self.readiness_detail_values.get(component)
+        if values is None:
+            return
+        known_labels = set(values)
+        incoming_labels = {detail["label"] for detail in details}
+        if incoming_labels != known_labels:
+            self._rebuild_readiness_detail_rows(component, details)
+            values = self.readiness_detail_values.get(component, {})
+        for detail in details:
+            value_label = values.get(detail["label"])
+            if value_label is None:
+                continue
+            value_label.setText(detail["value"])
+            self._apply_readiness_detail_style(value_label, detail.get("state", "neutral"))
+
+    def _rebuild_readiness_detail_rows(
+        self,
+        component: str,
+        details: list[dict[str, str]],
+    ) -> None:
+        details_widget = self.readiness_detail_rows.get(component)
+        if details_widget is None:
+            return
+        old_layout = details_widget.layout()
+        if old_layout is not None:
+            self._clear_layout(old_layout)
+            layout = old_layout
+        else:
+            layout = QGridLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setHorizontalSpacing(8)
+            layout.setVerticalSpacing(5)
+        value_labels: dict[str, QLabel] = {}
+        for row, detail in enumerate(details):
+            label = QLabel(detail["label"])
+            label.setObjectName("readinessDetailLabel")
+            label.setMinimumWidth(88)
+            value = QLabel(detail["value"])
+            value.setObjectName("readinessDetailValue")
+            value.setWordWrap(True)
+            value.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            self._apply_readiness_detail_style(value, detail.get("state", "neutral"))
+            layout.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
+            layout.addWidget(value, row, 1, Qt.AlignmentFlag.AlignTop)
+            value_labels[detail["label"]] = value
+        layout.setColumnStretch(1, 1)
+        if old_layout is None:
+            details_widget.setLayout(layout)
+        self.readiness_detail_values[component] = value_labels
 
     def _on_pipeline_progress(self, event: str, message: str) -> None:
         mapping = {
@@ -3806,6 +3876,15 @@ class MainWindow(QMainWindow):
             return
         label.setStyleSheet(
             f"padding: 5px 8px; border-radius: 6px; background: {background}; color: {color};"
+        )
+
+    def _apply_readiness_detail_style(self, label: QLabel, state: str) -> None:
+        palette = self._theme_palette()
+        color = self._status_colors()["error"][1] if state == "error" else palette["text"]
+        font_weight = "700" if state == "error" else "500"
+        label.setStyleSheet(
+            "padding: 0; background: transparent; "
+            f"color: {color}; font-weight: {font_weight};"
         )
 
     def _apply_badge_style(self, label: QLabel, state: str) -> None:
