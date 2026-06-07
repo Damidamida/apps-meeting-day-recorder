@@ -2040,6 +2040,14 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
         "Итоги дня",
     ]
     assert window.settings_summary_template_buttons["Одна встреча"].isChecked()
+    assert window.settings_summary_template_grids["meeting"].columnCount() == 2
+    assert window.settings_summary_template_structure_panels["meeting"].objectName() == (
+        "settingsTemplateStructurePanel"
+    )
+    assert window.settings_summary_template_side_panels["meeting"].objectName() == (
+        "settingsTemplateSidePanel"
+    )
+    assert not window.settings_summary_template_prompt_previews["meeting"].isVisible()
 
     window.settings_section_buttons["Основное"].click()
 
