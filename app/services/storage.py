@@ -781,7 +781,10 @@ class StorageService:
     def collect_day_meeting_summaries(self, day_folder: Path) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for meeting_folder in self.list_meeting_folders(day_folder):
-            metadata = self.read_meeting_metadata(meeting_folder)
+            try:
+                metadata = self.read_meeting_metadata(meeting_folder)
+            except MetadataReadError:
+                continue
             if self._is_auto_healed_metadata(metadata):
                 continue
             source, text = self._meeting_summary_source_and_text(meeting_folder)

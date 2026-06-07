@@ -1168,6 +1168,31 @@ def test_day_summary_skips_auto_healed_meeting_metadata(tmp_path) -> None:
     assert [item["folder"] for item in items] == [good_meeting.name]
 
 
+def test_day_summary_skips_corrupted_meeting_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    good_meeting = storage.create_meeting_folder(
+        "Обычная встреча",
+        datetime(2026, 6, 1, 10, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+    storage.save_meeting_summary_draft(
+        good_meeting,
+        "# Итоги встречи\n\nГотовый summary.\n",
+    )
+    broken_meeting = storage.create_meeting_folder(
+        "Поврежденная встреча",
+        datetime(2026, 6, 1, 11, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+    (broken_meeting / "meeting_metadata.json").write_text("{", encoding="utf-8")
+
+    items = storage.collect_day_meeting_summaries(day_folder)
+
+    assert [item["folder"] for item in items] == [good_meeting.name]
+    assert list(broken_meeting.glob("meeting_metadata.corrupt-*.json"))
+
+
 def test_day_summary_waits_for_unfinished_meeting_processing(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 1))
