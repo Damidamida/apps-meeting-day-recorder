@@ -1657,7 +1657,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "readiness_detail_values"):
             for values in self.readiness_detail_values.values():
                 for label in values.values():
-                    self._apply_readiness_detail_style(label, "neutral")
+                    state = str(label.property("readiness_state") or "neutral")
+                    self._apply_readiness_detail_style(label, state)
         if hasattr(self, "readiness_badges"):
             for badge in self.readiness_badges.values():
                 self._apply_badge_style(badge, self._badge_state_from_text(badge.text()))
@@ -1872,6 +1873,7 @@ class MainWindow(QMainWindow):
             label.setMinimumWidth(88)
             value = QLabel("Не проверено")
             value.setObjectName("readinessDetailValue")
+            value.setProperty("readiness_state", "neutral")
             value.setWordWrap(True)
             value.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             details_layout.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
@@ -3452,8 +3454,10 @@ class MainWindow(QMainWindow):
             value_label = values.get(detail["label"])
             if value_label is None:
                 continue
+            state = detail.get("state", "neutral")
             value_label.setText(detail["value"])
-            self._apply_readiness_detail_style(value_label, detail.get("state", "neutral"))
+            value_label.setProperty("readiness_state", state)
+            self._apply_readiness_detail_style(value_label, state)
 
     def _rebuild_readiness_detail_rows(
         self,
@@ -3479,9 +3483,11 @@ class MainWindow(QMainWindow):
             label.setMinimumWidth(88)
             value = QLabel(detail["value"])
             value.setObjectName("readinessDetailValue")
+            state = detail.get("state", "neutral")
+            value.setProperty("readiness_state", state)
             value.setWordWrap(True)
             value.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            self._apply_readiness_detail_style(value, detail.get("state", "neutral"))
+            self._apply_readiness_detail_style(value, state)
             layout.addWidget(label, row, 0, Qt.AlignmentFlag.AlignTop)
             layout.addWidget(value, row, 1, Qt.AlignmentFlag.AlignTop)
             value_labels[detail["label"]] = value

@@ -1459,6 +1459,8 @@ def test_settings_screen_keeps_separate_transcription_backend_profiles(tmp_path:
     recorder = NoopRecorder()
     storage = StorageService(tmp_path / "data", recorder)
     window = MainWindow(storage, recorder)
+    initial_whisper_cli_model = window.settings_transcription_profiles["whisper_cli"]["model"]
+    initial_faster_whisper_model = window.settings_transcription_profiles["faster_whisper"]["model"]
 
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window._set_combo_value(window.settings_transcription_model_select, "whisper-1")
@@ -1466,12 +1468,12 @@ def test_settings_screen_keeps_separate_transcription_backend_profiles(tmp_path:
 
     window.settings_transcription_backend_select.setCurrentText("whisper_cli")
     app.processEvents()
-    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    assert window._combo_value(window.settings_transcription_model_select) == initial_whisper_cli_model
     window._set_combo_value(window.settings_transcription_model_select, "small")
 
     window.settings_transcription_backend_select.setCurrentText("faster_whisper")
     app.processEvents()
-    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    assert window._combo_value(window.settings_transcription_model_select) == initial_faster_whisper_model
     window._set_combo_value(window.settings_transcription_model_select, "medium")
 
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
@@ -1632,6 +1634,35 @@ def test_dark_theme_styles_scroll_page_surfaces_and_form_labels(tmp_path: Path) 
     assert "QWidget#pageSurface" in window.styleSheet()
     assert "QWidget#scrollViewport" in window.styleSheet()
     assert "QLabel {" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window._render_readiness_details(
+        "Транскрипция",
+        [
+            {"label": "Backend", "value": "AI Tunnel STT"},
+            {"label": "Модель", "value": "Whisper Large V3 Turbo"},
+            {"label": "Проблема", "value": "API key не найден", "state": "error"},
+            {"label": "Что сделать", "value": "Проверьте .env файл", "state": "error"},
+        ],
+    )
+    error_label = window.readiness_detail_values["Транскрипция"]["Проблема"]
+
+    assert error_label.property("readiness_state") == "error"
+
+    window.config["ui"]["theme"] = "dark"
+    window._apply_theme_settings()
+
+    assert error_label.property("readiness_state") == "error"
+    assert "font-weight: 700" in error_label.styleSheet()
 
     window.close()
     app.processEvents()
