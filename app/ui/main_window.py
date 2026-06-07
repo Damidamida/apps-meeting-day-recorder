@@ -3351,9 +3351,10 @@ class MainWindow(QMainWindow):
             return
         if metadata.get("day_summary_status") not in {"pending", "running", "waiting_for_meetings"}:
             return
-        self._request_day_summary_update(day_folder, force=False)
+        update_message = self._request_day_summary_update(day_folder, force=False)
         self.status_label.setText(
-            "Восстановлено обновление итогов дня после перезапуска приложения."
+            "Восстановлено обновление итогов дня после перезапуска приложения. "
+            f"{update_message}"
         )
 
     def _start_next_pipeline(self) -> None:
@@ -3488,18 +3489,20 @@ class MainWindow(QMainWindow):
             return
         self._request_day_summary_update(day_folder, force=True)
 
-    def _request_day_summary_update(self, day_folder: Path, force: bool = False) -> None:
+    def _request_day_summary_update(self, day_folder: Path, force: bool = False) -> str:
         if self.pipeline_running or self.processing_queue or self.storage.has_unfinished_meeting_processing(day_folder):
             self.storage.mark_day_summary_waiting(day_folder)
             self.day_summary_pending = True
             self.day_summary_force_pending = self.day_summary_force_pending or force
             self.day_summary_day_folder = day_folder
-            self.status_label.setText(
+            message = (
                 "Итоги дня поставлены в очередь и начнутся после завершения обработки встреч."
             )
+            self.status_label.setText(message)
             self._refresh_after_lifecycle_change()
-            return
+            return message
         self._start_day_summary_pipeline(day_folder, force)
+        return self.status_label.text()
 
     def _start_pending_day_summary_if_ready(self) -> None:
         if not self.day_summary_pending or self.pipeline_running or self.processing_queue:

@@ -898,6 +898,7 @@ def test_running_day_summary_is_restored_on_startup(tmp_path: Path) -> None:
     if window.day_summary_thread is not None:
         window.day_summary_thread.quit()
         window.day_summary_thread.wait(1000)
+    app.processEvents()
     window.close()
     app.processEvents()
 
