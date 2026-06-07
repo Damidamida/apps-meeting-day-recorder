@@ -439,6 +439,13 @@ def test_meeting_badge_uses_result_status_not_ended_state(tmp_path: Path) -> Non
             "summary_status": "skipped",
         }
     ) == ("Требует внимания", "error")
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "failed",
+            "processing_error": "FFmpeg crashed",
+        }
+    ) == ("Требует внимания", "error")
 
     window.close()
     app.processEvents()
