@@ -2019,6 +2019,37 @@ def test_settings_screen_uses_simplified_aitunnel_summary_settings(
     app.processEvents()
 
 
+def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert not hasattr(window, "settings_tabs")
+    assert list(window.settings_section_buttons) == [
+        "Основное",
+        "Запись",
+        "Транскрипция",
+        "Итоги",
+    ]
+    assert window.settings_section_buttons["Итоги"].isChecked()
+    assert window.settings_sections.currentWidget() is window.settings_summary_section
+    assert window.settings_summary_template_tabs is None
+    assert list(window.settings_summary_template_buttons) == [
+        "Одна встреча",
+        "Итоги дня",
+    ]
+    assert window.settings_summary_template_buttons["Одна встреча"].isChecked()
+
+    window.settings_section_buttons["Основное"].click()
+
+    assert window.settings_section_buttons["Основное"].isChecked()
+    assert window.settings_sections.currentWidget() is window.settings_basic_section
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_supports_custom_aitunnel_summary_model(
     tmp_path: Path,
     monkeypatch,

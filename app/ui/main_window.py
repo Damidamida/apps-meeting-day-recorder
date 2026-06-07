@@ -1501,6 +1501,16 @@ class MainWindow(QMainWindow):
                 border: 1px solid %(border)s;
                 border-radius: 8px;
             }
+            QWidget#settingsTemplatePane {
+                background: %(surface_alt)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
+            QFrame#settingsInnerCard {
+                background: %(surface)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
             QLabel#cardTitle {
                 color: %(text)s;
                 font-size: 14px;
@@ -1663,6 +1673,42 @@ class MainWindow(QMainWindow):
                 min-height: 24px;
                 max-height: 34px;
                 font-weight: 600;
+            }
+            QPushButton#settingsSectionButton {
+                background: %(surface)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+                padding: 8px 18px;
+                min-width: 108px;
+                font-weight: 800;
+            }
+            QPushButton#settingsSectionButton:hover {
+                color: %(accent)s;
+                border-color: %(accent)s;
+            }
+            QPushButton#settingsSectionButton:checked {
+                background: %(accent)s;
+                color: #ffffff;
+                border-color: %(accent)s;
+            }
+            QPushButton#compactButton,
+            QPushButton#compactDangerButton {
+                padding: 4px 10px;
+                min-height: 24px;
+                max-height: 30px;
+                min-width: 34px;
+                font-weight: 800;
+            }
+            QPushButton#compactDangerButton {
+                background: %(danger)s;
+                color: #ffffff;
+                border-color: %(danger)s;
+            }
+            QPushButton#compactDangerButton:disabled {
+                background: %(disabled_bg)s;
+                color: %(disabled_text)s;
+                border-color: %(border)s;
             }
             QLineEdit,
             QComboBox,
@@ -2811,14 +2857,42 @@ class MainWindow(QMainWindow):
             )
         )
 
-        settings_tabs = QTabWidget()
-        settings_tabs.setObjectName("settingsTabs")
-        settings_tabs.addTab(self._create_settings_basic_tab(), "Основное")
-        settings_tabs.addTab(self._create_settings_recording_tab(), "Запись")
-        settings_tabs.addTab(self._create_settings_transcription_tab(), "Транскрипция")
-        settings_tabs.addTab(self._create_settings_summary_tab(), "Итоги")
-        settings_tabs.setCurrentIndex(3)
-        layout.addWidget(settings_tabs)
+        sections_layout = QVBoxLayout()
+        sections_layout.setSpacing(12)
+        sections_hint = QLabel(
+            "Настройки разделены по смыслу, чтобы экран не превращался в длинную простыню."
+        )
+        sections_hint.setObjectName("sectionHint")
+        sections_hint.setWordWrap(True)
+        sections_layout.addWidget(sections_hint)
+
+        section_buttons_layout = QHBoxLayout()
+        section_buttons_layout.setSpacing(8)
+        self.settings_section_buttons: dict[str, QPushButton] = {}
+        for index, title in enumerate(("Основное", "Запись", "Транскрипция", "Итоги")):
+            button = QPushButton(title)
+            button.setObjectName("settingsSectionButton")
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda _=False, current_index=index: self._show_settings_section(current_index)
+            )
+            self.settings_section_buttons[title] = button
+            section_buttons_layout.addWidget(button)
+        section_buttons_layout.addStretch(1)
+        sections_layout.addLayout(section_buttons_layout)
+        layout.addWidget(self._create_card("Разделы настроек", sections_layout))
+
+        self.settings_sections = QStackedWidget()
+        self.settings_basic_section = self._create_settings_basic_tab()
+        self.settings_recording_section = self._create_settings_recording_tab()
+        self.settings_transcription_section = self._create_settings_transcription_tab()
+        self.settings_summary_section = self._create_settings_summary_tab()
+        self.settings_sections.addWidget(self.settings_basic_section)
+        self.settings_sections.addWidget(self.settings_recording_section)
+        self.settings_sections.addWidget(self.settings_transcription_section)
+        self.settings_sections.addWidget(self.settings_summary_section)
+        layout.addWidget(self.settings_sections)
+        self._show_settings_section(3)
 
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(8)
@@ -2836,6 +2910,11 @@ class MainWindow(QMainWindow):
 
         page.setLayout(layout)
         return self._create_page_scroll_area("settingsScrollArea", page)
+
+    def _show_settings_section(self, index: int) -> None:
+        self.settings_sections.setCurrentIndex(index)
+        for button_index, button in enumerate(self.settings_section_buttons.values()):
+            button.setChecked(button_index == index)
 
     def _create_settings_basic_tab(self) -> QWidget:
         page = QWidget()
@@ -3289,11 +3368,35 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._create_summary_template_editor("meeting"), "Одна встреча")
-        tabs.addTab(self._create_summary_template_editor("day"), "Итоги дня")
-        layout.addWidget(tabs)
+        self.settings_summary_template_tabs = None
+        self.settings_summary_template_buttons: dict[str, QPushButton] = {}
+        template_buttons_layout = QHBoxLayout()
+        template_buttons_layout.setSpacing(8)
+        for index, (label, kind) in enumerate(
+            (("Одна встреча", "meeting"), ("Итоги дня", "day"))
+        ):
+            button = QPushButton(label)
+            button.setObjectName("settingsSectionButton")
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda _=False, current_index=index: self._show_summary_template_editor(current_index)
+            )
+            self.settings_summary_template_buttons[label] = button
+            template_buttons_layout.addWidget(button)
+        template_buttons_layout.addStretch(1)
+        layout.addLayout(template_buttons_layout)
+
+        self.settings_summary_template_stack = QStackedWidget()
+        self.settings_summary_template_stack.addWidget(self._create_summary_template_editor("meeting"))
+        self.settings_summary_template_stack.addWidget(self._create_summary_template_editor("day"))
+        layout.addWidget(self.settings_summary_template_stack)
+        self._show_summary_template_editor(0)
         return self._create_card("Шаблоны итогов", layout)
+
+    def _show_summary_template_editor(self, index: int) -> None:
+        self.settings_summary_template_stack.setCurrentIndex(index)
+        for button_index, button in enumerate(self.settings_summary_template_buttons.values()):
+            button.setChecked(button_index == index)
 
     def _summary_templates_for_settings(self) -> dict[str, dict[str, object]]:
         templates = self.config.get("summary", {}).get("templates")
@@ -3324,9 +3427,10 @@ class MainWindow(QMainWindow):
 
     def _create_summary_template_editor(self, kind: str) -> QWidget:
         page = QWidget()
+        page.setObjectName("settingsTemplatePane")
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
 
         template = self.settings_summary_templates[kind]
         title_input = QLineEdit(str(template.get("title") or ""))
@@ -3341,7 +3445,7 @@ class MainWindow(QMainWindow):
         title_layout.setVerticalSpacing(8)
         title_layout.addRow("Заголовок итогов:", title_input)
         title_layout.addRow("", title_hint)
-        layout.addLayout(title_layout)
+        layout.addWidget(self._create_settings_inner_card("Общий заголовок", title_layout))
 
         sections_label = QLabel("Структура разделов")
         sections_label.setObjectName("cardTitle")
@@ -3363,15 +3467,15 @@ class MainWindow(QMainWindow):
         add_row.addStretch(1)
         layout.addLayout(add_row)
 
-        rules_label = QLabel("Правила для AI")
-        rules_label.setObjectName("cardTitle")
-        layout.addWidget(rules_label)
+        rules_layout = QVBoxLayout()
+        rules_layout.setSpacing(8)
         rules_input = QPlainTextEdit()
         rules_input.setPlainText(str(template.get("rules") or ""))
         rules_input.setPlaceholderText("Например: писать кратко, не использовать канцелярит, явно отмечать спорные места.")
         rules_input.setMinimumHeight(110)
         self.settings_summary_template_rules_inputs[kind] = rules_input
-        layout.addWidget(rules_input)
+        rules_layout.addWidget(rules_input)
+        layout.addWidget(self._create_settings_inner_card("Правила для AI", rules_layout))
 
         self._refresh_summary_template_sections(kind)
         page.setLayout(layout)
@@ -3394,9 +3498,6 @@ class MainWindow(QMainWindow):
         for index, section in enumerate(sections):
             if not isinstance(section, dict):
                 continue
-            card = QFrame()
-            card.setObjectName("settingsSubCard")
-            card.setFrameShape(QFrame.Shape.StyledPanel)
             card_layout = QVBoxLayout()
             card_layout.setContentsMargins(12, 10, 12, 10)
             card_layout.setSpacing(8)
@@ -3408,8 +3509,8 @@ class MainWindow(QMainWindow):
             header.addWidget(section_number)
             header.addStretch(1)
 
-            move_up = QPushButton("Вверх")
-            move_up.setObjectName("secondaryButton")
+            move_up = QPushButton("↑")
+            move_up.setObjectName("compactButton")
             move_up.setEnabled(index > 0)
             move_up.clicked.connect(
                 lambda _=False, current_kind=kind, current_index=index: self._move_summary_template_section(
@@ -3420,8 +3521,8 @@ class MainWindow(QMainWindow):
             )
             header.addWidget(move_up)
 
-            move_down = QPushButton("Вниз")
-            move_down.setObjectName("secondaryButton")
+            move_down = QPushButton("↓")
+            move_down.setObjectName("compactButton")
             move_down.setEnabled(index < len(sections) - 1)
             move_down.clicked.connect(
                 lambda _=False, current_kind=kind, current_index=index: self._move_summary_template_section(
@@ -3433,7 +3534,7 @@ class MainWindow(QMainWindow):
             header.addWidget(move_down)
 
             delete_button = QPushButton("Удалить")
-            delete_button.setObjectName("dangerButton")
+            delete_button.setObjectName("compactDangerButton")
             delete_button.setEnabled(len(sections) > 1)
             delete_button.clicked.connect(
                 lambda _=False, current_kind=kind, current_index=index: self._delete_summary_template_section(
@@ -3453,15 +3554,33 @@ class MainWindow(QMainWindow):
             instruction_input.setPlaceholderText(
                 "Необязательно. Если поле пустое, AI получит только название раздела и общие правила."
             )
-            instruction_input.setMinimumHeight(82)
+            instruction_input.setMinimumHeight(64)
+            instruction_input.setMaximumHeight(96)
             form.addRow("Название раздела:", title_input)
             form.addRow("Что писать в разделе:", instruction_input)
             card_layout.addLayout(form)
 
-            card.setLayout(card_layout)
+            card = self._create_settings_inner_card("", card_layout)
             layout.addWidget(card)
             section_inputs.append((title_input, instruction_input))
         self.settings_summary_template_section_inputs[kind] = section_inputs
+
+    @staticmethod
+    def _create_settings_inner_card(title: str, body_layout) -> QFrame:
+        card = QFrame()
+        card.setObjectName("settingsInnerCard")
+        card.setFrameShape(QFrame.Shape.StyledPanel)
+        card.setFrameShadow(QFrame.Shadow.Plain)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        if title:
+            title_label = QLabel(title)
+            title_label.setObjectName("cardTitle")
+            layout.addWidget(title_label)
+        layout.addLayout(body_layout)
+        card.setLayout(layout)
+        return card
 
     def _save_summary_template_editor_state(self, kind: str) -> None:
         section_inputs = self.settings_summary_template_section_inputs.get(kind, [])
