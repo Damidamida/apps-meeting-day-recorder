@@ -18,7 +18,7 @@ READINESS_CARDS: tuple[dict[str, Any], ...] = (
     },
     {
         "component": "Транскрипция",
-        "initial_details": ("Backend", "Модель", "Доступ", "Данные"),
+        "initial_details": ("Режим", "Модель", "Доступ", "Данные"),
     },
     {
         "component": "Итоги встречи",
@@ -117,7 +117,7 @@ def _transcription_status(
                 "error",
                 f"AI Tunnel STT выбран, но API key не найден: {api_key_env}.",
                 [
-                    _detail("Backend", "AI Tunnel STT"),
+                    _detail("Режим", "AI Tunnel STT"),
                     _detail("Модель", model),
                     _detail("Проблема", f"API key не найден: {api_key_env}", "error"),
                     _detail("Что сделать", "Проверьте .env файл или переменную окружения", "error"),
@@ -128,7 +128,7 @@ def _transcription_status(
             "ok",
             "AI Tunnel STT настроен. API key найден.",
             [
-                _detail("Backend", "AI Tunnel STT"),
+                _detail("Режим", "AI Tunnel STT"),
                 _detail("Модель", model),
                 _detail("Доступ", "API key найден"),
                 _detail("Данные", "Аудио отправляется во внешний сервис"),
@@ -141,7 +141,7 @@ def _transcription_status(
                 "error",
                 "faster-whisper не установлен.",
                 [
-                    _detail("Backend", "faster-whisper"),
+                    _detail("Режим", "faster-whisper"),
                     _detail("Модель", model),
                     _detail("Проблема", "Пакет faster-whisper не установлен", "error"),
                     _detail("Что сделать", "Установите optional-зависимость или выберите whisper_cli", "error"),
@@ -152,7 +152,7 @@ def _transcription_status(
             "ok",
             "faster-whisper доступен.",
             [
-                _detail("Backend", "faster-whisper"),
+                _detail("Режим", "faster-whisper"),
                 _detail("Модель", model),
                 _detail("Доступ", "Пакет установлен"),
                 _detail("Данные", "Аудио остается локально"),
@@ -165,7 +165,7 @@ def _transcription_status(
             "ok",
             "Whisper CLI найден.",
             [
-                _detail("Backend", "Whisper CLI"),
+                _detail("Режим", "Whisper CLI"),
                 _detail("Модель", model),
                 _detail("Доступ", f"Команда {command} найдена"),
                 _detail("Данные", "Аудио остается локально"),
@@ -176,7 +176,7 @@ def _transcription_status(
         "error",
         "Whisper CLI не найден.",
         [
-            _detail("Backend", "Whisper CLI"),
+            _detail("Режим", "Whisper CLI"),
             _detail("Модель", model),
             _detail("Проблема", f"Команда {command} не найдена", "error"),
             _detail("Что сделать", "Установите Whisper CLI или выберите другой backend", "error"),

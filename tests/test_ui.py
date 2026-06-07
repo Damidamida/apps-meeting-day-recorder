@@ -732,12 +732,12 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.readiness_tiles["Запись разговора (OBS)"].minimumHeight() >= 150
     assert window.readiness_tiles["Запись разговора (OBS)"].minimumWidth() >= 300
     assert set(window.readiness_detail_values["Транскрипция"]) == {
-        "Backend",
+        "Режим",
         "Модель",
         "Доступ",
         "Данные",
     }
-    assert window.readiness_detail_values["Транскрипция"]["Backend"].text() == "Не проверено"
+    assert window.readiness_detail_values["Транскрипция"]["Режим"].text() == "Не проверено"
     assert window.check_readiness_button.text() == "Проверить готовность"
     assert window.check_readiness_button.objectName() == "headerPrimaryButton"
     assert window.check_readiness_button.height() <= 34
@@ -1653,6 +1653,13 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window.settings_summary_enabled_checkbox.setChecked(True)
     window._set_combo_value(window.settings_summary_model_select, "gpt-5.4-nano")
+    window.settings_summary_template_title_inputs["meeting"].setText("Мой формат встречи")
+    meeting_section_title, meeting_section_instruction = (
+        window.settings_summary_template_section_inputs["meeting"][0]
+    )
+    meeting_section_title.setText("Главные решения")
+    meeting_section_instruction.setPlainText("Пиши только подтвержденные решения.")
+    window.settings_summary_template_rules_inputs["meeting"].setPlainText("Пиши кратко.")
     window.settings_theme_select.setCurrentIndex(window.settings_theme_select.findData("dark"))
     window.settings_floating_theme_select.setCurrentIndex(
         window.settings_floating_theme_select.findData("dark")
@@ -1689,6 +1696,20 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert config["summary"]["env_file"] == ""
+    assert config["summary"]["templates"]["meeting"]["title"] == "Мой формат встречи"
+    assert config["summary"]["templates"]["meeting"]["sections"][0] == {
+        "title": "Главные решения",
+        "instruction": "Пиши только подтвержденные решения.",
+    }
+    assert config["summary"]["templates"]["meeting"]["rules"] == "Пиши кратко."
+    markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
+    prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
+    assert "# Мой формат встречи" in markdown_preview.toPlainText()
+    assert "## Главные решения" in markdown_preview.toPlainText()
+    assert "Пиши только подтвержденные решения." in prompt_preview.toPlainText()
+    assert "Пиши кратко." in prompt_preview.toPlainText()
+    assert "Что писать в разделе" not in prompt_preview.toPlainText()
+    assert "Без отдельной инструкции" not in prompt_preview.toPlainText()
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"
@@ -1745,6 +1766,34 @@ def test_settings_screen_rejects_storage_root_that_points_to_file(
 
     assert not (tmp_path / "config.yaml").exists()
     assert "указывает на файл" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_handles_config_write_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    original_write_text = main_window_module.Path.write_text
+
+    def flaky_write_text(self: Path, *args, **kwargs) -> int:
+        if self.name == "config.yaml":
+            raise OSError("disk full")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(main_window_module.Path, "write_text", flaky_write_text)
+
+    window.save_settings()
+
+    assert not (tmp_path / "config.yaml").exists()
+    assert "Настройки не сохранены" in window.settings_status_label.text()
+    assert "config.yaml" in window.settings_status_label.text()
+    assert "disk full" in window.settings_status_label.text()
 
     window.close()
     app.processEvents()
@@ -2006,6 +2055,69 @@ def test_settings_screen_uses_simplified_aitunnel_summary_settings(
     app.processEvents()
 
 
+def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert not hasattr(window, "settings_tabs")
+    assert list(window.settings_section_buttons) == [
+        "Основное",
+        "Запись",
+        "Транскрипция",
+        "Итоги",
+    ]
+    assert window.settings_section_buttons["Итоги"].isChecked()
+    assert window.settings_sections.currentWidget() is window.settings_summary_section
+    assert window.settings_summary_template_tabs is None
+    assert list(window.settings_summary_template_buttons) == [
+        "Одна встреча",
+        "Итоги дня",
+    ]
+    assert window.settings_summary_template_buttons["Одна встреча"].isChecked()
+    assert window.settings_summary_template_grids["meeting"].columnCount() == 2
+    assert window.settings_summary_template_structure_panels["meeting"].objectName() == (
+        "settingsTemplateStructurePanel"
+    )
+    assert window.settings_summary_template_side_panels["meeting"].objectName() == (
+        "settingsTemplateSidePanel"
+    )
+    splitter = window.settings_summary_template_right_splitters["meeting"]
+    assert splitter.objectName() == "settingsSummaryTemplateRightSplitter"
+    assert splitter.count() == 3
+    assert window.settings_summary_template_prompt_previews["meeting"].isHidden()
+    markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
+    prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
+    prompt_card = window.settings_summary_template_prompt_cards["meeting"]
+    assert markdown_preview.minimumHeight() >= 120
+    assert prompt_preview.minimumHeight() >= 135
+    assert markdown_preview.minimumHeight() != markdown_preview.maximumHeight()
+    assert prompt_preview.minimumHeight() != prompt_preview.maximumHeight()
+    assert prompt_card.maximumHeight() <= 110
+    structure_panel_labels = [
+        label.text()
+        for label in window.settings_summary_template_structure_panels["meeting"].findChildren(QLabel)
+    ]
+    assert "Кратко" not in structure_panel_labels
+    assert "Сформулируй 2-4 главных вывода встречи без лишних деталей." not in structure_panel_labels
+    markdown_height_before = markdown_preview.height()
+    prompt_button = window.settings_summary_template_prompt_buttons["meeting"]
+    prompt_button.click()
+    app.processEvents()
+    assert not prompt_preview.isHidden()
+    assert markdown_preview.height() == markdown_height_before
+    assert prompt_card.maximumHeight() > 110
+
+    window.settings_section_buttons["Основное"].click()
+
+    assert window.settings_section_buttons["Основное"].isChecked()
+    assert window.settings_sections.currentWidget() is window.settings_basic_section
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_supports_custom_aitunnel_summary_model(
     tmp_path: Path,
     monkeypatch,
@@ -2068,7 +2180,7 @@ def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None
     window._render_readiness_details(
         "Транскрипция",
         [
-            {"label": "Backend", "value": "AI Tunnel STT"},
+            {"label": "Режим", "value": "AI Tunnel STT"},
             {"label": "Модель", "value": "Whisper Large V3 Turbo"},
             {"label": "Проблема", "value": "API key не найден", "state": "error"},
             {"label": "Что сделать", "value": "Проверьте .env файл", "state": "error"},
