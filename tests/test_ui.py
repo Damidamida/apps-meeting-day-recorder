@@ -1026,6 +1026,78 @@ def test_workday_meeting_card_opens_ready_summary_in_review(tmp_path: Path) -> N
     app.processEvents()
 
 
+def test_ready_meeting_summary_action_gets_primary_emphasis(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    recording_path = tmp_path / "recording.mkv"
+    recording_path.write_bytes(b"fake recording")
+
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Готовые итоги",
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "stopped",
+            "recording_path": str(recording_path),
+            "audio_status": "extracted",
+            "transcription_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
+    storage.save_meeting_summary_draft(meeting_folder, "# Итоги встречи\n\nГотовый итог.\n")
+
+    meeting_card = window._create_meeting_card(meeting_folder, expanded=True)
+    buttons = {
+        button.text(): button
+        for button in meeting_card.findChildren(type(window.workday_action_button))
+    }
+
+    assert buttons["Открыть итоги встречи"].objectName() == "primaryButton"
+    assert buttons["Повторить обработку"].objectName() != "primaryButton"
+
+    window.close()
+    app.processEvents()
+
+
+def test_attention_meeting_reprocess_action_keeps_primary_emphasis(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    recording_path = tmp_path / "recording.mkv"
+    recording_path.write_bytes(b"fake recording")
+
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Требует внимания",
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "stopped",
+            "recording_path": str(recording_path),
+            "audio_status": "extracted",
+            "transcription_status": "failed",
+            "summary_status": "draft_created",
+        },
+    )
+    storage.save_meeting_summary_draft(meeting_folder, "# Итоги встречи\n\nСтарый итог.\n")
+
+    meeting_card = window._create_meeting_card(meeting_folder, expanded=True)
+    buttons = {
+        button.text(): button
+        for button in meeting_card.findChildren(type(window.workday_action_button))
+    }
+
+    assert buttons["Повторить обработку"].objectName() == "primaryButton"
+    assert buttons["Открыть итоги встречи"].objectName() != "primaryButton"
+
+    window.close()
+    app.processEvents()
+
+
 def test_workday_meetings_are_shown_newest_first(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

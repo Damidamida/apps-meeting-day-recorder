@@ -2029,18 +2029,20 @@ class MainWindow(QMainWindow):
         if expanded:
             actions_layout = QHBoxLayout()
             actions_layout.setSpacing(8)
+            needs_attention = self._meeting_needs_attention(metadata)
             if self._should_show_reprocess_button(meeting_folder, metadata):
                 self._add_button(
                     actions_layout,
                     "Повторить обработку",
                     lambda checked=False, folder=meeting_folder: self.reprocess_meeting(folder),
-                    "primaryButton",
+                    "primaryButton" if needs_attention else None,
                 )
             if self._meeting_summary_is_ready(meeting_folder, metadata):
                 self._add_button(
                     actions_layout,
                     "Открыть итоги встречи",
                     lambda checked=False, folder=meeting_folder: self.open_meeting_summary_review(folder),
+                    None if needs_attention else "primaryButton",
                 )
             actions_layout.addStretch(1)
             card_layout.addLayout(actions_layout)
