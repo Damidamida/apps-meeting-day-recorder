@@ -1702,6 +1702,12 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
         "instruction": "Пиши только подтвержденные решения.",
     }
     assert config["summary"]["templates"]["meeting"]["rules"] == "Пиши кратко."
+    markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
+    prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
+    assert "# Мой формат встречи" in markdown_preview.toPlainText()
+    assert "## Главные решения" in markdown_preview.toPlainText()
+    assert "Пиши только подтвержденные решения." in prompt_preview.toPlainText()
+    assert "Пиши кратко." in prompt_preview.toPlainText()
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"
@@ -2047,17 +2053,28 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     assert window.settings_summary_template_side_panels["meeting"].objectName() == (
         "settingsTemplateSidePanel"
     )
+    splitter = window.settings_summary_template_right_splitters["meeting"]
+    assert splitter.objectName() == "settingsSummaryTemplateRightSplitter"
+    assert splitter.count() == 3
     assert window.settings_summary_template_prompt_previews["meeting"].isHidden()
     markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
     prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
-    assert markdown_preview.minimumHeight() == markdown_preview.maximumHeight()
-    assert prompt_preview.minimumHeight() == prompt_preview.maximumHeight()
-    markdown_height_before = markdown_preview.maximumHeight()
+    assert markdown_preview.minimumHeight() >= 120
+    assert prompt_preview.minimumHeight() >= 135
+    assert markdown_preview.minimumHeight() != markdown_preview.maximumHeight()
+    assert prompt_preview.minimumHeight() != prompt_preview.maximumHeight()
+    structure_panel_labels = [
+        label.text()
+        for label in window.settings_summary_template_structure_panels["meeting"].findChildren(QLabel)
+    ]
+    assert "Кратко" not in structure_panel_labels
+    assert "Сформулируй 2-4 главных вывода встречи без лишних деталей." not in structure_panel_labels
+    markdown_height_before = markdown_preview.height()
     prompt_button = window.settings_summary_template_prompt_buttons["meeting"]
     prompt_button.click()
     app.processEvents()
     assert not prompt_preview.isHidden()
-    assert markdown_preview.maximumHeight() == markdown_height_before
+    assert markdown_preview.height() == markdown_height_before
 
     window.settings_section_buttons["Основное"].click()
 

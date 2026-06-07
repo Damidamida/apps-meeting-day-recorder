@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QStackedWidget,
     QTabWidget,
     QTextBrowser,
@@ -3422,6 +3423,7 @@ class MainWindow(QMainWindow):
         self.settings_summary_template_grids: dict[str, QGridLayout] = {}
         self.settings_summary_template_structure_panels: dict[str, QFrame] = {}
         self.settings_summary_template_side_panels: dict[str, QFrame] = {}
+        self.settings_summary_template_right_splitters: dict[str, QSplitter] = {}
         self.settings_summary_template_markdown_previews: dict[str, QPlainTextEdit] = {}
         self.settings_summary_template_prompt_previews: dict[str, QPlainTextEdit] = {}
         self.settings_summary_template_prompt_buttons: dict[str, QPushButton] = {}
@@ -3566,7 +3568,7 @@ class MainWindow(QMainWindow):
 
     def _create_summary_template_side_panel(self, kind: str) -> QFrame:
         panel_layout = QVBoxLayout()
-        panel_layout.setSpacing(12)
+        panel_layout.setSpacing(0)
         template = self.settings_summary_templates[kind]
 
         rules_layout = QVBoxLayout()
@@ -3581,28 +3583,26 @@ class MainWindow(QMainWindow):
         rules_input.setPlaceholderText(
             "Например: писать кратко, не использовать канцелярит, явно отмечать спорные места."
         )
-        rules_input.setFixedHeight(64)
+        rules_input.setMinimumHeight(96)
         self.settings_summary_template_rules_inputs[kind] = rules_input
         rules_layout.addWidget(rules_hint)
         rules_layout.addWidget(rules_input)
-        panel_layout.addWidget(self._create_settings_inner_card("Правила для AI", rules_layout))
 
         base_rules_notice = QLabel(
             "Базовые ограничения не редактируются пользователем: русский язык, Markdown, не выдумывать факты, не писать от лица AI."
         )
         base_rules_notice.setObjectName("inlineStatus")
         base_rules_notice.setWordWrap(True)
-        panel_layout.addWidget(base_rules_notice)
+        rules_layout.addWidget(base_rules_notice)
+        rules_card = self._create_settings_inner_card("Правила для AI", rules_layout)
 
         markdown_preview = QPlainTextEdit()
         markdown_preview.setReadOnly(True)
-        markdown_preview.setFixedHeight(82)
+        markdown_preview.setMinimumHeight(124)
         self.settings_summary_template_markdown_previews[kind] = markdown_preview
-        panel_layout.addWidget(
-            self._create_settings_inner_card(
-                "Предпросмотр итогового Markdown",
-                self._single_widget_layout(markdown_preview),
-            )
+        markdown_card = self._create_settings_inner_card(
+            "Предпросмотр итогового Markdown",
+            self._single_widget_layout(markdown_preview),
         )
 
         prompt_button = QPushButton("Показать инструкцию для AI")
@@ -3610,7 +3610,7 @@ class MainWindow(QMainWindow):
         self.settings_summary_template_prompt_buttons[kind] = prompt_button
         prompt_preview = QPlainTextEdit()
         prompt_preview.setReadOnly(True)
-        prompt_preview.setFixedHeight(90)
+        prompt_preview.setMinimumHeight(135)
         prompt_preview.setVisible(False)
         self.settings_summary_template_prompt_previews[kind] = prompt_preview
         prompt_button.clicked.connect(
@@ -3623,10 +3623,17 @@ class MainWindow(QMainWindow):
         prompt_layout.setSpacing(8)
         prompt_layout.addWidget(prompt_button, 0, Qt.AlignmentFlag.AlignLeft)
         prompt_layout.addWidget(prompt_preview)
-        panel_layout.addWidget(
-            self._create_settings_inner_card("Инструкция для AI", prompt_layout)
-        )
-        panel_layout.addStretch(1)
+        prompt_card = self._create_settings_inner_card("Инструкция для AI", prompt_layout)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setObjectName("settingsSummaryTemplateRightSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(rules_card)
+        splitter.addWidget(markdown_card)
+        splitter.addWidget(prompt_card)
+        splitter.setSizes([150, 135, 150])
+        self.settings_summary_template_right_splitters[kind] = splitter
+        panel_layout.addWidget(splitter)
 
         return self._create_settings_inner_card("", panel_layout, object_name="settingsTemplateSidePanel")
 
@@ -3649,7 +3656,7 @@ class MainWindow(QMainWindow):
                 continue
             card_layout = QVBoxLayout()
             card_layout.setContentsMargins(0, 0, 0, 0)
-            card_layout.setSpacing(8)
+            card_layout.setSpacing(6)
 
             header = QHBoxLayout()
             header.setSpacing(10)
@@ -3657,23 +3664,6 @@ class MainWindow(QMainWindow):
             section_number.setObjectName("settingsSectionNumber")
             section_number.setFixedSize(28, 28)
             header.addWidget(section_number, 0, Qt.AlignmentFlag.AlignTop)
-
-            title_block = QVBoxLayout()
-            title_block.setSpacing(3)
-            section_title = str(section.get("title") or "Новый раздел")
-            section_instruction = str(section.get("instruction") or "").strip()
-            section_title_label = QLabel(section_title)
-            section_title_label.setObjectName("cardTitle")
-            section_hint_label = QLabel(
-                section_instruction
-                if section_instruction
-                else "Без отдельной инструкции: AI ориентируется на название раздела."
-            )
-            section_hint_label.setObjectName("sectionHint")
-            section_hint_label.setWordWrap(True)
-            title_block.addWidget(section_title_label)
-            title_block.addWidget(section_hint_label)
-            header.addLayout(title_block, 1)
             header.addStretch(1)
 
             move_up = QPushButton("↑")
@@ -3718,14 +3708,13 @@ class MainWindow(QMainWindow):
             instruction_input.setPlaceholderText(
                 "Необязательно. Если поле пустое, AI получит только название раздела и общие правила."
             )
-            instruction_input.setMinimumHeight(64)
-            instruction_input.setMaximumHeight(96)
+            instruction_input.setMinimumHeight(72)
+            instruction_input.setMaximumHeight(88)
             card_layout.addWidget(self._create_template_section_field("Название раздела", title_input))
             card_layout.addWidget(
                 self._create_template_section_field(
                     "Что писать в разделе",
                     instruction_input,
-                    "Можно оставить пустым — тогда AI будет ориентироваться только на название раздела и общие правила.",
                 )
             )
 
@@ -3738,8 +3727,8 @@ class MainWindow(QMainWindow):
     def _create_template_section_field(label_text: str, field: QWidget, hint: str = "") -> QWidget:
         wrapper = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(38, 0, 0, 0)
-        layout.setSpacing(5)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
         label = QLabel(label_text)
         label.setObjectName("sectionHint")
         layout.addWidget(label)
@@ -3774,6 +3763,13 @@ class MainWindow(QMainWindow):
             markdown_preview.setPlainText(self._summary_template_markdown_preview(kind))
         if prompt_preview is not None:
             prompt_preview.setPlainText(self._summary_template_prompt_preview(kind))
+
+    def _refresh_all_summary_template_previews(self) -> None:
+        if not hasattr(self, "settings_summary_template_markdown_previews"):
+            return
+        for kind in ("meeting", "day"):
+            if kind in self.settings_summary_template_markdown_previews:
+                self._refresh_summary_template_previews(kind)
 
     def _summary_template_markdown_preview(self, kind: str) -> str:
         template = self.settings_summary_templates[kind]
@@ -3833,6 +3829,12 @@ class MainWindow(QMainWindow):
         return card
 
     def _save_summary_template_editor_state(self, kind: str) -> None:
+        title_input = self.settings_summary_template_title_inputs.get(kind)
+        if title_input is not None:
+            self.settings_summary_templates[kind]["title"] = title_input.text().strip()
+        rules_input = self.settings_summary_template_rules_inputs.get(kind)
+        if rules_input is not None:
+            self.settings_summary_templates[kind]["rules"] = rules_input.toPlainText().strip()
         section_inputs = self.settings_summary_template_section_inputs.get(kind, [])
         self.settings_summary_templates[kind]["sections"] = [
             {
@@ -5308,6 +5310,7 @@ class MainWindow(QMainWindow):
             encoding="utf-8",
         )
         self.config = load_config(config_path)
+        self._refresh_all_summary_template_previews()
         self._apply_theme_settings()
         self._apply_runtime_settings_after_save(storage_root_path)
         if readiness_invalidated:
