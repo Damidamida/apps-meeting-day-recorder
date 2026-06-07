@@ -397,6 +397,119 @@ class StartMeetingOverlay(QWidget):
         super().keyPressEvent(event)
 
 
+class SafetyCloseOverlay(QWidget):
+    confirmed = Signal()
+    dismissed = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("meetingOverlay")
+        self.hide()
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addStretch(1)
+
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(24, 24, 24, 24)
+        center_row.addStretch(1)
+
+        self.card = QFrame()
+        self.card.setObjectName("meetingOverlayCard")
+        self.card.setFixedWidth(560)
+        shadow = QGraphicsDropShadowEffect(self.card)
+        shadow.setBlurRadius(32)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(58, 20, 8, 90))
+        self.card.setGraphicsEffect(shadow)
+
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        body = QWidget()
+        body.setObjectName("meetingOverlayBody")
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 22, 24, 18)
+        body_layout.setSpacing(12)
+
+        self.title_label = QLabel()
+        self.title_label.setObjectName("overlayTitle")
+        self.title_label.setMinimumHeight(26)
+        self.message_label = QLabel()
+        self.message_label.setObjectName("overlayLabel")
+        self.message_label.setWordWrap(True)
+
+        body_layout.addWidget(self.title_label)
+        body_layout.addWidget(self.message_label)
+        body.setLayout(body_layout)
+
+        footer = QWidget()
+        footer.setObjectName("meetingOverlayFooter")
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(24, 14, 16, 14)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch(1)
+        self.primary_button = QPushButton()
+        self.primary_button.setObjectName("dialogPrimaryButton")
+        self.primary_button.clicked.connect(self._dismiss)
+        self.secondary_button = QPushButton("Закрыть и восстановить позже")
+        self.secondary_button.setObjectName("dialogButton")
+        self.secondary_button.clicked.connect(self._confirm)
+        footer_layout.addWidget(self.primary_button)
+        footer_layout.addWidget(self.secondary_button)
+        footer.setLayout(footer_layout)
+
+        card_layout.addWidget(body)
+        card_layout.addWidget(footer)
+        self.card.setLayout(card_layout)
+        center_row.addWidget(self.card, 0, Qt.AlignmentFlag.AlignCenter)
+        center_row.addStretch(1)
+        root_layout.addLayout(center_row)
+        root_layout.addStretch(1)
+        self.setLayout(root_layout)
+        self.apply_theme("light")
+
+    def apply_theme(self, theme: str) -> None:
+        self.setStyleSheet(StartMeetingOverlay._overlay_style(theme))
+
+    def show_active_meeting_warning(self) -> None:
+        self.title_label.setText("Идет активный созвон")
+        self.message_label.setText(
+            "Сейчас идет запись встречи. Закрытие приложения может нарушить "
+            "управление записью. Сначала завершите встречу."
+        )
+        self.primary_button.setText("Понятно")
+        self.secondary_button.hide()
+        self._open()
+
+    def show_background_processing_warning(self) -> None:
+        self.title_label.setText("Идет обработка встречи")
+        self.message_label.setText(
+            "Приложение сейчас готовит материалы завершенной встречи. Если закрыть "
+            "приложение сейчас, обработка остановится. При следующем запуске "
+            "приложение попробует восстановить обработку с безопасного места."
+        )
+        self.primary_button.setText("Остаться в приложении")
+        self.secondary_button.show()
+        self._open()
+
+    def _open(self) -> None:
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+
+    def _dismiss(self) -> None:
+        self.hide()
+        self.dismissed.emit()
+
+    def _confirm(self) -> None:
+        self.hide()
+        self.confirmed.emit()
+
+
 class FloatingMeetingControl(QWidget):
     start_workday_requested = Signal()
     start_meeting_requested = Signal(str)
@@ -889,6 +1002,7 @@ class MainWindow(QMainWindow):
         self.selected_review_meeting_folder: Path | None = None
         self.review_day_summary_selected = False
         self.workday_action_mode: str | None = None
+        self.allow_close_with_processing = False
         self.workday_meeting_cards: dict[Path, ClickableFrame] = {}
         self.review_meeting_cards: dict[Path, ClickableFrame] = {}
         self._apply_app_style()
@@ -927,6 +1041,10 @@ class MainWindow(QMainWindow):
             lambda: self.status_label.setText("Создание встречи отменено.")
         )
         self._resize_start_meeting_overlay()
+        self.safety_close_overlay = SafetyCloseOverlay(container)
+        self.safety_close_overlay.apply_theme(self.current_theme)
+        self.safety_close_overlay.confirmed.connect(self._confirm_close_with_processing)
+        self._resize_safety_close_overlay()
         self.floating_control = FloatingMeetingControl()
         self.floating_control.apply_theme(self._effective_floating_theme())
         self.floating_control.start_workday_requested.connect(self.start_workday)
@@ -959,6 +1077,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._resize_start_meeting_overlay()
+        self._resize_safety_close_overlay()
 
     def _resize_start_meeting_overlay(self) -> None:
         if not hasattr(self, "start_meeting_overlay"):
@@ -966,6 +1085,13 @@ class MainWindow(QMainWindow):
         parent = self.start_meeting_overlay.parentWidget()
         if parent is not None:
             self.start_meeting_overlay.setGeometry(parent.rect())
+
+    def _resize_safety_close_overlay(self) -> None:
+        if not hasattr(self, "safety_close_overlay"):
+            return
+        parent = self.safety_close_overlay.parentWidget()
+        if parent is not None:
+            self.safety_close_overlay.setGeometry(parent.rect())
 
     def show_floating_control(self) -> None:
         if not hasattr(self, "floating_control"):
@@ -1507,6 +1633,8 @@ class MainWindow(QMainWindow):
         self._apply_app_style()
         if hasattr(self, "start_meeting_overlay"):
             self.start_meeting_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "safety_close_overlay"):
+            self.safety_close_overlay.apply_theme(self.current_theme)
         if hasattr(self, "floating_control"):
             self.floating_control.apply_theme(self._effective_floating_theme())
         if hasattr(self, "readiness_labels"):
@@ -2228,15 +2356,26 @@ class MainWindow(QMainWindow):
         return "без длительности"
 
     def closeEvent(self, event) -> None:
-        if self._has_processing_work():
+        if self.storage.meeting_active:
             event.ignore()
-            self.status_label.setText(
-                "Дождитесь завершения обработки. Сейчас обновляются локальные файлы встречи или итогов дня."
-            )
+            self.safety_close_overlay.show_active_meeting_warning()
+            return
+        if self._has_processing_work():
+            if self.allow_close_with_processing:
+                if hasattr(self, "floating_control"):
+                    self.floating_control.close_from_app()
+                super().closeEvent(event)
+                return
+            event.ignore()
+            self.safety_close_overlay.show_background_processing_warning()
             return
         if hasattr(self, "floating_control"):
             self.floating_control.close_from_app()
         super().closeEvent(event)
+
+    def _confirm_close_with_processing(self) -> None:
+        self.allow_close_with_processing = True
+        self.close()
 
     def _create_workday_page(self) -> QWidget:
         page = QWidget()
@@ -4163,9 +4302,20 @@ class MainWindow(QMainWindow):
             self.day_status_badge.setText("Активен")
             self._apply_badge_style(self.day_status_badge, "active")
             self.day_date_title_value.setText(today_title)
-            self.day_status_detail_value.setText(
-                "Рабочий день активен. Можно запускать встречи и сохранять локальные итоги."
-            )
+            if self.storage.meeting_active:
+                self.day_status_detail_value.setText(
+                    "Нельзя завершить рабочий день, пока идет активная встреча. "
+                    "Сначала завершите встречу."
+                )
+            elif self._has_background_meeting_processing(day_folder):
+                self.day_status_detail_value.setText(
+                    "Можно завершить рабочий день. Итоги дня начнутся после "
+                    "завершения обработки встреч."
+                )
+            else:
+                self.day_status_detail_value.setText(
+                    "Можно завершить рабочий день. После завершения будут подготовлены итоги дня."
+                )
         elif day_folder is not None:
             self.day_status_badge.setText("Не активен")
             self._apply_badge_style(self.day_status_badge, "wait")
@@ -4213,9 +4363,15 @@ class MainWindow(QMainWindow):
         self.active_call_timer_value.setText("00:00:00")
         if self.storage.workday_active:
             self.active_call_title_value.setText("Нет активного созвона")
-            self.active_call_detail_value.setText(
-                "Можно начать новую встречу. Если предыдущая еще обрабатывается, она продолжит выполняться в фоне."
-            )
+            if self._has_background_meeting_processing(self.storage.get_today_day_folder()):
+                self.active_call_detail_value.setText(
+                    "Предыдущая встреча обрабатывается в фоне. Новую встречу можно начать."
+                )
+            else:
+                self.active_call_detail_value.setText(
+                    "Можно начать новую встречу. Если предыдущая еще обрабатывается, "
+                    "она продолжит выполняться в фоне."
+                )
             self.active_call_badge.setText("Ожидает")
             self._apply_badge_style(self.active_call_badge, "wait")
         else:
@@ -4225,6 +4381,15 @@ class MainWindow(QMainWindow):
             )
             self.active_call_badge.setText("Не начат")
             self._apply_badge_style(self.active_call_badge, "wait")
+
+    def _has_background_meeting_processing(self, day_folder: Path | None) -> bool:
+        if self.storage.meeting_active:
+            return False
+        if self.pipeline_running or self.processing_queue:
+            return True
+        if day_folder is None:
+            return False
+        return self.storage.has_unfinished_meeting_processing(day_folder)
 
     @staticmethod
     def _elapsed_text(started_at: object) -> str:

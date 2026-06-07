@@ -19,6 +19,14 @@ from app.ui import main_window as main_window_module
 from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
 
 
+class CloseEventStub:
+    def __init__(self) -> None:
+        self.ignored = False
+
+    def ignore(self) -> None:
+        self.ignored = True
+
+
 class EnabledRecorder(NoopRecorder):
     enabled = True
     status_text = "OBS: подключен"
@@ -361,6 +369,94 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.active_call_panel.objectName() == "activeCallInnerPanel"
     assert window.start_meeting_button.isHidden()
     assert not window.end_meeting_button.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_workday_blocks_explain_start_and_end_restrictions(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    assert "сначала начните рабочий день" in window.active_call_detail_value.text().lower()
+    assert "Начните рабочий день" in window.day_status_detail_value.text()
+    assert window.workday_action_button.text() == "Начать рабочий день"
+
+    window.start_workday()
+
+    assert window.workday_action_button.text() == "Завершить рабочий день"
+    assert window.workday_action_button.isEnabled()
+    assert "После завершения будут подготовлены итоги дня" in window.day_status_detail_value.text()
+    assert "можно начать новую встречу" in window.active_call_detail_value.text().lower()
+
+    window.pipeline_running = True
+    window.refresh_status()
+    window.refresh_buttons()
+
+    assert window.workday_action_button.isEnabled()
+    assert "Итоги дня начнутся после завершения обработки встреч" in window.day_status_detail_value.text()
+
+    window.pipeline_running = False
+    window._start_meeting_with_title("Ограничение")
+
+    assert not window.workday_action_button.isEnabled()
+    assert "Нельзя завершить рабочий день" in window.day_status_detail_value.text()
+    assert "Сначала завершите встречу" in window.day_status_detail_value.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_close_event_warns_and_blocks_active_meeting(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.start_workday()
+    storage.start_meeting("Активный созвон")
+    window = MainWindow(storage, recorder)
+    event = CloseEventStub()
+
+    window.closeEvent(event)
+
+    assert event.ignored
+    assert not window.safety_close_overlay.isHidden()
+    assert window.safety_close_overlay.title_label.text() == "Идет активный созвон"
+    assert "Сначала завершите встречу" in window.safety_close_overlay.message_label.text()
+    assert window.safety_close_overlay.secondary_button.isHidden()
+
+    window.safety_close_overlay.primary_button.click()
+    assert window.safety_close_overlay.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_close_event_allows_confirmed_close_with_background_processing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.pipeline_running = True
+    event = CloseEventStub()
+    close_requests: list[bool] = []
+    monkeypatch.setattr(window, "close", lambda: close_requests.append(True))
+
+    window.closeEvent(event)
+
+    assert event.ignored
+    assert not window.safety_close_overlay.isHidden()
+    assert window.safety_close_overlay.title_label.text() == "Идет обработка встречи"
+    assert "При следующем запуске" in window.safety_close_overlay.message_label.text()
+    assert not window.safety_close_overlay.secondary_button.isHidden()
+
+    window.safety_close_overlay.secondary_button.click()
+
+    assert window.allow_close_with_processing
+    assert close_requests == [True]
 
     window.close()
     app.processEvents()
