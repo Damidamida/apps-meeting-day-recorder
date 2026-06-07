@@ -35,6 +35,7 @@ WINDOWS_RESERVED_NAMES = {
 }
 CORRUPTED_METADATA_MESSAGE = "Локальный metadata JSON поврежден."
 INTERRUPTED_PROCESSING_MESSAGE = "Обработка была прервана при прошлом запуске приложения."
+AUTO_HEALED_METADATA_STATUS = "corrupted"
 JSON_READ_RETRY_DELAY_SECONDS = 0.02
 JSON_READ_RETRY_COUNT = 5
 JSON_WRITE_RETRY_DELAY_SECONDS = 0.02
@@ -165,7 +166,15 @@ class StorageService:
         day_folder = self.create_day_folder(started_at.date())
         metadata_path = day_folder / "day_metadata.json"
         if metadata_path.exists():
-            metadata = self._read_json(metadata_path)
+            try:
+                metadata = self._read_json(metadata_path)
+            except MetadataReadError:
+                metadata = self._auto_healed_metadata()
+            if self._is_auto_healed_metadata(metadata):
+                self._write_json(metadata_path, self._new_day_metadata(started_at))
+                self.active_day_folder = day_folder
+                self.last_workday_action = "started"
+                return day_folder
             if metadata.get("status") == "ended":
                 events = metadata.setdefault("events", [])
                 ended_at = metadata.get("ended_at")
@@ -183,13 +192,7 @@ class StorageService:
             raise ValueError(f"Метаданные рабочего дня уже существуют: {metadata_path}")
         self._write_json(
             metadata_path,
-            {
-                "date": started_at.date().isoformat(),
-                "started_at": started_at.isoformat(),
-                "status": "active",
-                "meetings": [],
-                "events": [{"type": "started", "at": started_at.isoformat()}],
-            },
+            self._new_day_metadata(started_at),
         )
         self.active_day_folder = day_folder
         self.last_workday_action = "started"
@@ -537,11 +540,15 @@ class StorageService:
         transcript_json_path = Path(
             str(metadata.get("transcript_json_path") or meeting_folder / "transcript.json")
         )
-        return (
-            metadata.get("transcription_status") == "completed"
-            and transcript_path.is_file()
-            and transcript_json_path.is_file()
-        )
+        if metadata.get("transcription_status") != "completed":
+            return False
+        if not transcript_path.is_file() or not transcript_json_path.is_file():
+            return False
+        try:
+            transcript_json = StorageService._read_json(transcript_json_path)
+        except MetadataReadError:
+            return False
+        return transcript_json.get("status") == "completed"
 
     @staticmethod
     def _summary_is_ready(metadata: dict[str, Any], meeting_folder: Path) -> bool:
@@ -556,7 +563,11 @@ class StorageService:
             bool: `true` if `metadata["summary_status"]` equals `"draft_created"` and the resolved summary path points to an existing file, `false` otherwise.
         """
         summary_path = Path(str(metadata.get("summary_path") or meeting_folder / "summary_draft.md"))
-        return metadata.get("summary_status") == "draft_created" and summary_path.is_file()
+        if metadata.get("summary_status") != "draft_created" or not summary_path.is_file():
+            return False
+        return not StorageService._is_meeting_summary_placeholder(
+            summary_path.read_text(encoding="utf-8")
+        )
 
     def _sync_day_meeting_metadata(self, meeting_folder: Path, metadata: dict[str, Any]) -> None:
         """
@@ -1038,9 +1049,30 @@ class StorageService:
                 time.sleep(JSON_READ_RETRY_DELAY_SECONDS)
             except json.JSONDecodeError as error:
                 backup_path = StorageService._backup_corrupted_json(path)
-                StorageService._write_json(path, {})
+                StorageService._write_json(path, StorageService._auto_healed_metadata())
                 raise MetadataReadError(path, backup_path) from error
         raise RuntimeError("JSON read retry loop ended unexpectedly.")
+
+    @staticmethod
+    def _auto_healed_metadata() -> dict[str, Any]:
+        return {
+            "status": AUTO_HEALED_METADATA_STATUS,
+            "__auto_healed": True,
+        }
+
+    @staticmethod
+    def _is_auto_healed_metadata(metadata: dict[str, Any]) -> bool:
+        return metadata == {} or bool(metadata.get("__auto_healed"))
+
+    @staticmethod
+    def _new_day_metadata(started_at: datetime) -> dict[str, Any]:
+        return {
+            "date": started_at.date().isoformat(),
+            "started_at": started_at.isoformat(),
+            "status": "active",
+            "meetings": [],
+            "events": [{"type": "started", "at": started_at.isoformat()}],
+        }
 
     @staticmethod
     def _write_json(path: Path, content: dict[str, Any]) -> None:

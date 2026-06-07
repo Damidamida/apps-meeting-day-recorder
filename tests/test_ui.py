@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
-from app.services.storage import StorageService
+from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
 from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
@@ -726,6 +726,60 @@ def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
         window.pipeline_thread.wait(1000)
     window.close()
     app.processEvents()
+
+
+def test_restore_queue_keeps_corrupted_metadata_backup_message(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    entered = Event()
+    release = Event()
+
+    class BlockingStorage(StorageService):
+        broken_folder_name = "10-00_Broken"
+
+        def read_meeting_metadata(self, meeting_folder):
+            if meeting_folder.name == self.broken_folder_name:
+                raise MetadataReadError(
+                    meeting_folder / "meeting_metadata.json",
+                    meeting_folder / "meeting_metadata.corrupt-test.json",
+                )
+            return super().read_meeting_metadata(meeting_folder)
+
+        def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            del progress_callback
+            entered.set()
+            release.wait(5)
+            return meeting_folder
+
+    storage = BlockingStorage(tmp_path, recorder)
+    day_folder = storage.start_workday(datetime.now())
+    window = MainWindow(storage, recorder)
+    pending_meeting = storage.start_meeting("Pending", datetime.now())
+    storage.finish_active_meeting_recording(datetime.now())
+    broken_meeting = day_folder / BlockingStorage.broken_folder_name
+    broken_meeting.mkdir()
+    (broken_meeting / "meeting_metadata.json").write_text('{"status": "ended"}', encoding="utf-8")
+
+    window._restore_today_pending_processing_queue()
+    deadline = time.time() + 2
+    while not entered.is_set() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    status_text = window.status_label.text()
+    pipeline_meeting_folder = window.pipeline_meeting_folder
+    release.set()
+    if window.pipeline_thread is not None:
+        window.pipeline_thread.quit()
+        window.pipeline_thread.wait(1000)
+    window.close()
+    app.processEvents()
+
+    assert entered.is_set()
+    assert pipeline_meeting_folder == pending_meeting
+    assert "backup:" in status_text
+    assert "meeting_metadata.corrupt-test.json" in status_text
+    assert "Восстановлена" in status_text
 
 
 def test_workday_meeting_card_contains_folder_actions_after_click(tmp_path: Path) -> None:

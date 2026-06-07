@@ -3114,12 +3114,13 @@ class MainWindow(QMainWindow):
         """
         restored = 0
         recovered = 0
+        recovery_messages: list[str] = []
         day_folder = self.storage.get_today_day_folder()
         if day_folder is not None:
             try:
                 recovered = len(self.storage.recover_interrupted_meeting_processing(day_folder))
             except MetadataReadError as error:
-                self.status_label.setText(
+                recovery_messages.append(
                     f"Metadata поврежден и сохранен в backup: {error.backup_path}"
                 )
         for meeting_folder in self.storage.list_today_meeting_folders():
@@ -3130,7 +3131,7 @@ class MainWindow(QMainWindow):
             try:
                 metadata = self.storage.read_meeting_metadata(meeting_folder)
             except MetadataReadError as error:
-                self.status_label.setText(
+                recovery_messages.append(
                     f"Metadata встречи поврежден и сохранен в backup: {error.backup_path}"
                 )
                 continue
@@ -3142,14 +3143,18 @@ class MainWindow(QMainWindow):
                 restored += 1
         if restored:
             if recovered:
-                self.status_label.setText(
+                recovery_messages.insert(
+                    0,
                     f"Восстановлена обработка встреч после перезапуска: {recovered}."
                 )
             else:
-                self.status_label.setText(
+                recovery_messages.insert(
+                    0,
                     f"Восстановлена очередь обработки встреч: {restored}."
                 )
             self._start_next_pipeline()
+        if recovery_messages:
+            self.status_label.setText(" ".join(recovery_messages))
 
     def _start_next_pipeline(self) -> None:
         """
