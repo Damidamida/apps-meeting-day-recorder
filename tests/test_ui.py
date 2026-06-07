@@ -32,6 +32,32 @@ class EnabledRecorder(NoopRecorder):
     status_text = "OBS: подключен"
 
 
+def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        app.processEvents()
+        if condition():
+            return True
+        time.sleep(0.01)
+    app.processEvents()
+    return condition()
+
+
+def _readiness_statuses(state: str = "ok") -> list[dict[str, object]]:
+    return [
+        {
+            "component": card["component"],
+            "state": state,
+            "message": f"{card['component']} проверен.",
+            "details": [
+                {"label": label, "value": "Проверено", "state": "neutral"}
+                for label in card["initial_details"]
+            ],
+        }
+        for card in main_window_module.READINESS_CARDS
+    ]
+
+
 def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = StartMeetingOverlay(NoopRecorder())
@@ -231,6 +257,11 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
 
     with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
         window.check_readiness()
+        assert _wait_for_qt(
+            app,
+            lambda: window.readiness_detail_values["Итоги встречи"]["Генерация"].text()
+            == "Выключена настройками",
+        )
     assert (
         window.readiness_detail_values["Итоги встречи"]["Генерация"].text()
         == "Выключена настройками"
@@ -240,6 +271,167 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
 
     window.start_workday()
     assert window.start_meeting_button.isEnabled()
+
+    window.close()
+    app.processEvents()
+
+
+def test_readiness_check_runs_in_background_and_disables_repeated_start(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+    calls: list[bool] = []
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        calls.append(True)
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+
+    assert _wait_for_qt(app, started.is_set)
+    assert window.check_readiness_button.text() == "Проверяется..."
+    assert not window.check_readiness_button.isEnabled()
+    assert "выполняется" in window.status_label.text().lower()
+
+    window.check_readiness()
+
+    assert len(calls) == 1
+
+    release.set()
+
+    assert _wait_for_qt(
+        app,
+        lambda: window.check_readiness_button.isEnabled()
+        and window.check_readiness_button.text() == "Проверить готовность",
+    )
+    assert window.readiness_badges["Запись разговора (OBS)"].text() == "OK"
+    assert "Проверка готовности завершена" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_readiness_check_ignores_stale_result_after_settings_save(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+
+    assert _wait_for_qt(app, started.is_set)
+
+    window.settings_storage_root_input.setText(str(tmp_path / "new-data"))
+    window.save_settings()
+    release.set()
+
+    assert _wait_for_qt(
+        app,
+        lambda: window.check_readiness_button.isEnabled()
+        and window.check_readiness_button.text() == "Проверить готовность",
+    )
+    assert window.readiness_badges["Запись разговора (OBS)"].text() == "Не проверено"
+    assert (
+        window.readiness_detail_values["Запись разговора (OBS)"]["Состояние"].text()
+        == "Не проверено"
+    )
+    assert "Настройки изменились" in window.status_label.text()
+    assert "Проверка готовности" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_main_window_blocks_close_while_readiness_check_is_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+
+    assert _wait_for_qt(app, started.is_set)
+
+    close_event = CloseEventStub()
+    window.closeEvent(close_event)
+
+    assert close_event.ignored
+    assert "проверки готовности" in window.status_label.text().lower()
+
+    release.set()
+    assert _wait_for_qt(app, lambda: window.check_readiness_button.isEnabled())
+
+    window.close()
+    app.processEvents()
+
+
+def test_readiness_check_badge_keeps_active_style_after_theme_reapply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+
+    assert _wait_for_qt(app, started.is_set)
+
+    badge = window.readiness_badges["Запись разговора (OBS)"]
+    assert badge.text() == "Проверяется"
+    active_background = window._status_colors()["active"][0]
+
+    window._apply_theme_settings()
+
+    assert active_background in badge.styleSheet()
+
+    release.set()
+    assert _wait_for_qt(app, lambda: window.check_readiness_button.isEnabled())
 
     window.close()
     app.processEvents()

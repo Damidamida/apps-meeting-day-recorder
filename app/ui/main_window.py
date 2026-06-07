@@ -115,6 +115,33 @@ class DaySummaryPipelineWorker(QObject):
         self.finished.emit(str(day_folder))
 
 
+class ReadinessCheckWorker(QObject):
+    finished = Signal(int, object, str)
+    failed = Signal(int, str)
+
+    def __init__(
+        self,
+        request_id: int,
+        config: dict[str, object],
+        recorder: Recorder,
+        data_root: Path,
+    ) -> None:
+        super().__init__()
+        self.request_id = request_id
+        self.config = config
+        self.recorder = recorder
+        self.data_root = data_root
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            statuses = check_readiness(self.config, self.recorder, self.data_root)
+        except Exception as error:
+            self.failed.emit(self.request_id, str(error))
+            return
+        self.finished.emit(self.request_id, statuses, self.recorder.status_text)
+
+
 class ClickableFrame(QFrame):
     clicked = Signal()
 
@@ -986,6 +1013,14 @@ class MainWindow(QMainWindow):
         self.day_summary_day_folder: Path | None = None
         self.day_summary_thread: QThread | None = None
         self.day_summary_worker: DaySummaryPipelineWorker | None = None
+        self.readiness_check_running = False
+        self.readiness_check_request_id = 0
+        self.readiness_check_thread: QThread | None = None
+        self.readiness_check_worker: ReadinessCheckWorker | None = None
+        self.readiness_check_pending_result: (
+            tuple[int, list[dict[str, object]], str] | None
+        ) = None
+        self.readiness_check_pending_error: tuple[int, str] | None = None
         self.pending_storage_root_path: Path | None = None
         self.pending_runtime_settings = False
         self.recorder = recorder or (
@@ -2427,6 +2462,12 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.safety_close_overlay.show_day_summary_processing_warning()
             return
+        if self.readiness_check_running:
+            event.ignore()
+            self.status_label.setText(
+                "Дождитесь завершения проверки готовности перед закрытием приложения."
+            )
+            return
         if hasattr(self, "floating_control"):
             self.floating_control.close_from_app()
         super().closeEvent(event)
@@ -3423,18 +3464,125 @@ class MainWindow(QMainWindow):
         self.pipeline_thread.start()
 
     def check_readiness(self) -> None:
-        statuses = check_readiness(self.config, self.recorder, self.storage.root)
+        if self.readiness_check_running:
+            self.status_label.setText(
+                "Проверка готовности уже выполняется. Дождитесь завершения."
+            )
+            return
+        self.readiness_check_request_id += 1
+        request_id = self.readiness_check_request_id
+        self.readiness_check_running = True
+        self._set_readiness_check_in_progress()
+        self.refresh_buttons()
+
+        self.readiness_check_thread = QThread(self)
+        self.readiness_check_worker = ReadinessCheckWorker(
+            request_id,
+            deepcopy(self.config),
+            self.recorder,
+            self.storage.root,
+        )
+        self.readiness_check_worker.moveToThread(self.readiness_check_thread)
+        self.readiness_check_thread.started.connect(self.readiness_check_worker.run)
+        self.readiness_check_worker.finished.connect(self._on_readiness_check_finished)
+        self.readiness_check_worker.failed.connect(self._on_readiness_check_failed)
+        self.readiness_check_worker.finished.connect(self.readiness_check_thread.quit)
+        self.readiness_check_worker.failed.connect(self.readiness_check_thread.quit)
+        self.readiness_check_thread.finished.connect(self._on_readiness_check_thread_finished)
+        self.readiness_check_thread.finished.connect(self.readiness_check_worker.deleteLater)
+        self.readiness_check_thread.finished.connect(self.readiness_check_thread.deleteLater)
+        self.readiness_check_thread.start()
+
+    def _on_readiness_check_finished(
+        self,
+        request_id: int,
+        statuses: list[dict[str, object]],
+        recorder_status_text: str,
+    ) -> None:
+        self.readiness_check_pending_result = (request_id, statuses, recorder_status_text)
+
+    def _on_readiness_check_failed(self, request_id: int, message: str) -> None:
+        self.readiness_check_pending_error = (request_id, message)
+
+    def _on_readiness_check_thread_finished(self) -> None:
+        pending_result = self.readiness_check_pending_result
+        pending_error = self.readiness_check_pending_error
+        self.readiness_check_pending_result = None
+        self.readiness_check_pending_error = None
+        self._complete_readiness_check()
+        if pending_result is not None:
+            request_id, statuses, recorder_status_text = pending_result
+            if request_id != self.readiness_check_request_id:
+                self._show_stale_readiness_result_message()
+            else:
+                self._render_readiness_statuses(statuses, recorder_status_text)
+        elif pending_error is not None:
+            request_id, message = pending_error
+            if request_id != self.readiness_check_request_id:
+                self._show_stale_readiness_result_message()
+            else:
+                self.status_label.setText(f"Проверка готовности не завершилась: {message}")
+        self.readiness_check_worker = None
+        self.readiness_check_thread = None
+
+    def _show_stale_readiness_result_message(self) -> None:
+        self._reset_readiness_cards_to_unchecked()
+        self.status_label.setText(
+            "Настройки изменились во время проверки готовности. "
+            "Запустите проверку готовности еще раз."
+        )
+
+    def _complete_readiness_check(self) -> None:
+        self.readiness_check_running = False
+        self.check_readiness_button.setText("Проверить готовность")
+        self.refresh_buttons()
+
+    def _set_readiness_check_in_progress(self) -> None:
+        self.check_readiness_button.setText("Проверяется...")
+        self.check_readiness_button.setEnabled(False)
+        for card in READINESS_CARDS:
+            component = str(card["component"])
+            details = [
+                {"label": label, "value": "Проверяется...", "state": "neutral"}
+                for label in card["initial_details"]
+            ]
+            self._render_readiness_details(component, details)
+            badge = self.readiness_badges.get(component)
+            if badge is not None:
+                badge.setText("Проверяется")
+                self._apply_badge_style(badge, "active")
+        self.status_label.setText("Проверка готовности выполняется...")
+
+    def _reset_readiness_cards_to_unchecked(self) -> None:
+        for card in READINESS_CARDS:
+            component = str(card["component"])
+            details = [
+                {"label": label, "value": "Не проверено", "state": "neutral"}
+                for label in card["initial_details"]
+            ]
+            self._render_readiness_details(component, details)
+            badge = self.readiness_badges.get(component)
+            if badge is not None:
+                badge.setText("Не проверено")
+                self._apply_badge_style(badge, "wait")
+
+    def _render_readiness_statuses(
+        self,
+        statuses: list[dict[str, object]],
+        recorder_status_text: str,
+    ) -> None:
         messages = []
         for status in statuses:
-            component = status["component"]
-            state = status["state"]
-            self._render_readiness_details(component, status.get("details", []))
+            component = str(status["component"])
+            state = str(status["state"])
+            details = status.get("details", [])
+            self._render_readiness_details(component, details if isinstance(details, list) else [])
             badge = self.readiness_badges.get(component)
             if badge is not None:
                 badge.setText(self._badge_state_text(state))
                 self._apply_badge_style(badge, state)
-            messages.append(status["message"])
-        self.obs_status_value.setText(self.recorder.status_text)
+            messages.append(str(status["message"]))
+        self.obs_status_value.setText(recorder_status_text)
         self.status_label.setText("Проверка готовности завершена. " + " ".join(messages))
 
     def _render_readiness_details(
@@ -3845,7 +3993,13 @@ class MainWindow(QMainWindow):
         normalized = text.strip().lower()
         if normalized == "ok":
             return "ok"
-        if normalized in {"идет", "выполняется", "генерация", "обработка"}:
+        if normalized in {
+            "идет",
+            "выполняется",
+            "генерация",
+            "обработка",
+            "проверяется",
+        }:
             return "active"
         if normalized in {"пропущено", "пропущен"}:
             return "skip"
@@ -4250,6 +4404,7 @@ class MainWindow(QMainWindow):
         if storage_root is None:
             return
         storage_root_text, storage_root_path = storage_root
+        readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         config_path = Path("config.yaml")
         config_to_save = self._settings_config_from_ui(storage_root_text)
         config_path.write_text(
@@ -4263,6 +4418,24 @@ class MainWindow(QMainWindow):
         self.config = load_config(config_path)
         self._apply_theme_settings()
         self._apply_runtime_settings_after_save(storage_root_path)
+        if readiness_invalidated:
+            self._append_settings_status(
+                "Проверка готовности выполнялась со старыми настройками. "
+                "После завершения запустите проверку снова."
+            )
+
+    def _invalidate_readiness_check_after_settings_change(self) -> bool:
+        if not self.readiness_check_running:
+            return False
+        self.readiness_check_request_id += 1
+        return True
+
+    def _append_settings_status(self, message: str) -> None:
+        current_message = self.settings_status_label.text().strip()
+        if current_message:
+            self.settings_status_label.setText(f"{current_message} {message}")
+            return
+        self.settings_status_label.setText(message)
 
     def _settings_config_from_ui(self, storage_root: str | None = None) -> dict[str, object]:
         if hasattr(self, "settings_current_transcription_backend"):
@@ -4562,7 +4735,11 @@ class MainWindow(QMainWindow):
         has_day_folder = day_folder is not None
         has_today_meetings = bool(self.storage.list_today_meeting_folders()) if has_day_folder else False
 
-        self.check_readiness_button.setEnabled(not self.pipeline_running and not self.day_summary_running)
+        self.check_readiness_button.setEnabled(
+            not self.readiness_check_running
+            and not self.pipeline_running
+            and not self.day_summary_running
+        )
         self._configure_workday_action_button()
         self.start_meeting_button.setEnabled(
             self.storage.workday_active and not self.storage.meeting_active
