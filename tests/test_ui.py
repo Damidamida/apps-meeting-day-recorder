@@ -443,6 +443,7 @@ def test_close_event_allows_confirmed_close_with_background_processing(
     window.pipeline_running = True
     event = CloseEventStub()
     close_requests: list[bool] = []
+    original_close = window.close
     monkeypatch.setattr(window, "close", lambda: close_requests.append(True))
 
     window.closeEvent(event)
@@ -458,7 +459,37 @@ def test_close_event_allows_confirmed_close_with_background_processing(
     assert window.allow_close_with_processing
     assert close_requests == [True]
 
-    window.close()
+    window.pipeline_running = False
+    original_close()
+    app.processEvents()
+
+
+def test_close_event_warns_for_day_summary_processing(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.day_summary_running = True
+    event = CloseEventStub()
+    close_requests: list[bool] = []
+    original_close = window.close
+    monkeypatch.setattr(window, "close", lambda: close_requests.append(True))
+
+    window.closeEvent(event)
+
+    assert event.ignored
+    assert not window.safety_close_overlay.isHidden()
+    assert window.safety_close_overlay.title_label.text() == "Идет обновление итогов дня"
+    assert "восстановить обновление итогов дня" in window.safety_close_overlay.message_label.text()
+    assert not window.safety_close_overlay.secondary_button.isHidden()
+
+    window.safety_close_overlay.secondary_button.click()
+
+    assert window.allow_close_with_processing
+    assert close_requests == [True]
+
+    window.day_summary_running = False
+    original_close()
     app.processEvents()
 
 
@@ -828,6 +859,45 @@ def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
     if window.pipeline_thread is not None:
         window.pipeline_thread.quit()
         window.pipeline_thread.wait(1000)
+    window.close()
+    app.processEvents()
+
+
+def test_running_day_summary_is_restored_on_startup(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    entered = Event()
+    release = Event()
+
+    class BlockingStorage(StorageService):
+        def process_day_summary_pipeline(self, day_folder, force=False, progress_callback=None):
+            del force, progress_callback
+            entered.set()
+            release.wait(5)
+            return day_folder
+
+    storage = BlockingStorage(tmp_path, recorder)
+    day_folder = storage.start_workday(datetime.now())
+    storage.end_workday(datetime.now())
+    metadata = storage.ensure_day_summary_metadata(day_folder)
+    metadata["day_summary_status"] = "running"
+    storage._write_json(storage.day_summary_metadata_path(day_folder), metadata)
+
+    window = MainWindow(storage, recorder)
+    deadline = time.time() + 2
+    while not entered.is_set() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+    assert entered.is_set()
+    assert window.day_summary_running
+    assert window.day_summary_day_folder == day_folder
+    assert "Восстановлено обновление итогов дня" in window.status_label.text()
+
+    release.set()
+    if window.day_summary_thread is not None:
+        window.day_summary_thread.quit()
+        window.day_summary_thread.wait(1000)
     window.close()
     app.processEvents()
 

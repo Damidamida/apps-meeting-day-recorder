@@ -495,6 +495,17 @@ class SafetyCloseOverlay(QWidget):
         self.secondary_button.show()
         self._open()
 
+    def show_day_summary_processing_warning(self) -> None:
+        self.title_label.setText("Идет обновление итогов дня")
+        self.message_label.setText(
+            "Приложение сейчас готовит итоги дня. Если закрыть приложение сейчас, "
+            "обработка остановится. При следующем запуске приложение попробует "
+            "восстановить обновление итогов дня."
+        )
+        self.primary_button.setText("Остаться в приложении")
+        self.secondary_button.show()
+        self._open()
+
     def _open(self) -> None:
         if self.parentWidget() is not None:
             self.setGeometry(self.parentWidget().rect())
@@ -1061,6 +1072,7 @@ class MainWindow(QMainWindow):
         self.active_call_timer.start()
         self.show_floating_control()
         self._restore_today_pending_processing_queue()
+        self._restore_today_pending_day_summary_queue()
 
     def _transcription_runtime_config(self) -> dict[str, object]:
         config = dict(self.config["transcription"])
@@ -2360,7 +2372,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.safety_close_overlay.show_active_meeting_warning()
             return
-        if self._has_processing_work():
+        if self._has_meeting_processing_work():
             if self.allow_close_with_processing:
                 if hasattr(self, "floating_control"):
                     self.floating_control.close_from_app()
@@ -2368,6 +2380,15 @@ class MainWindow(QMainWindow):
                 return
             event.ignore()
             self.safety_close_overlay.show_background_processing_warning()
+            return
+        if self._has_day_summary_processing_work():
+            if self.allow_close_with_processing:
+                if hasattr(self, "floating_control"):
+                    self.floating_control.close_from_app()
+                super().closeEvent(event)
+                return
+            event.ignore()
+            self.safety_close_overlay.show_day_summary_processing_warning()
             return
         if hasattr(self, "floating_control"):
             self.floating_control.close_from_app()
@@ -3313,6 +3334,27 @@ class MainWindow(QMainWindow):
             self._start_next_pipeline()
         if recovery_messages:
             self.status_label.setText(" ".join(recovery_messages))
+
+    def _restore_today_pending_day_summary_queue(self) -> None:
+        day_folder = self.storage.get_today_day_folder()
+        if day_folder is None:
+            return
+        metadata_path = self.storage.day_summary_metadata_path(day_folder)
+        if not metadata_path.is_file():
+            return
+        try:
+            metadata = self.storage.read_day_summary_metadata(day_folder)
+        except MetadataReadError as error:
+            self.status_label.setText(
+                f"Metadata итогов дня поврежден и сохранен в backup: {error.backup_path}"
+            )
+            return
+        if metadata.get("day_summary_status") not in {"pending", "running", "waiting_for_meetings"}:
+            return
+        self._request_day_summary_update(day_folder, force=False)
+        self.status_label.setText(
+            "Восстановлено обновление итогов дня после перезапуска приложения."
+        )
 
     def _start_next_pipeline(self) -> None:
         """
@@ -4497,10 +4539,17 @@ class MainWindow(QMainWindow):
         self._refresh_floating_control()
 
     def _has_processing_work(self) -> bool:
+        return self._has_meeting_processing_work() or self._has_day_summary_processing_work()
+
+    def _has_meeting_processing_work(self) -> bool:
         return (
             self.pipeline_running
             or bool(self.processing_queue)
-            or self.day_summary_running
+        )
+
+    def _has_day_summary_processing_work(self) -> bool:
+        return (
+            self.day_summary_running
             or self.day_summary_pending
         )
 
