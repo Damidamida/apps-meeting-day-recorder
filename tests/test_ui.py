@@ -2047,7 +2047,17 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     assert window.settings_summary_template_side_panels["meeting"].objectName() == (
         "settingsTemplateSidePanel"
     )
-    assert not window.settings_summary_template_prompt_previews["meeting"].isVisible()
+    assert window.settings_summary_template_prompt_previews["meeting"].isHidden()
+    markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
+    prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
+    assert markdown_preview.minimumHeight() == markdown_preview.maximumHeight()
+    assert prompt_preview.minimumHeight() == prompt_preview.maximumHeight()
+    markdown_height_before = markdown_preview.maximumHeight()
+    prompt_button = window.settings_summary_template_prompt_buttons["meeting"]
+    prompt_button.click()
+    app.processEvents()
+    assert not prompt_preview.isHidden()
+    assert markdown_preview.maximumHeight() == markdown_height_before
 
     window.settings_section_buttons["Основное"].click()
 

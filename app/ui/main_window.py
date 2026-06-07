@@ -3424,6 +3424,7 @@ class MainWindow(QMainWindow):
         self.settings_summary_template_side_panels: dict[str, QFrame] = {}
         self.settings_summary_template_markdown_previews: dict[str, QPlainTextEdit] = {}
         self.settings_summary_template_prompt_previews: dict[str, QPlainTextEdit] = {}
+        self.settings_summary_template_prompt_buttons: dict[str, QPushButton] = {}
 
         layout = QVBoxLayout()
         layout.setSpacing(12)
@@ -3580,7 +3581,7 @@ class MainWindow(QMainWindow):
         rules_input.setPlaceholderText(
             "Например: писать кратко, не использовать канцелярит, явно отмечать спорные места."
         )
-        rules_input.setMinimumHeight(120)
+        rules_input.setFixedHeight(64)
         self.settings_summary_template_rules_inputs[kind] = rules_input
         rules_layout.addWidget(rules_hint)
         rules_layout.addWidget(rules_input)
@@ -3595,7 +3596,7 @@ class MainWindow(QMainWindow):
 
         markdown_preview = QPlainTextEdit()
         markdown_preview.setReadOnly(True)
-        markdown_preview.setMinimumHeight(160)
+        markdown_preview.setFixedHeight(82)
         self.settings_summary_template_markdown_previews[kind] = markdown_preview
         panel_layout.addWidget(
             self._create_settings_inner_card(
@@ -3606,9 +3607,10 @@ class MainWindow(QMainWindow):
 
         prompt_button = QPushButton("Показать инструкцию для AI")
         prompt_button.setObjectName("headerButton")
+        self.settings_summary_template_prompt_buttons[kind] = prompt_button
         prompt_preview = QPlainTextEdit()
         prompt_preview.setReadOnly(True)
-        prompt_preview.setMinimumHeight(180)
+        prompt_preview.setFixedHeight(90)
         prompt_preview.setVisible(False)
         self.settings_summary_template_prompt_previews[kind] = prompt_preview
         prompt_button.clicked.connect(
@@ -3624,6 +3626,7 @@ class MainWindow(QMainWindow):
         panel_layout.addWidget(
             self._create_settings_inner_card("Инструкция для AI", prompt_layout)
         )
+        panel_layout.addStretch(1)
 
         return self._create_settings_inner_card("", panel_layout, object_name="settingsTemplateSidePanel")
 
