@@ -862,6 +862,8 @@ class MainWindow(QMainWindow):
         self.day_summary_day_folder: Path | None = None
         self.day_summary_thread: QThread | None = None
         self.day_summary_worker: DaySummaryPipelineWorker | None = None
+        self.pending_storage_root_path: Path | None = None
+        self.pending_runtime_settings = False
         self.recorder = recorder or (
             storage.recorder if storage else create_recorder(self.config["obs"])
         )
@@ -3294,6 +3296,7 @@ class MainWindow(QMainWindow):
         self.pipeline_worker = None
         self._start_next_pipeline()
         self._start_pending_day_summary_if_ready()
+        self.apply_pending_runtime_settings()
 
     def update_day_summary(self) -> None:
         day_folder = self.storage.get_today_day_folder()
@@ -3391,6 +3394,7 @@ class MainWindow(QMainWindow):
         self.day_summary_thread = None
         self.day_summary_worker = None
         self._start_pending_day_summary_if_ready()
+        self.apply_pending_runtime_settings()
 
     def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
         widget = self.pipeline_labels.get(step)
@@ -3641,6 +3645,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Рабочий день завершен. Итоги дня готовятся: {day_folder}")
         self._refresh_after_lifecycle_change()
         self._request_day_summary_update(day_folder, force=False)
+        self.apply_pending_runtime_settings()
 
     def open_review(self) -> None:
         self.pages.setCurrentIndex(1)
@@ -3944,7 +3949,7 @@ class MainWindow(QMainWindow):
                 f"Папка данных недоступна для записи: {storage_root_path}. {error}"
             )
             return None
-        return storage_root_text, storage_root_path
+        return str(storage_root_path), storage_root_path
 
     def save_settings(self) -> None:
         storage_root = self._validate_storage_root_from_settings()
@@ -4009,6 +4014,14 @@ class MainWindow(QMainWindow):
         storage_change_deferred = self.storage.root != storage_root_path and (
             self.storage.workday_active or self.storage.meeting_active or has_processing_work
         )
+        if storage_change_deferred:
+            self.pending_storage_root_path = storage_root_path
+        if has_processing_work:
+            self.pending_runtime_settings = True
+            if not storage_change_deferred:
+                self.pending_storage_root_path = None
+        else:
+            self.pending_runtime_settings = False
         if has_processing_work:
             storage_message = (
                 " Папка данных применится после завершения рабочего дня и текущей обработки."
@@ -4033,11 +4046,41 @@ class MainWindow(QMainWindow):
         if self.storage.root != storage_root_path:
             self.storage.root = storage_root_path
             self.storage.load_today_state()
+        self.pending_storage_root_path = None
         self.settings_status_label.setText(
             "Настройки сохранены. Тема интерфейса применена сразу. "
             "Следующие встречи будут использовать обновленные настройки."
         )
         self._refresh_after_lifecycle_change()
+
+    def apply_pending_runtime_settings(self) -> None:
+        applied = False
+        if self.pending_runtime_settings and not self._has_processing_work():
+            self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+            self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+            self.pending_runtime_settings = False
+            applied = True
+        if (
+            self.pending_storage_root_path is not None
+            and not self.storage.workday_active
+            and not self.storage.meeting_active
+            and not self._has_processing_work()
+        ):
+            self.storage.root = self.pending_storage_root_path
+            self.storage.load_today_state()
+            self.pending_storage_root_path = None
+            applied = True
+        if applied:
+            self.status_label.setText("Отложенные настройки применены.")
+            if hasattr(self, "settings_status_label"):
+                current_settings_message = self.settings_status_label.text().strip()
+                if current_settings_message:
+                    self.settings_status_label.setText(
+                        f"{current_settings_message} Отложенные настройки применены."
+                    )
+                else:
+                    self.settings_status_label.setText("Отложенные настройки применены.")
+            self._refresh_after_lifecycle_change()
 
     def open_day_folder(self) -> None:
         day_folder = self.storage.get_today_day_folder()

@@ -1040,6 +1040,28 @@ def test_settings_screen_rejects_storage_root_that_points_to_file(
     app.processEvents()
 
 
+def test_settings_screen_saves_expanded_storage_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    expected_root = tmp_path / "home" / "MeetingSummaries"
+
+    window.settings_storage_root_input.setText("~/MeetingSummaries")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == str(expected_root)
+    assert expected_root.is_dir()
+    assert window.storage.root == expected_root
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_saves_storage_root_but_keeps_active_day_root(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1047,7 +1069,8 @@ def test_settings_screen_saves_storage_root_but_keeps_active_day_root(
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path / "data", recorder)
-    storage.start_workday(started_at=datetime(2026, 6, 7, 9, 0, 0))
+    started_at = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+    storage.start_workday(started_at=started_at)
     old_root = storage.root
     window = MainWindow(storage, recorder)
     new_root = tmp_path / "new-data"
@@ -1060,6 +1083,10 @@ def test_settings_screen_saves_storage_root_but_keeps_active_day_root(
     assert config["storage"]["root"] == str(new_root)
     assert new_root.is_dir()
     assert window.storage.root == old_root
+    window._request_day_summary_update = lambda day_folder, force=False: None
+    window.end_workday()
+
+    assert window.storage.root == new_root
     assert "после завершения рабочего дня" in window.settings_status_label.text()
 
     window.close()
