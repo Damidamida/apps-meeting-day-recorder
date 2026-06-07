@@ -231,8 +231,11 @@ def test_main_window_shows_disabled_obs_status_and_local_workflow(tmp_path: Path
 
     with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
         window.check_readiness()
-    assert "Генерация итогов выключена" in window.readiness_labels["Summary"].text()
-    assert "API key не требуется" in window.readiness_labels["API key"].text()
+    assert (
+        window.readiness_detail_values["Итоги встречи"]["Генерация"].text()
+        == "Выключена настройками"
+    )
+    assert window.readiness_detail_values["Итоги встречи"]["API key"].text() == "Не требуется"
     assert window.pipeline_labels == {}
 
     window.start_workday()
@@ -300,17 +303,21 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert isinstance(window.pages.widget(0), QScrollArea)
     assert window.pages.widget(0).widgetResizable()
     assert set(window.readiness_badges) == {
-        "OBS",
-        "FFmpeg",
-        "Whisper",
-        "Summary",
-        "API key",
-        "Summary endpoint",
+        "Запись разговора (OBS)",
+        "Извлечение аудио (FFmpeg)",
+        "Транскрипция",
+        "Итоги встречи",
     }
-    assert window.readiness_badges["OBS"].text() == "Не проверено"
-    assert window.readiness_tiles["OBS"].minimumHeight() >= 82
-    assert window.readiness_tiles["OBS"].minimumWidth() >= 300
-    assert window.readiness_labels["OBS"].wordWrap()
+    assert window.readiness_badges["Запись разговора (OBS)"].text() == "Не проверено"
+    assert window.readiness_tiles["Запись разговора (OBS)"].minimumHeight() >= 150
+    assert window.readiness_tiles["Запись разговора (OBS)"].minimumWidth() >= 300
+    assert set(window.readiness_detail_values["Транскрипция"]) == {
+        "Backend",
+        "Модель",
+        "Доступ",
+        "Данные",
+    }
+    assert window.readiness_detail_values["Транскрипция"]["Backend"].text() == "Не проверено"
     assert window.check_readiness_button.text() == "Проверить готовность"
     assert window.check_readiness_button.objectName() == "headerPrimaryButton"
     assert window.check_readiness_button.height() <= 34
@@ -1452,6 +1459,8 @@ def test_settings_screen_keeps_separate_transcription_backend_profiles(tmp_path:
     recorder = NoopRecorder()
     storage = StorageService(tmp_path / "data", recorder)
     window = MainWindow(storage, recorder)
+    initial_whisper_cli_model = window.settings_transcription_profiles["whisper_cli"]["model"]
+    initial_faster_whisper_model = window.settings_transcription_profiles["faster_whisper"]["model"]
 
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
     window._set_combo_value(window.settings_transcription_model_select, "whisper-1")
@@ -1459,12 +1468,12 @@ def test_settings_screen_keeps_separate_transcription_backend_profiles(tmp_path:
 
     window.settings_transcription_backend_select.setCurrentText("whisper_cli")
     app.processEvents()
-    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    assert window._combo_value(window.settings_transcription_model_select) == initial_whisper_cli_model
     window._set_combo_value(window.settings_transcription_model_select, "small")
 
     window.settings_transcription_backend_select.setCurrentText("faster_whisper")
     app.processEvents()
-    assert window._combo_value(window.settings_transcription_model_select) == "base"
+    assert window._combo_value(window.settings_transcription_model_select) == initial_faster_whisper_model
     window._set_combo_value(window.settings_transcription_model_select, "medium")
 
     window.settings_transcription_backend_select.setCurrentText("aitunnel")
@@ -1625,6 +1634,35 @@ def test_dark_theme_styles_scroll_page_surfaces_and_form_labels(tmp_path: Path) 
     assert "QWidget#pageSurface" in window.styleSheet()
     assert "QWidget#scrollViewport" in window.styleSheet()
     assert "QLabel {" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window._render_readiness_details(
+        "Транскрипция",
+        [
+            {"label": "Backend", "value": "AI Tunnel STT"},
+            {"label": "Модель", "value": "Whisper Large V3 Turbo"},
+            {"label": "Проблема", "value": "API key не найден", "state": "error"},
+            {"label": "Что сделать", "value": "Проверьте .env файл", "state": "error"},
+        ],
+    )
+    error_label = window.readiness_detail_values["Транскрипция"]["Проблема"]
+
+    assert error_label.property("readiness_state") == "error"
+
+    window.config["ui"]["theme"] = "dark"
+    window._apply_theme_settings()
+
+    assert error_label.property("readiness_state") == "error"
+    assert "font-weight: 700" in error_label.styleSheet()
 
     window.close()
     app.processEvents()
