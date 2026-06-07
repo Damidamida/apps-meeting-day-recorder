@@ -2067,6 +2067,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _meeting_needs_attention(metadata: dict[str, object]) -> bool:
+        if metadata.get("processing_status") == "failed":
+            return True
         if metadata.get("transcription_quality") == "suspect":
             return True
         if str(metadata.get("audio_status") or "") in {
@@ -3270,7 +3272,7 @@ class MainWindow(QMainWindow):
         if self._is_workday_pipeline_visible(failed_meeting_folder):
             self._set_pipeline_step("done", "Ошибка", message, "error")
         self.status_label.setText(f"Фоновая обработка встречи не выполнена: {message}")
-        self.refresh_buttons()
+        self._refresh_after_lifecycle_change()
         if hasattr(self, "floating_control") and self.floating_control.isVisible():
             self.floating_control.show_error("Ошибка фоновой обработки. Откройте приложение для деталей.")
 

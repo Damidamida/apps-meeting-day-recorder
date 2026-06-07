@@ -212,6 +212,40 @@ def test_process_meeting_pipeline_updates_existing_day_meeting_entry(tmp_path) -
     assert day_metadata["meetings"] == [{"folder": meeting_folder.name, **metadata}]
 
 
+def test_process_meeting_pipeline_marks_failed_on_unhandled_exception(tmp_path) -> None:
+    class FailingAudioExtractor:
+        def extract_audio(self, recording_path, meeting_folder):
+            del recording_path, meeting_folder
+            raise RuntimeError("FFmpeg crashed")
+
+    storage = StorageService(tmp_path, audio_extractor=FailingAudioExtractor())
+    day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
+    meeting_folder = storage.start_meeting("Pipeline failure", datetime(2026, 6, 1, 9, 0))
+    storage.finish_active_meeting_recording(datetime(2026, 6, 1, 9, 30))
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    metadata.update(
+        {
+            "recording_status": "stopped",
+            "recording_path": str(meeting_folder / "recording.mkv"),
+        }
+    )
+    storage.write_metadata(meeting_folder, metadata)
+    storage._sync_day_meeting_metadata(meeting_folder, metadata)
+
+    with pytest.raises(RuntimeError, match="FFmpeg crashed"):
+        storage.process_meeting_pipeline(meeting_folder)
+
+    failed_metadata = storage.read_meeting_metadata(meeting_folder)
+    day_metadata = json.loads((day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    day_entry = next(meeting for meeting in day_metadata["meetings"] if meeting["folder"] == meeting_folder.name)
+    assert failed_metadata["processing_status"] == "failed"
+    assert failed_metadata["processing_error"] == "FFmpeg crashed"
+    assert "processing_failed_at" in failed_metadata
+    assert day_entry["processing_status"] == "failed"
+    assert day_entry["processing_error"] == "FFmpeg crashed"
+    assert not storage.has_unfinished_meeting_processing(day_folder)
+
+
 def test_running_meeting_is_marked_for_recovery_after_restart(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.start_workday(datetime(2026, 6, 1, 8, 30))
@@ -1093,6 +1127,45 @@ def test_day_summary_does_not_use_suspect_transcript_summary(tmp_path) -> None:
             "summary_missing": True,
         }
     ]
+
+
+def test_day_summary_metadata_is_recreated_after_corruption(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    metadata_path = storage.day_summary_metadata_path(day_folder)
+    metadata_path.write_text('{"day_summary_status": "running",', encoding="utf-8")
+
+    metadata = storage.read_day_summary_metadata(day_folder)
+
+    assert metadata["kind"] == "day_summary"
+    assert metadata["title"] == "Итоги дня"
+    assert metadata["day_folder"] == "2026-06-01"
+    assert metadata["day_summary_status"] == "pending"
+    assert metadata["included_meetings"] == []
+    assert metadata["pipeline"] == storage._default_day_summary_pipeline()
+    assert "__auto_healed" not in metadata
+    assert list(day_folder.glob("00_day_summary_metadata.corrupt-*.json"))
+
+
+def test_day_summary_skips_auto_healed_meeting_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 1))
+    good_meeting = storage.create_meeting_folder(
+        "Обычная встреча",
+        datetime(2026, 6, 1, 10, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+    storage.save_meeting_summary_draft(good_meeting, "# Итоги встречи\n\nГотовый summary.\n")
+    broken_meeting = storage.create_meeting_folder(
+        "Поврежденная встреча",
+        datetime(2026, 6, 1, 11, 0),
+        {"status": "ended", "processing_status": "completed"},
+    )
+    storage.write_metadata(broken_meeting, storage._auto_healed_metadata())
+
+    items = storage.collect_day_meeting_summaries(day_folder)
+
+    assert [item["folder"] for item in items] == [good_meeting.name]
 
 
 def test_day_summary_waits_for_unfinished_meeting_processing(tmp_path) -> None:
