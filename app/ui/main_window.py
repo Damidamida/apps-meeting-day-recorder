@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from app.config import DEFAULT_CONFIG, load_config
 from app.services.readiness import check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
-from app.services.storage import StorageService
+from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import create_summarizer
 from app.services.transcription import create_transcriber
 
@@ -3104,13 +3104,37 @@ class MainWindow(QMainWindow):
             self._start_next_pipeline()
 
     def _restore_today_pending_processing_queue(self) -> None:
+        """
+        Restore any pending or interrupted meeting processing for today by recovering interrupted pipelines and enqueuing meetings whose metadata indicates processing is still pending.
+        
+        This method:
+        - Attempts to recover interrupted meeting processing for today's day folder; if metadata corruption is detected, updates the status label with the backup path.
+        - Scans today's meeting folders and enqueues any meeting whose metadata has `"status": "ended"` and `"processing_status": "pending"`, skipping the meeting currently being processed and those already in the processing queue; metadata read errors update the status label and cause that meeting to be skipped.
+        - If any meetings were recovered or restored, updates the status label with a summary message and starts the next pipeline.
+        """
         restored = 0
+        recovered = 0
+        recovery_messages: list[str] = []
+        day_folder = self.storage.get_today_day_folder()
+        if day_folder is not None:
+            try:
+                recovered = len(self.storage.recover_interrupted_meeting_processing(day_folder))
+            except MetadataReadError as error:
+                recovery_messages.append(
+                    f"Metadata поврежден и сохранен в backup: {error.backup_path}"
+                )
         for meeting_folder in self.storage.list_today_meeting_folders():
             if meeting_folder == self.pipeline_meeting_folder:
                 continue
             if meeting_folder in self.processing_queue:
                 continue
-            metadata = self.storage.read_meeting_metadata(meeting_folder)
+            try:
+                metadata = self.storage.read_meeting_metadata(meeting_folder)
+            except MetadataReadError as error:
+                recovery_messages.append(
+                    f"Metadata встречи поврежден и сохранен в backup: {error.backup_path}"
+                )
+                continue
             if (
                 metadata.get("status") == "ended"
                 and metadata.get("processing_status") == "pending"
@@ -3118,12 +3142,26 @@ class MainWindow(QMainWindow):
                 self.processing_queue.append(meeting_folder)
                 restored += 1
         if restored:
-            self.status_label.setText(
-                f"Восстановлена очередь обработки встреч: {restored}."
-            )
+            if recovered:
+                recovery_messages.insert(
+                    0,
+                    f"Восстановлена обработка встреч после перезапуска: {recovered}."
+                )
+            else:
+                recovery_messages.insert(
+                    0,
+                    f"Восстановлена очередь обработки встреч: {restored}."
+                )
             self._start_next_pipeline()
+        if recovery_messages:
+            self.status_label.setText(" ".join(recovery_messages))
 
     def _start_next_pipeline(self) -> None:
+        """
+        Start background processing for the next meeting in the processing queue.
+        
+        If a pipeline is already running, a thread exists, or the processing queue is empty, this does nothing. Otherwise it sets the selected meeting as the active pipeline, updates internal state and visible status text, and launches a background worker in a new thread to perform the meeting processing. Progress, completion, and failure are reported via the worker's signals and handled by the instance's pipeline callbacks.
+        """
         if self.pipeline_running or self.pipeline_thread is not None or not self.processing_queue:
             return
         self.pipeline_meeting_folder = self.processing_queue.pop(0)
