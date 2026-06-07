@@ -71,7 +71,7 @@ def test_readiness_returns_user_facing_cards_with_structured_details(
     transcription = _by_component(statuses)["Транскрипция"]
     assert transcription["state"] == "ok"
     assert transcription["details"] == [
-        {"label": "Backend", "value": "AI Tunnel STT", "state": "neutral"},
+        {"label": "Режим", "value": "AI Tunnel STT", "state": "neutral"},
         {"label": "Модель", "value": "Whisper Large V3 Turbo", "state": "neutral"},
         {"label": "Доступ", "value": "API key найден", "state": "neutral"},
         {

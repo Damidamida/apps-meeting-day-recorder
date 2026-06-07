@@ -36,7 +36,7 @@ from app.config import DEFAULT_CONFIG, load_config
 from app.services.readiness import READINESS_CARDS, check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
-from app.services.summarization import create_summarizer
+from app.services.summarization import build_summary_system_prompt, create_summarizer
 from app.services.transcription import create_transcriber
 
 
@@ -1009,7 +1009,7 @@ class MainWindow(QMainWindow):
     ]
     DAY_SUMMARY_PIPELINE_STEPS = [
         ("collect", "Сбор итогов встреч", "1"),
-        ("check", "Проверка summary", "2"),
+        ("check", "Проверка итогов встреч", "2"),
         ("generate", "Генерация итогов дня", "Σ"),
         ("links", "Ссылки на транскрипты", "T"),
     ]
@@ -2125,7 +2125,7 @@ class MainWindow(QMainWindow):
             card_layout.addLayout(actions_layout)
 
             pipeline_hint = QLabel(
-                "Pipeline итогов дня: сбор summary встреч, генерация выжимки и ссылки на transcript."
+                "Pipeline итогов дня: сбор итогов встреч, генерация выжимки и ссылки на transcript."
             )
             pipeline_hint.setObjectName("sectionHint")
             pipeline_hint.setWordWrap(True)
@@ -2484,10 +2484,10 @@ class MainWindow(QMainWindow):
                 if isinstance(item, dict) and item.get("summary_missing")
             ] if isinstance(included, list) else []
             if state == "ok":
-                return "Summary встреч проверены."
+                return "Итоги встреч проверены."
             if missing:
-                return f"Есть встречи без summary: {len(missing)}."
-            return "Проверка summary еще не выполнялась."
+                return f"Есть встречи без итогов: {len(missing)}."
+            return "Проверка итогов встреч еще не выполнялась."
         if step == "generate":
             if metadata.get("day_summary_error"):
                 return str(metadata["day_summary_error"])
@@ -2997,9 +2997,9 @@ class MainWindow(QMainWindow):
         )
         ui_layout.addWidget(
             self._create_settings_field_row(
-                "Тема floating control:",
+                "Тема плавающей кнопки:",
                 self.settings_floating_theme_select,
-                "Тема основного окна и floating control применяется сразу после сохранения.",
+                "Тема основного окна и плавающей кнопки применяется сразу после сохранения.",
             )
         )
         layout.addWidget(self._create_card("Интерфейс", ui_layout))
@@ -3025,14 +3025,14 @@ class MainWindow(QMainWindow):
         self.settings_obs_password_input = QLineEdit(str(self.config["obs"]["websocket_password"]))
         self.settings_obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         obs_layout.addWidget(
-            self._create_settings_field_row("WebSocket host:", self.settings_obs_host_input)
+            self._create_settings_field_row("Адрес WebSocket:", self.settings_obs_host_input)
         )
         obs_layout.addWidget(
-            self._create_settings_field_row("WebSocket port:", self.settings_obs_port_input)
+            self._create_settings_field_row("Порт WebSocket:", self.settings_obs_port_input)
         )
         obs_layout.addWidget(
             self._create_settings_field_row(
-                "WebSocket password:",
+                "Пароль WebSocket:",
                 self.settings_obs_password_input,
                 "OBS обязателен для записи разговора. Путь записи настраивается в самом OBS; приложение сохраняет путь, если OBS возвращает его после остановки записи.",
             )
@@ -3086,7 +3086,7 @@ class MainWindow(QMainWindow):
         )
         transcription_hint.setObjectName("sectionHint")
         transcription_hint.setWordWrap(True)
-        transcription_layout.addRow("Backend:", self.settings_transcription_backend_select)
+        transcription_layout.addRow("Способ транскрипции:", self.settings_transcription_backend_select)
         self._add_transcription_settings_row(
             transcription_layout,
             "Модель:",
@@ -3177,7 +3177,7 @@ class MainWindow(QMainWindow):
             200000,
         )
         summary_hint = QLabel(
-            "Summary использует AI Tunnel. API key берется из блока `Секреты` "
+            "Итоги используют AI Tunnel. API key берется из блока `Секреты` "
             "и переменной AITUNNEL_KEY."
         )
         summary_hint.setObjectName("sectionHint")
@@ -3427,6 +3427,7 @@ class MainWindow(QMainWindow):
         self.settings_summary_template_markdown_previews: dict[str, QPlainTextEdit] = {}
         self.settings_summary_template_prompt_previews: dict[str, QPlainTextEdit] = {}
         self.settings_summary_template_prompt_buttons: dict[str, QPushButton] = {}
+        self.settings_summary_template_prompt_cards: dict[str, QFrame] = {}
 
         layout = QVBoxLayout()
         layout.setSpacing(12)
@@ -3624,6 +3625,9 @@ class MainWindow(QMainWindow):
         prompt_layout.addWidget(prompt_button, 0, Qt.AlignmentFlag.AlignLeft)
         prompt_layout.addWidget(prompt_preview)
         prompt_card = self._create_settings_inner_card("Инструкция для AI", prompt_layout)
+        prompt_card.setMinimumHeight(96)
+        prompt_card.setMaximumHeight(110)
+        self.settings_summary_template_prompt_cards[kind] = prompt_card
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setObjectName("settingsSummaryTemplateRightSplitter")
@@ -3631,7 +3635,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(rules_card)
         splitter.addWidget(markdown_card)
         splitter.addWidget(prompt_card)
-        splitter.setSizes([150, 135, 150])
+        splitter.setSizes([170, 150, 100])
         self.settings_summary_template_right_splitters[kind] = splitter
         panel_layout.addWidget(splitter)
 
@@ -3751,8 +3755,18 @@ class MainWindow(QMainWindow):
 
     def _toggle_summary_prompt_preview(self, kind: str, button: QPushButton) -> None:
         preview = self.settings_summary_template_prompt_previews[kind]
+        card = self.settings_summary_template_prompt_cards[kind]
+        splitter = self.settings_summary_template_right_splitters[kind]
         visible = not preview.isVisible()
         preview.setVisible(visible)
+        if visible:
+            card.setMinimumHeight(190)
+            card.setMaximumHeight(16777215)
+            splitter.setSizes([150, 130, 210])
+        else:
+            card.setMinimumHeight(96)
+            card.setMaximumHeight(110)
+            splitter.setSizes([170, 150, 100])
         button.setText("Скрыть инструкцию для AI" if visible else "Показать инструкцию для AI")
 
     def _refresh_summary_template_previews(self, kind: str) -> None:
@@ -3785,27 +3799,7 @@ class MainWindow(QMainWindow):
 
     def _summary_template_prompt_preview(self, kind: str) -> str:
         template = self.settings_summary_templates[kind]
-        title = str(template.get("title") or "").strip() or "Итоги"
-        lines = [f"# {title}", ""]
-        for section in template.get("sections") or []:
-            if not isinstance(section, dict):
-                continue
-            section_title = str(section.get("title") or "").strip()
-            if not section_title:
-                continue
-            lines.append(f"## {section_title}")
-            instruction = str(section.get("instruction") or "").strip()
-            lines.append(
-                f"Что писать в разделе: {instruction}"
-                if instruction
-                else "Без отдельной инструкции."
-            )
-            lines.append("")
-        rules = str(template.get("rules") or "").strip()
-        if rules:
-            lines.extend(["Дополнительные правила пользователя:", rules, ""])
-        lines.append("Базовые правила приложения: русский язык, Markdown, не выдумывать факты.")
-        return "\n".join(lines).rstrip() + "\n"
+        return build_summary_system_prompt({"templates": {kind: template}}, kind)
 
     @staticmethod
     def _create_settings_inner_card(
@@ -4678,7 +4672,7 @@ class MainWindow(QMainWindow):
             self._set_day_summary_pipeline_step(step, label, default_message, state)
             if event == "day_summary_done":
                 self._set_day_summary_pipeline_step("collect", "Готово", "Итоги встреч собраны.", "ok")
-                self._set_day_summary_pipeline_step("check", "Готово", "Summary встреч проверены.", "ok")
+                self._set_day_summary_pipeline_step("check", "Готово", "Итоги встреч проверены.", "ok")
                 self._set_day_summary_pipeline_step("generate", "Готово", "00_day_summary_draft.md готов.", "ok")
         self.status_label.setText(message)
 
@@ -5294,7 +5288,6 @@ class MainWindow(QMainWindow):
         if storage_root is None:
             return
         storage_root_text, storage_root_path = storage_root
-        readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         config_path = Path("config.yaml")
         try:
             config_to_save = self._settings_config_from_ui(storage_root_text)
@@ -5309,6 +5302,7 @@ class MainWindow(QMainWindow):
             ),
             encoding="utf-8",
         )
+        readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         self.config = load_config(config_path)
         self._refresh_all_summary_template_previews()
         self._apply_theme_settings()
@@ -5353,7 +5347,7 @@ class MainWindow(QMainWindow):
                 "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
                 "websocket_port": self._settings_numeric_value(
                     self.settings_obs_port_input,
-                    "WebSocket port",
+                    "Порт WebSocket",
                 ),
                 "websocket_password": self.settings_obs_password_input.text(),
             },

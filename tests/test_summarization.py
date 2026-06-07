@@ -63,6 +63,10 @@ def test_custom_meeting_summary_template_changes_system_prompt() -> None:
                         {
                             "title": "Только решения",
                             "instruction": "Выведи только подтвержденные решения.",
+                        },
+                        {
+                            "title": "Без деталей",
+                            "instruction": "",
                         }
                     ],
                     "rules": "Не используй длинные вступления.",
@@ -75,8 +79,11 @@ def test_custom_meeting_summary_template_changes_system_prompt() -> None:
     assert "# Мой формат встречи" in prompt
     assert "## Только решения" in prompt
     assert "Выведи только подтвержденные решения." in prompt
+    assert "## Без деталей" in prompt
     assert "Не используй длинные вступления." in prompt
     assert "не выдумывай факты" in prompt
+    assert "Что писать в разделе" not in prompt
+    assert "Без отдельной инструкции" not in prompt
 
 
 def test_missing_api_key_returns_unavailable_without_printing_key(tmp_path: Path, monkeypatch) -> None:
@@ -262,7 +269,7 @@ def test_successful_day_summary_uses_meeting_summaries_only(tmp_path: Path, monk
 
     request_text = str(calls[0]["input"])
     assert "Обсудили план" in request_text
-    assert "Summary отсутствует" in request_text
+    assert "Итоги отсутствуют" in request_text
     assert "transcript" not in request_text.lower()
     assert metadata["day_summary_status"] == "draft_created"
     assert metadata["day_summary_provider"] == "openai"

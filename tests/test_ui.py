@@ -732,12 +732,12 @@ def test_workday_screen_uses_prototype_card_controls(tmp_path: Path) -> None:
     assert window.readiness_tiles["Запись разговора (OBS)"].minimumHeight() >= 150
     assert window.readiness_tiles["Запись разговора (OBS)"].minimumWidth() >= 300
     assert set(window.readiness_detail_values["Транскрипция"]) == {
-        "Backend",
+        "Режим",
         "Модель",
         "Доступ",
         "Данные",
     }
-    assert window.readiness_detail_values["Транскрипция"]["Backend"].text() == "Не проверено"
+    assert window.readiness_detail_values["Транскрипция"]["Режим"].text() == "Не проверено"
     assert window.check_readiness_button.text() == "Проверить готовность"
     assert window.check_readiness_button.objectName() == "headerPrimaryButton"
     assert window.check_readiness_button.height() <= 34
@@ -1708,6 +1708,8 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert "## Главные решения" in markdown_preview.toPlainText()
     assert "Пиши только подтвержденные решения." in prompt_preview.toPlainText()
     assert "Пиши кратко." in prompt_preview.toPlainText()
+    assert "Что писать в разделе" not in prompt_preview.toPlainText()
+    assert "Без отдельной инструкции" not in prompt_preview.toPlainText()
     assert config["ui"]["theme"] == "dark"
     assert config["ui"]["floating_theme"] == "dark"
     assert window.config["ui"]["theme"] == "dark"
@@ -2059,10 +2061,12 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     assert window.settings_summary_template_prompt_previews["meeting"].isHidden()
     markdown_preview = window.settings_summary_template_markdown_previews["meeting"]
     prompt_preview = window.settings_summary_template_prompt_previews["meeting"]
+    prompt_card = window.settings_summary_template_prompt_cards["meeting"]
     assert markdown_preview.minimumHeight() >= 120
     assert prompt_preview.minimumHeight() >= 135
     assert markdown_preview.minimumHeight() != markdown_preview.maximumHeight()
     assert prompt_preview.minimumHeight() != prompt_preview.maximumHeight()
+    assert prompt_card.maximumHeight() <= 110
     structure_panel_labels = [
         label.text()
         for label in window.settings_summary_template_structure_panels["meeting"].findChildren(QLabel)
@@ -2075,6 +2079,7 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     app.processEvents()
     assert not prompt_preview.isHidden()
     assert markdown_preview.height() == markdown_height_before
+    assert prompt_card.maximumHeight() > 110
 
     window.settings_section_buttons["Основное"].click()
 
@@ -2147,7 +2152,7 @@ def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None
     window._render_readiness_details(
         "Транскрипция",
         [
-            {"label": "Backend", "value": "AI Tunnel STT"},
+            {"label": "Режим", "value": "AI Tunnel STT"},
             {"label": "Модель", "value": "Whisper Large V3 Turbo"},
             {"label": "Проблема", "value": "API key не найден", "state": "error"},
             {"label": "Что сделать", "value": "Проверьте .env файл", "state": "error"},
