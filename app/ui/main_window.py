@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QFrame,
+    QFileDialog,
     QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
@@ -861,6 +862,8 @@ class MainWindow(QMainWindow):
         self.day_summary_day_folder: Path | None = None
         self.day_summary_thread: QThread | None = None
         self.day_summary_worker: DaySummaryPipelineWorker | None = None
+        self.pending_storage_root_path: Path | None = None
+        self.pending_runtime_settings = False
         self.recorder = recorder or (
             storage.recorder if storage else create_recorder(self.config["obs"])
         )
@@ -2541,7 +2544,21 @@ class MainWindow(QMainWindow):
         storage_layout.setHorizontalSpacing(18)
         storage_layout.setVerticalSpacing(8)
         self.settings_storage_root_input = QLineEdit(str(self.config["storage"]["root"]))
-        storage_layout.addRow("Папка данных:", self.settings_storage_root_input)
+        self.settings_storage_root_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.settings_storage_root_browse_button = QPushButton("Выбрать папку")
+        self.settings_storage_root_browse_button.setObjectName("headerButton")
+        self.settings_storage_root_browse_button.clicked.connect(
+            self.choose_storage_root_folder
+        )
+        storage_root_row = QHBoxLayout()
+        storage_root_row.setContentsMargins(0, 0, 0, 0)
+        storage_root_row.setSpacing(8)
+        storage_root_row.addWidget(self.settings_storage_root_input, 1)
+        storage_root_row.addWidget(self.settings_storage_root_browse_button)
+        storage_layout.addRow("Папка данных:", storage_root_row)
         layout.addWidget(self._create_card("Хранение", storage_layout))
 
         obs_layout = QFormLayout()
@@ -3281,6 +3298,7 @@ class MainWindow(QMainWindow):
         self.pipeline_worker = None
         self._start_next_pipeline()
         self._start_pending_day_summary_if_ready()
+        self.apply_pending_runtime_settings()
 
     def update_day_summary(self) -> None:
         day_folder = self.storage.get_today_day_folder()
@@ -3378,6 +3396,7 @@ class MainWindow(QMainWindow):
         self.day_summary_thread = None
         self.day_summary_worker = None
         self._start_pending_day_summary_if_ready()
+        self.apply_pending_runtime_settings()
 
     def _set_pipeline_step(self, step: str, label: str, message: str, state: str) -> None:
         widget = self.pipeline_labels.get(step)
@@ -3628,6 +3647,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Рабочий день завершен. Итоги дня готовятся: {day_folder}")
         self._refresh_after_lifecycle_change()
         self._request_day_summary_update(day_folder, force=False)
+        self.apply_pending_runtime_settings()
 
     def open_review(self) -> None:
         self.pages.setCurrentIndex(1)
@@ -3898,9 +3918,48 @@ class MainWindow(QMainWindow):
     def save_final_summaries(self) -> None:
         self.save_final_files()
 
+    def choose_storage_root_folder(self) -> None:
+        current_text = self.settings_storage_root_input.text().strip()
+        start_dir = current_text or str(Path.cwd())
+        selected_folder = QFileDialog.getExistingDirectory(
+            self,
+            "Выберите папку данных",
+            start_dir,
+        )
+        if not selected_folder:
+            return
+        self.settings_storage_root_input.setText(selected_folder)
+        self.settings_status_label.setText(f"Выбрана папка данных: {selected_folder}")
+
+    def _validate_storage_root_from_settings(self) -> tuple[str, Path] | None:
+        storage_root_text = (
+            self.settings_storage_root_input.text().strip() or "MeetingSummaries"
+        )
+        storage_root_path = Path(storage_root_text).expanduser()
+        try:
+            if storage_root_path.exists() and not storage_root_path.is_dir():
+                self.settings_status_label.setText(
+                    f"Папка данных не сохранена: путь указывает на файл: {storage_root_path}"
+                )
+                return None
+            storage_root_path.mkdir(parents=True, exist_ok=True)
+            write_test_path = storage_root_path / ".meeting_day_recorder_write_test"
+            write_test_path.write_text("ok", encoding="utf-8")
+            write_test_path.unlink(missing_ok=True)
+        except OSError as error:
+            self.settings_status_label.setText(
+                f"Папка данных недоступна для записи: {storage_root_path}. {error}"
+            )
+            return None
+        return str(storage_root_path), storage_root_path
+
     def save_settings(self) -> None:
+        storage_root = self._validate_storage_root_from_settings()
+        if storage_root is None:
+            return
+        storage_root_text, storage_root_path = storage_root
         config_path = Path("config.yaml")
-        config_to_save = self._settings_config_from_ui()
+        config_to_save = self._settings_config_from_ui(storage_root_text)
         config_path.write_text(
             yaml.safe_dump(
                 config_to_save,
@@ -3911,16 +3970,18 @@ class MainWindow(QMainWindow):
         )
         self.config = load_config(config_path)
         self._apply_theme_settings()
-        self._apply_runtime_settings_after_save()
+        self._apply_runtime_settings_after_save(storage_root_path)
 
-    def _settings_config_from_ui(self) -> dict[str, object]:
+    def _settings_config_from_ui(self, storage_root: str | None = None) -> dict[str, object]:
         if hasattr(self, "settings_current_transcription_backend"):
             self._save_current_transcription_profile(
                 self.settings_current_transcription_backend
             )
         return {
             "storage": {
-                "root": self.settings_storage_root_input.text().strip() or "MeetingSummaries",
+                "root": storage_root
+                if storage_root is not None
+                else self.settings_storage_root_input.text().strip() or "MeetingSummaries",
             },
             "obs": {
                 "websocket_host": self.settings_obs_host_input.text().strip() or "localhost",
@@ -3950,20 +4011,77 @@ class MainWindow(QMainWindow):
             },
         }
 
-    def _apply_runtime_settings_after_save(self) -> None:
-        if self._has_processing_work():
+    def _apply_runtime_settings_after_save(self, storage_root_path: Path) -> None:
+        has_processing_work = self._has_processing_work()
+        storage_change_deferred = self.storage.root != storage_root_path and (
+            self.storage.workday_active or self.storage.meeting_active or has_processing_work
+        )
+        self.pending_storage_root_path = (
+            storage_root_path if storage_change_deferred else None
+        )
+        if has_processing_work:
+            self.pending_runtime_settings = True
+        else:
+            self.pending_runtime_settings = False
+        if has_processing_work:
+            storage_message = (
+                " Папка данных применится после завершения рабочего дня и текущей обработки."
+                if storage_change_deferred
+                else ""
+            )
             self.settings_status_label.setText(
                 "Настройки сохранены. Тема интерфейса применена сразу. "
                 "Текущая обработка завершится со старой конфигурацией, "
-                "следующие встречи будут использовать обновленные настройки."
+                f"следующие встречи будут использовать обновленные настройки.{storage_message}"
             )
             return
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        if storage_change_deferred:
+            self.settings_status_label.setText(
+                "Настройки сохранены. Тема интерфейса применена сразу. "
+                "Папка данных применится после завершения рабочего дня. "
+                "Остальные настройки будут использоваться для следующих встреч."
+            )
+            return
+        if self.storage.root != storage_root_path:
+            self.storage.root = storage_root_path
+            self.storage.load_today_state()
+        self.pending_storage_root_path = None
         self.settings_status_label.setText(
             "Настройки сохранены. Тема интерфейса применена сразу. "
             "Следующие встречи будут использовать обновленные настройки."
         )
+        self._refresh_after_lifecycle_change()
+
+    def apply_pending_runtime_settings(self) -> None:
+        applied = False
+        if self.pending_runtime_settings and not self._has_processing_work():
+            self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+            self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+            self.pending_runtime_settings = False
+            applied = True
+        if (
+            self.pending_storage_root_path is not None
+            and not self.storage.workday_active
+            and not self.storage.meeting_active
+            and not self._has_processing_work()
+        ):
+            self.storage.root = self.pending_storage_root_path
+            self.storage.load_today_state()
+            self.pending_storage_root_path = None
+            applied = True
+        if applied:
+            self.status_label.setText("Отложенные настройки применены.")
+            if hasattr(self, "settings_status_label"):
+                current_settings_message = self.settings_status_label.text().strip()
+                if current_settings_message:
+                    self.settings_status_label.setText(
+                        f"{current_settings_message} Отложенные настройки применены."
+                    )
+                else:
+                    self.settings_status_label.setText("Отложенные настройки применены.")
+            self._refresh_after_lifecycle_change()
 
     def open_day_folder(self) -> None:
         day_folder = self.storage.get_today_day_folder()

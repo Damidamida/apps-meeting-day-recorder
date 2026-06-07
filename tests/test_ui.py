@@ -15,6 +15,7 @@ from app.services.recorder import NoopRecorder
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
+from app.ui import main_window as main_window_module
 from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
 
 
@@ -931,7 +932,8 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     storage = StorageService(tmp_path / "data", recorder)
     window = MainWindow(storage, recorder)
 
-    window.settings_storage_root_input.setText("MeetingSummariesCustom")
+    custom_storage_root = tmp_path / "MeetingSummariesCustom"
+    window.settings_storage_root_input.setText(str(custom_storage_root))
     assert not hasattr(window, "settings_obs_enabled_checkbox")
     window.settings_obs_host_input.setText("127.0.0.1")
     window.settings_obs_port_input.setValue(4456)
@@ -956,7 +958,9 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     window.save_settings()
 
     config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
-    assert config["storage"]["root"] == "MeetingSummariesCustom"
+    assert config["storage"]["root"] == str(custom_storage_root)
+    assert custom_storage_root.is_dir()
+    assert window.storage.root == custom_storage_root
     assert "enabled" not in config["obs"]
     assert config["obs"]["websocket_host"] == "127.0.0.1"
     assert config["obs"]["websocket_port"] == 4456
@@ -991,6 +995,141 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     assert "Настройки сохранены" in window.settings_status_label.text()
     assert "следующие встречи" in window.settings_status_label.text().lower()
     assert isinstance(window.storage.transcriber, AITunnelTranscriber)
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_selects_storage_folder_with_windows_dialog(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    selected_folder = tmp_path / "selected-data"
+    selected_folder.mkdir()
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: str(selected_folder),
+    )
+
+    window.settings_storage_root_browse_button.click()
+
+    assert window.settings_storage_root_input.text() == str(selected_folder)
+    assert str(selected_folder) in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_rejects_storage_root_that_points_to_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    file_path = tmp_path / "not-a-folder"
+    file_path.write_text("content", encoding="utf-8")
+
+    window.settings_storage_root_input.setText(str(file_path))
+
+    window.save_settings()
+
+    assert not (tmp_path / "config.yaml").exists()
+    assert "указывает на файл" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_saves_expanded_storage_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    expected_root = tmp_path / "home" / "MeetingSummaries"
+
+    window.settings_storage_root_input.setText("~/MeetingSummaries")
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == str(expected_root)
+    assert expected_root.is_dir()
+    assert window.storage.root == expected_root
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_saves_storage_root_but_keeps_active_day_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    started_at = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+    storage.start_workday(started_at=started_at)
+    old_root = storage.root
+    window = MainWindow(storage, recorder)
+    new_root = tmp_path / "new-data"
+
+    window.settings_storage_root_input.setText(str(new_root))
+
+    window.save_settings()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == str(new_root)
+    assert new_root.is_dir()
+    assert window.storage.root == old_root
+    window._request_day_summary_update = lambda day_folder, force=False: None
+    window.end_workday()
+
+    assert window.storage.root == new_root
+    assert "после завершения рабочего дня" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_clears_deferred_storage_root_when_reverted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    started_at = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+    storage.start_workday(started_at=started_at)
+    old_root = storage.root
+    window = MainWindow(storage, recorder)
+    new_root = tmp_path / "new-data"
+
+    window.settings_storage_root_input.setText(str(new_root))
+    window.save_settings()
+
+    assert window.storage.root == old_root
+    assert window.pending_storage_root_path == new_root
+
+    window.settings_storage_root_input.setText(str(old_root))
+    window.save_settings()
+
+    assert window.storage.root == old_root
+    assert window.pending_storage_root_path is None
+    window._request_day_summary_update = lambda day_folder, force=False: None
+    window.end_workday()
+
+    assert window.storage.root == old_root
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == str(old_root)
 
     window.close()
     app.processEvents()
