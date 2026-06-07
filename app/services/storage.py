@@ -299,51 +299,65 @@ class StorageService:
         self.write_metadata(meeting_folder, metadata)
         self._sync_day_meeting_metadata(meeting_folder, metadata)
 
-        self._emit_pipeline(progress_callback, "audio_running", "Извлекаем audio.wav через FFmpeg.")
-        if self._audio_is_ready(metadata) and not force_reprocess:
-            self.last_audio_message = "Аудио уже извлечено."
-        else:
-            metadata.update(self._extract_audio(metadata, meeting_folder))
-        self.write_metadata(meeting_folder, metadata)
-        self._sync_day_meeting_metadata(meeting_folder, metadata)
-        self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
+        try:
+            self._emit_pipeline(progress_callback, "audio_running", "Извлекаем audio.wav через FFmpeg.")
+            if self._audio_is_ready(metadata) and not force_reprocess:
+                self.last_audio_message = "Аудио уже извлечено."
+            else:
+                metadata.update(self._extract_audio(metadata, meeting_folder))
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            self._emit_pipeline(progress_callback, "audio_done", self.last_audio_message or "")
 
-        self._emit_pipeline(
-            progress_callback,
-            "transcription_running",
-            str(getattr(self.transcriber, "running_message", "Готовим transcript.")),
-        )
-        if self._transcript_is_ready(metadata, meeting_folder) and not force_reprocess:
-            self.last_transcription_message = "Транскрипт уже готов."
-        else:
-            metadata.update(self._transcribe_audio(metadata, meeting_folder, progress_callback))
-        self.write_metadata(meeting_folder, metadata)
-        self._sync_day_meeting_metadata(meeting_folder, metadata)
-        self._emit_pipeline(
-            progress_callback,
-            "transcription_done",
-            self.last_transcription_message or "",
-        )
+            self._emit_pipeline(
+                progress_callback,
+                "transcription_running",
+                str(getattr(self.transcriber, "running_message", "Готовим transcript.")),
+            )
+            if self._transcript_is_ready(metadata, meeting_folder) and not force_reprocess:
+                self.last_transcription_message = "Транскрипт уже готов."
+            else:
+                metadata.update(self._transcribe_audio(metadata, meeting_folder, progress_callback))
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            self._emit_pipeline(
+                progress_callback,
+                "transcription_done",
+                self.last_transcription_message or "",
+            )
 
-        self._emit_pipeline(progress_callback, "summary_running", "Готовим черновик итогов.")
-        if self._summary_is_ready(metadata, meeting_folder) and not force_reprocess:
-            self.last_summary_message = "Черновик итогов уже готов."
-        else:
-            metadata.update(self._summarize_meeting(metadata, meeting_folder))
-        self.write_metadata(meeting_folder, metadata)
-        self._sync_day_meeting_metadata(meeting_folder, metadata)
-        self._emit_pipeline(progress_callback, "summary_done", self.last_summary_message or "")
-        metadata.update(
-            {
-                "processing_status": "completed",
-                "processed_at": datetime.now().isoformat(),
-            }
-        )
-        metadata.pop("processing_force_reprocess", None)
-        metadata.pop("processing_recovery_status", None)
-        self.write_metadata(meeting_folder, metadata)
-        self._sync_day_meeting_metadata(meeting_folder, metadata)
-        self._emit_pipeline(progress_callback, "meeting_done", "Обработка встречи завершена.")
+            self._emit_pipeline(progress_callback, "summary_running", "Готовим черновик итогов.")
+            if self._summary_is_ready(metadata, meeting_folder) and not force_reprocess:
+                self.last_summary_message = "Черновик итогов уже готов."
+            else:
+                metadata.update(self._summarize_meeting(metadata, meeting_folder))
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            self._emit_pipeline(progress_callback, "summary_done", self.last_summary_message or "")
+            metadata.update(
+                {
+                    "processing_status": "completed",
+                    "processed_at": datetime.now().isoformat(),
+                }
+            )
+            metadata.pop("processing_force_reprocess", None)
+            metadata.pop("processing_recovery_status", None)
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            self._emit_pipeline(progress_callback, "meeting_done", "Обработка встречи завершена.")
+        except Exception as error:
+            metadata.update(
+                {
+                    "processing_status": "failed",
+                    "processing_error": str(error),
+                    "processing_failed_at": datetime.now().isoformat(),
+                }
+            )
+            metadata.pop("processing_force_reprocess", None)
+            metadata.pop("processing_recovery_status", None)
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            raise
         return meeting_folder
 
     def mark_meeting_for_reprocessing(self, meeting_folder: Path) -> dict[str, Any]:
@@ -633,7 +647,16 @@ class StorageService:
         created_at = created_at or datetime.now()
         metadata_path = self.day_summary_metadata_path(day_folder)
         if metadata_path.exists():
-            metadata = self._read_json(metadata_path)
+            try:
+                metadata = self._read_json(metadata_path)
+            except MetadataReadError:
+                metadata = self._new_day_summary_metadata(day_folder, created_at)
+                self._write_json(metadata_path, metadata)
+                return metadata
+            if self._is_auto_healed_metadata(metadata):
+                metadata = self._new_day_summary_metadata(day_folder, created_at)
+                self._write_json(metadata_path, metadata)
+                return metadata
             metadata.setdefault("title", "Итоги дня")
             metadata.setdefault("kind", "day_summary")
             metadata.setdefault("day_folder", day_folder.name)
@@ -644,7 +667,13 @@ class StorageService:
             self._write_json(metadata_path, metadata)
             return metadata
 
-        metadata = {
+        metadata = self._new_day_summary_metadata(day_folder, created_at)
+        self._write_json(metadata_path, metadata)
+        return metadata
+
+    @staticmethod
+    def _new_day_summary_metadata(day_folder: Path, created_at: datetime) -> dict[str, Any]:
+        return {
             "kind": "day_summary",
             "title": "Итоги дня",
             "day_folder": day_folder.name,
@@ -652,10 +681,8 @@ class StorageService:
             "updated_at": created_at.isoformat(),
             "day_summary_status": "pending",
             "included_meetings": [],
-            "pipeline": self._default_day_summary_pipeline(),
+            "pipeline": StorageService._default_day_summary_pipeline(),
         }
-        self._write_json(metadata_path, metadata)
-        return metadata
 
     def process_day_summary_pipeline(
         self,
@@ -755,6 +782,8 @@ class StorageService:
         items: list[dict[str, Any]] = []
         for meeting_folder in self.list_meeting_folders(day_folder):
             metadata = self.read_meeting_metadata(meeting_folder)
+            if self._is_auto_healed_metadata(metadata):
+                continue
             source, text = self._meeting_summary_source_and_text(meeting_folder)
             items.append(
                 {
@@ -792,7 +821,13 @@ class StorageService:
     def read_day_summary_metadata(self, day_folder: Path) -> dict[str, Any]:
         metadata_path = self.day_summary_metadata_path(day_folder)
         if metadata_path.exists():
-            return self._read_json(metadata_path)
+            try:
+                metadata = self._read_json(metadata_path)
+            except MetadataReadError:
+                return self.ensure_day_summary_metadata(day_folder)
+            if self._is_auto_healed_metadata(metadata):
+                return self.ensure_day_summary_metadata(day_folder)
+            return metadata
         return self.ensure_day_summary_metadata(day_folder)
 
     def create_meeting_folder(
@@ -1027,7 +1062,7 @@ class StorageService:
         """
         Read and parse JSON from the given path, with retries and corruption recovery.
         
-        If the file contains invalid JSON, the original file is moved to a timestamped ".corrupt-..." backup, the original path is overwritten with an empty JSON object (`{}`), and a MetadataReadError referencing the original and backup paths is raised. Transient PermissionError conditions are retried a small number of times; if retries are exhausted the PermissionError is propagated.
+        If the file contains invalid JSON, the original file is moved to a timestamped ".corrupt-..." backup, the original path is overwritten with marker metadata (`{"status": "corrupted", "__auto_healed": true}`), and a MetadataReadError referencing the original and backup paths is raised. Transient PermissionError conditions are retried a small number of times; if retries are exhausted the PermissionError is propagated.
         
         Parameters:
             path (Path): Path to the JSON file to read.
