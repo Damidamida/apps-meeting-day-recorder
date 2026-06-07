@@ -2125,7 +2125,7 @@ class MainWindow(QMainWindow):
             card_layout.addLayout(actions_layout)
 
             pipeline_hint = QLabel(
-                "Pipeline итогов дня: сбор итогов встреч, генерация выжимки и ссылки на transcript."
+                "Этапы итогов дня: сбор итогов встреч, генерация выжимки и ссылки на транскрипты."
             )
             pipeline_hint.setObjectName("sectionHint")
             pipeline_hint.setWordWrap(True)
@@ -5294,14 +5294,20 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.settings_status_label.setText(f"Настройки не сохранены: {error}")
             return
-        config_path.write_text(
-            yaml.safe_dump(
-                config_to_save,
-                allow_unicode=True,
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
+        try:
+            config_path.write_text(
+                yaml.safe_dump(
+                    config_to_save,
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as error:
+            self.settings_status_label.setText(
+                f"Настройки не сохранены: не удалось записать config.yaml. {error}"
+            )
+            return
         readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         self.config = load_config(config_path)
         self._refresh_all_summary_template_previews()

@@ -1771,6 +1771,34 @@ def test_settings_screen_rejects_storage_root_that_points_to_file(
     app.processEvents()
 
 
+def test_settings_screen_handles_config_write_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    original_write_text = main_window_module.Path.write_text
+
+    def flaky_write_text(self: Path, *args, **kwargs) -> int:
+        if self.name == "config.yaml":
+            raise OSError("disk full")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(main_window_module.Path, "write_text", flaky_write_text)
+
+    window.save_settings()
+
+    assert not (tmp_path / "config.yaml").exists()
+    assert "Настройки не сохранены" in window.settings_status_label.text()
+    assert "config.yaml" in window.settings_status_label.text()
+    assert "disk full" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_saves_expanded_storage_root(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
