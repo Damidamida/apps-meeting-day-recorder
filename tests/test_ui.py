@@ -440,6 +440,13 @@ def test_meeting_badge_uses_result_status_not_ended_state(tmp_path: Path) -> Non
             "summary_status": "skipped",
         }
     ) == ("Требует внимания", "error")
+    assert window._meeting_badge(
+        {
+            "status": "ended",
+            "processing_status": "failed",
+            "processing_error": "FFmpeg crashed",
+        }
+    ) == ("Требует внимания", "error")
 
     window.close()
     app.processEvents()
@@ -1088,6 +1095,41 @@ def test_settings_screen_saves_storage_root_but_keeps_active_day_root(
 
     assert window.storage.root == new_root
     assert "после завершения рабочего дня" in window.settings_status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_screen_clears_deferred_storage_root_when_reverted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    started_at = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+    storage.start_workday(started_at=started_at)
+    old_root = storage.root
+    window = MainWindow(storage, recorder)
+    new_root = tmp_path / "new-data"
+
+    window.settings_storage_root_input.setText(str(new_root))
+    window.save_settings()
+
+    assert window.storage.root == old_root
+    assert window.pending_storage_root_path == new_root
+
+    window.settings_storage_root_input.setText(str(old_root))
+    window.save_settings()
+
+    assert window.storage.root == old_root
+    assert window.pending_storage_root_path is None
+    window._request_day_summary_update = lambda day_folder, force=False: None
+    window.end_workday()
+
+    assert window.storage.root == old_root
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == str(old_root)
 
     window.close()
     app.processEvents()

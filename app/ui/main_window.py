@@ -2070,6 +2070,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _meeting_needs_attention(metadata: dict[str, object]) -> bool:
+        if metadata.get("processing_status") == "failed":
+            return True
         if metadata.get("transcription_quality") == "suspect":
             return True
         if str(metadata.get("audio_status") or "") in {
@@ -3287,7 +3289,7 @@ class MainWindow(QMainWindow):
         if self._is_workday_pipeline_visible(failed_meeting_folder):
             self._set_pipeline_step("done", "Ошибка", message, "error")
         self.status_label.setText(f"Фоновая обработка встречи не выполнена: {message}")
-        self.refresh_buttons()
+        self._refresh_after_lifecycle_change()
         if hasattr(self, "floating_control") and self.floating_control.isVisible():
             self.floating_control.show_error("Ошибка фоновой обработки. Откройте приложение для деталей.")
 
@@ -4014,12 +4016,11 @@ class MainWindow(QMainWindow):
         storage_change_deferred = self.storage.root != storage_root_path and (
             self.storage.workday_active or self.storage.meeting_active or has_processing_work
         )
-        if storage_change_deferred:
-            self.pending_storage_root_path = storage_root_path
+        self.pending_storage_root_path = (
+            storage_root_path if storage_change_deferred else None
+        )
         if has_processing_work:
             self.pending_runtime_settings = True
-            if not storage_change_deferred:
-                self.pending_storage_root_path = None
         else:
             self.pending_runtime_settings = False
         if has_processing_work:
