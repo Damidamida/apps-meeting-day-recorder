@@ -400,6 +400,43 @@ def test_main_window_blocks_close_while_readiness_check_is_running(
     app.processEvents()
 
 
+def test_readiness_check_badge_keeps_active_style_after_theme_reapply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+
+    assert _wait_for_qt(app, started.is_set)
+
+    badge = window.readiness_badges["Запись разговора (OBS)"]
+    assert badge.text() == "Проверяется"
+    active_background = window._status_colors()["active"][0]
+
+    window._apply_theme_settings()
+
+    assert active_background in badge.styleSheet()
+
+    release.set()
+    assert _wait_for_qt(app, lambda: window.check_readiness_button.isEnabled())
+
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

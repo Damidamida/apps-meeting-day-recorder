@@ -1017,6 +1017,10 @@ class MainWindow(QMainWindow):
         self.readiness_check_request_id = 0
         self.readiness_check_thread: QThread | None = None
         self.readiness_check_worker: ReadinessCheckWorker | None = None
+        self.readiness_check_pending_result: (
+            tuple[int, list[dict[str, object]], str] | None
+        ) = None
+        self.readiness_check_pending_error: tuple[int, str] | None = None
         self.pending_storage_root_path: Path | None = None
         self.pending_runtime_settings = False
         self.recorder = recorder or (
@@ -3485,6 +3489,8 @@ class MainWindow(QMainWindow):
         self.readiness_check_worker.finished.connect(self.readiness_check_thread.quit)
         self.readiness_check_worker.failed.connect(self.readiness_check_thread.quit)
         self.readiness_check_thread.finished.connect(self._on_readiness_check_thread_finished)
+        self.readiness_check_thread.finished.connect(self.readiness_check_worker.deleteLater)
+        self.readiness_check_thread.finished.connect(self.readiness_check_thread.deleteLater)
         self.readiness_check_thread.start()
 
     def _on_readiness_check_finished(
@@ -3493,30 +3499,38 @@ class MainWindow(QMainWindow):
         statuses: list[dict[str, object]],
         recorder_status_text: str,
     ) -> None:
-        self._complete_readiness_check()
-        if request_id != self.readiness_check_request_id:
-            self._reset_readiness_cards_to_unchecked()
-            self.status_label.setText(
-                "Настройки изменились во время проверки готовности. "
-                "Запустите проверку готовности еще раз."
-            )
-            return
-        self._render_readiness_statuses(statuses, recorder_status_text)
+        self.readiness_check_pending_result = (request_id, statuses, recorder_status_text)
 
     def _on_readiness_check_failed(self, request_id: int, message: str) -> None:
-        self._complete_readiness_check()
-        if request_id != self.readiness_check_request_id:
-            self._reset_readiness_cards_to_unchecked()
-            self.status_label.setText(
-                "Настройки изменились во время проверки готовности. "
-                "Запустите проверку готовности еще раз."
-            )
-            return
-        self.status_label.setText(f"Проверка готовности не завершилась: {message}")
+        self.readiness_check_pending_error = (request_id, message)
 
     def _on_readiness_check_thread_finished(self) -> None:
-        self.readiness_check_thread = None
+        pending_result = self.readiness_check_pending_result
+        pending_error = self.readiness_check_pending_error
+        self.readiness_check_pending_result = None
+        self.readiness_check_pending_error = None
+        self._complete_readiness_check()
+        if pending_result is not None:
+            request_id, statuses, recorder_status_text = pending_result
+            if request_id != self.readiness_check_request_id:
+                self._show_stale_readiness_result_message()
+            else:
+                self._render_readiness_statuses(statuses, recorder_status_text)
+        elif pending_error is not None:
+            request_id, message = pending_error
+            if request_id != self.readiness_check_request_id:
+                self._show_stale_readiness_result_message()
+            else:
+                self.status_label.setText(f"Проверка готовности не завершилась: {message}")
         self.readiness_check_worker = None
+        self.readiness_check_thread = None
+
+    def _show_stale_readiness_result_message(self) -> None:
+        self._reset_readiness_cards_to_unchecked()
+        self.status_label.setText(
+            "Настройки изменились во время проверки готовности. "
+            "Запустите проверку готовности еще раз."
+        )
 
     def _complete_readiness_check(self) -> None:
         self.readiness_check_running = False
@@ -3979,7 +3993,13 @@ class MainWindow(QMainWindow):
         normalized = text.strip().lower()
         if normalized == "ok":
             return "ok"
-        if normalized in {"идет", "выполняется", "генерация", "обработка"}:
+        if normalized in {
+            "идет",
+            "выполняется",
+            "генерация",
+            "обработка",
+            "проверяется",
+        }:
             return "active"
         if normalized in {"пропущено", "пропущен"}:
             return "skip"
