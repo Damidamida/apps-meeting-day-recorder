@@ -135,6 +135,8 @@ def test_setup_completion_reloads_storage_state_and_restores_floating_control(
 
     window.storage.load_today_state = fake_load_today_state
     window.storage.find_past_active_workday = fake_find_past_active_workday
+    window.refresh_status = lambda: calls.append("refresh_status")
+    window.refresh_buttons = lambda: calls.append("refresh_buttons")
     window.show_floating_control = lambda: calls.append("show_floating_control")
 
     setup = default_setup_config()
@@ -156,6 +158,8 @@ def test_setup_completion_reloads_storage_state_and_restores_floating_control(
     assert calls == [
         "load_today_state",
         "find_past_active_workday",
+        "refresh_status",
+        "refresh_buttons",
         "show_floating_control",
     ]
 

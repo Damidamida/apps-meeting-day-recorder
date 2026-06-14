@@ -1532,6 +1532,8 @@ class MainWindow(QMainWindow):
         self.past_workday_folder = self.storage.find_past_active_workday()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        self.refresh_status()
+        self.refresh_buttons()
         self._refresh_navigation_state(self.pages.currentIndex())
         self.pages.setCurrentIndex(0)
         self.show_floating_control()
