@@ -94,6 +94,28 @@ def _meeting_start_readiness_statuses(
     ]
 
 
+def _create_reprocessable_meeting(
+    storage: StorageService,
+    tmp_path: Path,
+    title: str = "Готовая встреча",
+) -> Path:
+    recording_path = tmp_path / f"{title}.mkv"
+    recording_path.write_bytes(b"fake recording")
+    return storage.create_meeting_folder(
+        title,
+        started_at=datetime.now().replace(hour=10, minute=0, second=0, microsecond=0),
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "stopped",
+            "recording_path": str(recording_path),
+            "audio_status": "extracted",
+            "transcription_status": "completed",
+            "summary_status": "draft_created",
+        },
+    )
+
+
 def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = StartMeetingOverlay(NoopRecorder())
@@ -1252,6 +1274,111 @@ def test_reprocess_button_is_visible_for_attention_and_ready_results_with_record
     app.processEvents()
 
 
+def test_reprocess_meeting_cancel_does_not_mark_or_enqueue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = _create_reprocessable_meeting(storage, tmp_path)
+    window = MainWindow(storage, recorder)
+    prompts: list[tuple[str, str, str]] = []
+    marked: list[Path] = []
+    enqueued: list[Path] = []
+    before_metadata = storage.read_meeting_metadata(meeting_folder)
+
+    def reject_prompt(title: str, text: str, confirm_button_text: str) -> bool:
+        prompts.append((title, text, confirm_button_text))
+        return False
+
+    monkeypatch.setattr(window, "_confirm_risky_action", reject_prompt)
+    monkeypatch.setattr(storage, "mark_meeting_for_reprocessing", marked.append)
+    monkeypatch.setattr(window, "_enqueue_meeting_processing", enqueued.append)
+
+    window.reprocess_meeting(meeting_folder)
+
+    assert prompts == [
+        (
+            "Повторить обработку встречи?",
+            "Если вы вручную меняли Итог встречи, новая обработка заменит ваши изменения.",
+            "Повторить обработку",
+        )
+    ]
+    assert marked == []
+    assert enqueued == []
+    assert storage.read_meeting_metadata(meeting_folder) == before_metadata
+    assert "отменена" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_reprocess_meeting_confirm_runs_existing_reprocess_flow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = _create_reprocessable_meeting(storage, tmp_path)
+    window = MainWindow(storage, recorder)
+    enqueued: list[Path] = []
+
+    monkeypatch.setattr(window, "_confirm_risky_action", lambda *args: True)
+    monkeypatch.setattr(window, "_enqueue_meeting_processing", enqueued.append)
+
+    window.reprocess_meeting(meeting_folder)
+
+    metadata = storage.read_meeting_metadata(meeting_folder)
+    assert metadata["processing_status"] == "pending"
+    assert metadata["processing_force_reprocess"] is True
+    assert enqueued == [meeting_folder]
+    assert "Повторная обработка встречи добавлена в очередь" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_reprocess_meeting_unavailable_action_does_not_show_warning(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Встреча без записи",
+        started_at=datetime.now().replace(hour=11, minute=0, second=0, microsecond=0),
+        metadata={
+            "status": "ended",
+            "processing_status": "completed",
+            "recording_status": "stop_failed",
+            "audio_status": "skipped",
+            "transcription_status": "skipped",
+            "summary_status": "skipped",
+        },
+    )
+    window = MainWindow(storage, recorder)
+    prompts: list[bool] = []
+    marked: list[Path] = []
+
+    monkeypatch.setattr(window, "_confirm_risky_action", lambda *args: prompts.append(True) or True)
+    monkeypatch.setattr(storage, "mark_meeting_for_reprocessing", marked.append)
+
+    window.reprocess_meeting(meeting_folder)
+
+    assert prompts == []
+    assert marked == []
+    assert "нельзя повторно обработать" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
 def test_pipeline_wait_messages_do_not_claim_ready_audio_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -1639,6 +1766,79 @@ def test_running_day_summary_is_restored_on_startup(tmp_path: Path) -> None:
         window.day_summary_thread.quit()
         window.day_summary_thread.wait(1000)
     app.processEvents()
+    window.close()
+    app.processEvents()
+
+
+def test_update_day_summary_cancel_does_not_request_force_update(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.start_workday(datetime.now())
+    metadata = storage.ensure_day_summary_metadata(day_folder)
+    metadata["day_summary_status"] = "up_to_date"
+    storage._write_json(storage.day_summary_metadata_path(day_folder), metadata)
+    window = MainWindow(storage, recorder)
+    prompts: list[tuple[str, str, str]] = []
+    requests: list[tuple[Path, bool]] = []
+
+    def reject_prompt(title: str, text: str, confirm_button_text: str) -> bool:
+        prompts.append((title, text, confirm_button_text))
+        return False
+
+    monkeypatch.setattr(window, "_confirm_risky_action", reject_prompt)
+    monkeypatch.setattr(
+        window,
+        "_request_day_summary_update",
+        lambda day_folder, force=False: requests.append((day_folder, force)) or "",
+    )
+
+    window.update_day_summary()
+
+    assert prompts == [
+        (
+            "Обновить итоги дня?",
+            "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+            "Обновить итоги дня",
+        )
+    ]
+    assert requests == []
+    assert not window.day_summary_pending
+    assert not window.day_summary_running
+    assert "отменено" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_update_day_summary_confirm_requests_force_update(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.start_workday(datetime.now())
+    metadata = storage.ensure_day_summary_metadata(day_folder)
+    metadata["day_summary_status"] = "up_to_date"
+    storage._write_json(storage.day_summary_metadata_path(day_folder), metadata)
+    window = MainWindow(storage, recorder)
+    requests: list[tuple[Path, bool]] = []
+
+    monkeypatch.setattr(window, "_confirm_risky_action", lambda *args: True)
+    monkeypatch.setattr(
+        window,
+        "_request_day_summary_update",
+        lambda day_folder, force=False: requests.append((day_folder, force)) or "",
+    )
+
+    window.update_day_summary()
+
+    assert requests == [(day_folder, True)]
+
     window.close()
     app.processEvents()
 
