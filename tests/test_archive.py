@@ -86,3 +86,25 @@ def test_search_archive_skips_non_utf8_files(tmp_path) -> None:
 
     assert len(matches) == 1
     assert matches[0].kind == "Итоги дня"
+
+
+def test_search_archive_snippet_is_compact_for_long_markdown(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 12))
+    storage._write_json(day_folder / "day_metadata.json", {"date": "2026-06-12", "status": "ended"})
+    meeting = storage.create_meeting_folder("Архив", datetime(2026, 6, 12, 9, 30))
+    long_text = (
+        "# Длинные итоги\n\n"
+        + "Очень подробный контекст без совпадения. " * 8
+        + "Обсудили релиз продукта и план выката. "
+        + "Еще один длинный блок markdown с деталями, ссылками и списками. " * 8
+    )
+    storage.save_meeting_summary_draft(meeting, long_text)
+
+    days = build_archive_days(storage, now=datetime(2026, 6, 14, 12, 0))
+    matches = search_archive(days, "релиз")
+
+    assert len(matches) == 1
+    assert len(matches[0].snippet) <= 96
+    assert matches[0].snippet.startswith("...")
+    assert matches[0].snippet.endswith("...")

@@ -3023,6 +3023,136 @@ def test_archive_page_contains_expected_controls(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_archive_layout_keeps_readable_day_column_and_dark_scroll_areas(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+    window = MainWindow(storage, recorder)
+    window.config["ui"]["theme"] = "dark"
+    window._apply_app_style()
+    window.resize(1100, 720)
+
+    window.open_archive()
+    app.processEvents()
+
+    assert window.archive_splitter.widget(0).minimumWidth() >= 280
+    assert window.archive_splitter.sizes()[0] >= 280
+    assert window.archive_days_scroll.objectName() == "archiveDaysScroll"
+    assert window.archive_days_scroll.viewport().objectName() == "archiveScrollViewport"
+    assert window.archive_results_scroll.viewport().objectName() == "archiveScrollViewport"
+    assert "#111827" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_visible_text_is_russian_and_actions_are_specific(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    storage.save_day_summary_draft(day_folder, "# Итог дня\n")
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary_draft(meeting, "# Итог встречи\n")
+    (meeting / "transcript.md").write_text("Текст транскрипта", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    page = window.pages.widget(2)
+    visible_text = "\n".join(
+        [label.text() for label in page.findChildren(QLabel)]
+        + [button.text() for button in page.findChildren(QPushButton)]
+        + [window.archive_search_input.placeholderText()]
+    )
+
+    assert "транскрипт" in visible_text.casefold()
+    assert "transcript" not in visible_text.casefold()
+    assert "Редактировать итог дня" in visible_text
+    assert "Обновить итоги дня" in visible_text
+    assert "Редактировать итог встречи" in visible_text
+    assert "Просмотреть транскрипт" in visible_text
+    assert "Редактировать итоги" not in visible_text
+    assert "Сформировать итоги дня" not in visible_text
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_search_results_are_compact_and_keep_action_near_text(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Очень длинная встреча про релиз продукта и несколько направлений",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary_draft(
+        meeting,
+        "# Итоги\n\n" + "Длинный markdown перед совпадением. " * 12 + "релиз " + "длинное продолжение. " * 12,
+    )
+
+    window = MainWindow(storage, recorder)
+    window.resize(900, 620)
+    window.open_archive()
+    window.archive_search_input.setText("релиз")
+    window.apply_archive_filters()
+
+    result_cards = window.archive_results_list.findChildren(QWidget, "archiveSearchResult")
+    snippet_labels = window.archive_results_list.findChildren(QLabel, "archiveSearchSnippet")
+    open_buttons = [
+        button
+        for button in window.archive_results_list.findChildren(QPushButton)
+        if button.text() == "Открыть"
+    ]
+
+    assert result_cards
+    assert snippet_labels
+    assert all(label.maximumHeight() <= 48 for label in snippet_labels)
+    assert all(len(label.text()) <= 96 for label in snippet_labels)
+    assert all(button.maximumWidth() <= 96 for button in open_buttons)
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_search_detail_shows_only_relevant_meetings(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    release_meeting = storage.create_meeting_folder(
+        "Планирование релиза",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    unrelated_meeting = storage.create_meeting_folder(
+        "Обычная синхронизация",
+        datetime.fromisoformat(f"{day_folder.name}T10:30:00"),
+    )
+    storage.save_meeting_summary_draft(release_meeting, "Обсудили релиз продукта")
+    storage.save_meeting_summary_draft(unrelated_meeting, "Обсудили операционные вопросы")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.archive_search_input.setText("релиз")
+    window.apply_archive_filters()
+
+    detail_text = "\n".join(label.text() for label in window.archive_detail_layout.parentWidget().findChildren(QLabel))
+    assert "Планирование релиза" in detail_text
+    assert "Обычная синхронизация" not in detail_text
+
+    window.close()
+    app.processEvents()
+
+
 def test_archive_finish_active_past_day_recovers_meetings_and_requests_day_summary(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -3103,8 +3233,8 @@ def test_archive_reprocess_meeting_uses_existing_queue(tmp_path: Path, monkeypat
     prompts: list[tuple[str, str, str]] = []
     window._enqueue_meeting_processing = lambda meeting_folder: enqueued.append(meeting_folder)
     monkeypatch.setattr(
-        window,
-        "_confirm_risky_action",
+        window.risky_action_confirmation_overlay,
+        "confirm_action",
         lambda title, text, confirm_button_text: prompts.append((title, text, confirm_button_text)) or True,
     )
     window.archive_reprocess_meeting(meeting)
@@ -3134,8 +3264,8 @@ def test_archive_day_summary_update_cancel_uses_common_warning(tmp_path: Path, m
     requests: list[tuple[Path, bool]] = []
 
     monkeypatch.setattr(
-        window,
-        "_confirm_risky_action",
+        window.risky_action_confirmation_overlay,
+        "confirm_action",
         lambda title, text, confirm_button_text: prompts.append((title, text, confirm_button_text)) and False,
     )
     monkeypatch.setattr(
@@ -3169,7 +3299,7 @@ def test_archive_day_summary_update_confirm_requests_force_update(tmp_path: Path
     window = MainWindow(storage, recorder)
     requests: list[tuple[Path, bool]] = []
 
-    monkeypatch.setattr(window, "_confirm_risky_action", lambda *args: True)
+    monkeypatch.setattr(window.risky_action_confirmation_overlay, "confirm_action", lambda *args: True)
     monkeypatch.setattr(
         window,
         "_request_day_summary_update",
