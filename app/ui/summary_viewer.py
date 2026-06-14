@@ -20,9 +20,15 @@ class SummaryMaterialView(QWidget):
     cancel_requested = Signal()
     edit_requested = Signal()
 
+    BASE_CONTENT_MIN_HEIGHT = 340
+    BASE_CONTENT_MAX_HEIGHT = 380
+    EXPANDED_CONTENT_MIN_HEIGHT = 560
+    EXPANDED_CONTENT_MAX_HEIGHT = 720
+
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.mode = "preview"
+        self.height_mode = "base"
         self.markdown = ""
 
         layout = QVBoxLayout()
@@ -53,13 +59,20 @@ class SummaryMaterialView(QWidget):
         header.addLayout(self.extra_actions_layout)
         self.extra_action_widgets: list[QWidget] = []
 
+        self.height_toggle_button = QPushButton("Развернуть")
         self.edit_button = QPushButton("Редактировать")
         self.save_button = QPushButton("Сохранить")
         self.cancel_button = QPushButton("Отмена")
+        self.height_toggle_button.setObjectName("headerButton")
         self.edit_button.setObjectName("headerButton")
         self.save_button.setObjectName("headerPrimaryButton")
         self.cancel_button.setObjectName("headerButton")
-        for button in (self.edit_button, self.save_button, self.cancel_button):
+        for button in (
+            self.height_toggle_button,
+            self.edit_button,
+            self.save_button,
+            self.cancel_button,
+        ):
             button.setFixedHeight(34)
             header.addWidget(button)
         self.header_frame.setLayout(header)
@@ -77,8 +90,10 @@ class SummaryMaterialView(QWidget):
         self.setLayout(layout)
 
         self.edit_button.clicked.connect(self.enter_edit_mode)
+        self.height_toggle_button.clicked.connect(self.toggle_height_mode)
         self.save_button.clicked.connect(self._save)
         self.cancel_button.clicked.connect(self._cancel)
+        self._sync_height_mode()
         self._sync_mode()
 
     def set_title(self, title: str) -> None:
@@ -118,6 +133,10 @@ class SummaryMaterialView(QWidget):
         self.edit_requested.emit()
         self._sync_mode()
 
+    def toggle_height_mode(self) -> None:
+        self.height_mode = "expanded" if self.height_mode == "base" else "base"
+        self._sync_height_mode()
+
     def _save(self) -> None:
         self.markdown = self.editor.toPlainText()
         self.preview.setProperty("summary_block_view", True)
@@ -141,6 +160,20 @@ class SummaryMaterialView(QWidget):
         self.cancel_button.setVisible(editing)
         for widget in self.extra_action_widgets:
             widget.setVisible(not editing)
+
+    def _sync_height_mode(self) -> None:
+        expanded = self.height_mode == "expanded"
+        minimum = (
+            self.EXPANDED_CONTENT_MIN_HEIGHT if expanded else self.BASE_CONTENT_MIN_HEIGHT
+        )
+        maximum = (
+            self.EXPANDED_CONTENT_MAX_HEIGHT if expanded else self.BASE_CONTENT_MAX_HEIGHT
+        )
+        self.height_toggle_button.setText("Свернуть" if expanded else "Развернуть")
+        self.setProperty("height_mode", self.height_mode)
+        for widget in (self.preview, self.editor):
+            widget.setMinimumHeight(minimum)
+            widget.setMaximumHeight(maximum)
 
     @staticmethod
     def _markdown_to_html(markdown: str) -> str:

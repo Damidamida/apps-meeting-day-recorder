@@ -186,6 +186,37 @@ def test_summary_material_view_header_is_separate_padded_row_with_action_on_righ
     app.processEvents()
 
 
+def test_summary_material_view_height_toggle_controls_preview_and_editor_constraints() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+    view.set_markdown("# Итоги встречи\n\n## Кратко\n\n" + "- Пункт итогов\n" * 20)
+
+    assert view.height_mode == "base"
+    assert view.height_toggle_button.text() == "Развернуть"
+    assert 320 <= view.preview.minimumHeight() <= 380
+    assert view.preview.maximumHeight() <= 400
+
+    base_preview_minimum = view.preview.minimumHeight()
+    view.height_toggle_button.click()
+
+    assert view.height_mode == "expanded"
+    assert view.height_toggle_button.text() == "Свернуть"
+    assert view.preview.minimumHeight() > base_preview_minimum
+    assert view.preview.maximumHeight() >= 620
+
+    view.enter_edit_mode()
+    assert not view.height_toggle_button.isHidden()
+    assert view.editor.minimumHeight() == view.preview.minimumHeight()
+
+    view.height_toggle_button.click()
+    assert view.height_mode == "base"
+    assert view.height_toggle_button.text() == "Развернуть"
+    assert view.editor.minimumHeight() == base_preview_minimum
+
+    view.close()
+    app.processEvents()
+
+
 def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -3303,9 +3334,19 @@ def test_archive_blocks_material_navigation_with_unsaved_summary_edits(tmp_path:
     assert window.archive_open_material == ("meeting_summary", first)
     assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
     assert window.archive_summary_view.mode == "edit"
-    assert "Сохраните" in window.status_label.text()
+    assert not window.archive_status_label.isHidden()
+    assert "Сохраните" in window.archive_status_label.text()
 
     window.open_archive_meeting_transcript(first)
+    assert window.archive_open_material == ("meeting_summary", first)
+    assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+
+    window.open_archive_day_summary(day_folder)
+    assert window.archive_open_material == ("meeting_summary", first)
+    assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+
+    window.archive_search_input.setText("вторая")
+    window.apply_archive_filters()
     assert window.archive_open_material == ("meeting_summary", first)
     assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
 
@@ -3506,6 +3547,18 @@ def test_archive_detail_cards_are_clickable_accordion_with_header_actions(tmp_pa
     assert day_card.property("open") is True
     assert meeting_card.property("open") is False
     assert not meeting_card.findChildren(QPushButton)
+    assert not any(button.text() == "Развернуть" for button in meeting_card.findChildren(QPushButton))
+    assert window.archive_summary_view.height_mode == "base"
+    assert window.archive_summary_view.preview.minimumHeight() >= 320
+
+    window.archive_summary_view.height_toggle_button.click()
+    assert window.archive_summary_view.height_mode == "expanded"
+    assert window.archive_summary_view.height_toggle_button.text() == "Свернуть"
+    assert window.archive_summary_view.preview.minimumHeight() >= 560
+
+    window.archive_summary_view.height_toggle_button.click()
+    assert window.archive_summary_view.height_mode == "base"
+    assert window.archive_summary_view.height_toggle_button.text() == "Развернуть"
 
     meeting_card.clicked.emit()
     app.processEvents()
@@ -3517,9 +3570,25 @@ def test_archive_detail_cards_are_clickable_accordion_with_header_actions(tmp_pa
     assert day_card.property("open") is False
     assert meeting_card.property("open") is True
     assert "Редактировать" in meeting_buttons
+    assert "Развернуть" in meeting_buttons
     assert "Просмотреть транскрипт" in meeting_buttons
     assert "Редактировать итог встречи" not in meeting_buttons
     assert not day_card.findChildren(QPushButton)
+    assert not any(button.text() == "Развернуть" for button in day_card.findChildren(QPushButton))
+
+    expand_button = next(button for button in meeting_card.findChildren(QPushButton) if button.text() == "Развернуть")
+    base_height = window.archive_summary_view.preview.minimumHeight()
+    expand_button.click()
+    assert window.archive_summary_view.height_mode == "expanded"
+    assert window.archive_summary_view.preview.minimumHeight() > base_height
+
+    window.archive_summary_view.enter_edit_mode()
+    assert window.archive_summary_view.height_toggle_button.text() == "Свернуть"
+    assert window.archive_summary_view.editor.minimumHeight() == window.archive_summary_view.preview.minimumHeight()
+
+    window.archive_summary_view.height_toggle_button.click()
+    assert window.archive_summary_view.height_mode == "base"
+    assert window.archive_summary_view.editor.minimumHeight() == base_height
 
     window.close()
     app.processEvents()

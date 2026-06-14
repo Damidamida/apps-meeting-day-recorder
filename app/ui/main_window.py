@@ -4566,6 +4566,12 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.archive_search_card)
 
+        self.archive_status_label = QLabel("")
+        self.archive_status_label.setWordWrap(True)
+        self.archive_status_label.setObjectName("inlineStatus")
+        self.archive_status_label.setVisible(False)
+        layout.addWidget(self.archive_status_label)
+
         self.archive_search_timer = QTimer(self)
         self.archive_search_timer.setInterval(250)
         self.archive_search_timer.setSingleShot(True)
@@ -4668,6 +4674,7 @@ class MainWindow(QMainWindow):
     def apply_archive_filters(self) -> None:
         if not self._guard_archive_summary_reload():
             return
+        self._set_archive_status("")
         self.archive_query = self.archive_search_input.text().strip()
         date_filter = self._archive_date_filter()
         all_days = build_archive_days(self.storage, date_filter=date_filter)
@@ -4821,6 +4828,7 @@ class MainWindow(QMainWindow):
     def select_archive_day(self, day_folder: Path) -> None:
         if not self._guard_archive_summary_reload():
             return
+        self._set_archive_status("")
         self.selected_archive_day_folder = day_folder
         self.selected_archive_meeting_folder = None
         self.archive_open_material = ("day_summary", day_folder)
@@ -4994,6 +5002,7 @@ class MainWindow(QMainWindow):
     def open_archive_day_summary(self, day_folder: Path) -> None:
         if not self._guard_archive_summary_reload():
             return
+        self._set_archive_status("")
         self.selected_archive_day_folder = day_folder
         self.selected_archive_meeting_folder = None
         self.archive_open_material = ("day_summary", day_folder)
@@ -5005,6 +5014,7 @@ class MainWindow(QMainWindow):
     def open_archive_meeting_summary(self, meeting_folder: Path) -> None:
         if not self._guard_archive_summary_reload():
             return
+        self._set_archive_status("")
         self.selected_archive_meeting_folder = meeting_folder
         self.selected_archive_day_folder = meeting_folder.parent
         self.archive_open_material = ("meeting_summary", meeting_folder)
@@ -5022,6 +5032,7 @@ class MainWindow(QMainWindow):
     def open_archive_meeting_transcript(self, meeting_folder: Path) -> None:
         if not self._guard_archive_summary_reload():
             return
+        self._set_archive_status("")
         self.selected_archive_meeting_folder = meeting_folder
         self.selected_archive_day_folder = meeting_folder.parent
         self.archive_open_material = ("meeting_transcript", meeting_folder)
@@ -5053,15 +5064,19 @@ class MainWindow(QMainWindow):
         if self.archive_open_material is None:
             return
         kind, folder = self.archive_open_material
+        message = ""
         if kind == "day_summary":
             self.storage.save_day_summary(folder, content)
-            self.status_label.setText("Итог дня сохранен локально.")
+            message = "Итог дня сохранен локально."
         elif kind == "meeting_summary":
             self.storage.save_meeting_summary(folder, content)
-            self.status_label.setText("Итог встречи сохранен локально.")
+            message = "Итог встречи сохранен локально."
         if kind in {"day_summary", "meeting_summary"}:
             self.archive_summary_view.set_markdown(content)
         self.refresh_archive()
+        if message:
+            self.status_label.setText(message)
+            self._set_archive_status(message)
 
     def request_archive_day_summary_update(self, day_folder: Path) -> None:
         if not self._confirm_risky_action(
@@ -6795,9 +6810,15 @@ class MainWindow(QMainWindow):
             and self.archive_open_material[0] in {"day_summary", "meeting_summary"}
             and self.archive_summary_view.has_unsaved_changes()
         ):
-            self.status_label.setText("Сохраните или отмените текущие правки перед переходом в Архиве.")
+            self._set_archive_status("Сохраните или отмените текущие правки перед переходом в Архиве.")
             return False
         return True
+
+    def _set_archive_status(self, message: str) -> None:
+        if not hasattr(self, "archive_status_label"):
+            return
+        self.archive_status_label.setText(message)
+        self.archive_status_label.setVisible(bool(message.strip()))
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
