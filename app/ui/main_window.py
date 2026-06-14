@@ -1779,6 +1779,7 @@ class MainWindow(QMainWindow):
             QWidget#content,
             QStackedWidget#pages,
             QWidget#pageSurface,
+            QWidget#archiveHeader,
             QWidget#scrollViewport,
             QWidget#archiveScrollViewport {
                 background: %(bg)s;
@@ -4477,12 +4478,17 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
-        layout.addWidget(
-            self._create_page_header(
-                "Архив",
-                "Прошлые рабочие дни, итоги и транскрипты остаются в локальной папке данных.",
-            )
+        self.archive_header = self._create_page_header(
+            "Архив",
+            "Прошлые рабочие дни, итоги и транскрипты остаются в локальной папке данных.",
         )
+        self.archive_header.setObjectName("archiveHeader")
+        self.archive_header.setMaximumHeight(88)
+        self.archive_header.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        layout.addWidget(self.archive_header)
 
         controls_layout = QVBoxLayout()
         controls_layout.setSpacing(8)
