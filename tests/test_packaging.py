@@ -13,6 +13,10 @@ def test_pyinstaller_spec_builds_bk_scribe_executable_with_icon_and_resources() 
     assert "bk_scribe.ico" in text
     assert "app/assets" in text
     assert "resources/ffmpeg" in text
+    assert "ffmpeg.exe" in text
+    assert 'datas.append((str(FFMPEG_EXE), "resources/ffmpeg"))' in text
+    assert "Tree(" not in text
+    assert "datas.append(Tree" not in text
 
 
 def test_inno_script_is_per_user_bk_scribe_installer() -> None:
