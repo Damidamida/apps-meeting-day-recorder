@@ -2514,16 +2514,49 @@ def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None
     app.processEvents()
 
 
-def test_archive_and_help_pages_explain_placeholders_and_local_flow(tmp_path: Path) -> None:
+def test_archive_empty_state_points_to_today_workday(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
-    window.nav_buttons[2].click()
+    window.open_archive()
     archive_text = "\n".join(label.text() for label in window.pages.widget(2).findChildren(QLabel))
-    assert "Архив пока не реализован" in archive_text
-    assert "read-only" in archive_text
+    assert "Прошлых рабочих дней пока нет" in archive_text
+    assert "Сегодняшний день находится во вкладке `Рабочий день`." in archive_text
+    assert "Архив пока не реализован" not in archive_text
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_lists_past_days_newest_first_and_excludes_today(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    old_day = storage.create_day_folder((datetime.now() - timedelta(days=3)).date())
+    recent_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    today_day = storage.create_day_folder(datetime.now().date())
+    storage._write_json(old_day / "day_metadata.json", {"date": old_day.name, "status": "ended"})
+    storage._write_json(recent_day / "day_metadata.json", {"date": recent_day.name, "status": "ended"})
+    storage._write_json(today_day / "day_metadata.json", {"date": today_day.name, "status": "active"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    day_texts = [label.text() for label in window.archive_days_list.findChildren(QLabel)]
+    assert day_texts.index(recent_day.name) < day_texts.index(old_day.name)
+    assert today_day.name not in day_texts
+
+    window.close()
+    app.processEvents()
+
+
+def test_help_page_explains_local_flow(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
 
     window.nav_buttons[4].click()
     help_text = "\n".join(label.text() for label in window.pages.widget(4).findChildren(QLabel))

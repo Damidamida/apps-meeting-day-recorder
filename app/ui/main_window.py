@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import DEFAULT_CONFIG, load_config
+from app.services.archive import ArchiveDay, build_archive_days
 from app.services.readiness import READINESS_CARDS, check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
@@ -1232,6 +1233,8 @@ class MainWindow(QMainWindow):
         self.workday_day_summary_expanded = False
         self.selected_review_meeting_folder: Path | None = None
         self.review_day_summary_selected = False
+        self.archive_days: list[ArchiveDay] = []
+        self.selected_archive_day_folder: Path | None = None
         self.workday_action_mode: str | None = None
         self.allow_close_with_processing = False
         self.workday_meeting_cards: dict[Path, ClickableFrame] = {}
@@ -1412,7 +1415,7 @@ class MainWindow(QMainWindow):
 
         self._add_nav_button(layout, 0, "Рабочий день", lambda: self.pages.setCurrentIndex(0))
         self._add_nav_button(layout, 1, "Ревью", self.open_review)
-        self._add_nav_button(layout, 2, "Архив", lambda: self.pages.setCurrentIndex(2))
+        self._add_nav_button(layout, 2, "Архив", self.open_archive)
         self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
         self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
         layout.addStretch()
@@ -4253,36 +4256,127 @@ class MainWindow(QMainWindow):
         layout.addWidget(
             self._create_page_header(
                 "Архив",
-                "Будущий read-only просмотр прошлых рабочих дней и встреч.",
+                "Прошлые рабочие дни, итоги и transcript остаются в локальной папке данных.",
             )
         )
-        status_layout = QVBoxLayout()
-        status_layout.setSpacing(8)
-        archive_status = QLabel(
-            "Архив пока не реализован. Текущие локальные файлы уже сохраняются в папке данных, "
-            "но экран поиска и просмотра прошлых дней будет отдельным будущим PR."
-        )
-        archive_status.setObjectName("emptyState")
-        archive_status.setWordWrap(True)
-        status_layout.addWidget(archive_status)
-        layout.addWidget(self._create_card("Статус архива", status_layout))
 
-        planned_layout = QVBoxLayout()
-        planned_layout.setSpacing(8)
-        planned_text = QLabel(
-            "Планируемое поведение:\n"
-            "- список прошлых рабочих дней;\n"
-            "- read-only карточки встреч;\n"
-            "- открытие локальных папок и файлов;\n"
-            "- без отправки аудио, видео или transcript во внешние сервисы."
+        self.archive_empty_state = QLabel(
+            "Прошлых рабочих дней пока нет.\n"
+            "Сегодняшний день находится во вкладке `Рабочий день`."
         )
-        planned_text.setObjectName("sectionHint")
-        planned_text.setWordWrap(True)
-        planned_layout.addWidget(planned_text)
-        layout.addWidget(self._create_card("Что будет позже", planned_layout))
-        layout.addStretch(1)
+        self.archive_empty_state.setObjectName("emptyState")
+        self.archive_empty_state.setWordWrap(True)
+        layout.addWidget(self.archive_empty_state)
+
+        self.archive_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.archive_splitter.setObjectName("archiveSplitter")
+
+        days_panel = QWidget()
+        days_layout = QVBoxLayout()
+        days_layout.setContentsMargins(0, 0, 0, 0)
+        days_layout.setSpacing(10)
+        days_layout.addWidget(QLabel("Прошлые дни"))
+        self.archive_days_list = QWidget()
+        self.archive_days_layout = QVBoxLayout()
+        self.archive_days_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_days_layout.setSpacing(8)
+        self.archive_days_list.setLayout(self.archive_days_layout)
+        days_scroll = QScrollArea()
+        days_scroll.setWidgetResizable(True)
+        days_scroll.setWidget(self.archive_days_list)
+        days_layout.addWidget(days_scroll, 1)
+        days_panel.setLayout(days_layout)
+
+        details_panel = QWidget()
+        self.archive_detail_layout = QVBoxLayout()
+        self.archive_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_detail_layout.setSpacing(10)
+        details_panel.setLayout(self.archive_detail_layout)
+
+        self.archive_splitter.addWidget(days_panel)
+        self.archive_splitter.addWidget(details_panel)
+        self.archive_splitter.setStretchFactor(0, 0)
+        self.archive_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.archive_splitter, 1)
         page.setLayout(layout)
         return page
+
+    def open_archive(self) -> None:
+        self.pages.setCurrentIndex(2)
+        self.refresh_archive()
+
+    def refresh_archive(self) -> None:
+        self.archive_days = build_archive_days(self.storage)
+        if self.selected_archive_day_folder not in {day.folder for day in self.archive_days}:
+            self.selected_archive_day_folder = self.archive_days[0].folder if self.archive_days else None
+
+        self.archive_empty_state.setVisible(not self.archive_days)
+        self.archive_splitter.setVisible(bool(self.archive_days))
+        self._clear_layout(self.archive_days_layout)
+        for day in self.archive_days:
+            self.archive_days_layout.addWidget(self._create_archive_day_card(day))
+        self.archive_days_layout.addStretch(1)
+        self._render_archive_detail()
+
+    def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        date_label = QLabel(day.workday.isoformat())
+        date_label.setObjectName("meetingHeaderLabel")
+        body_layout.addWidget(date_label)
+        details = QLabel(f"{day.detail_text} · {day.status_label}")
+        details.setObjectName("sectionHint")
+        details.setWordWrap(True)
+        body_layout.addWidget(details)
+        button_row = QHBoxLayout()
+        self._add_button(
+            button_row,
+            "Открыть",
+            lambda checked=False, folder=day.folder: self.select_archive_day(folder),
+            "secondaryButton",
+        )
+        button_row.addStretch(1)
+        body_layout.addLayout(button_row)
+        return self._create_card("", body_layout)
+
+    def select_archive_day(self, day_folder: Path) -> None:
+        self.selected_archive_day_folder = day_folder
+        self._render_archive_detail()
+
+    def _selected_archive_day(self) -> ArchiveDay | None:
+        for day in self.archive_days:
+            if day.folder == self.selected_archive_day_folder:
+                return day
+        return None
+
+    def _render_archive_detail(self) -> None:
+        self._clear_layout(self.archive_detail_layout)
+        day = self._selected_archive_day()
+        if day is None:
+            return
+        self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
+        for meeting in day.meetings:
+            body_layout = QVBoxLayout()
+            body_layout.setSpacing(6)
+            started_at = self._short_time(meeting.started_at)
+            title = QLabel(f"{started_at}   {meeting.title}".strip())
+            title.setObjectName("meetingHeaderLabel")
+            body_layout.addWidget(title)
+            status = QLabel(meeting.status_label)
+            status.setObjectName("sectionHint")
+            body_layout.addWidget(status)
+            self.archive_detail_layout.addWidget(self._create_card("Встреча", body_layout))
+        self.archive_detail_layout.addStretch(1)
+
+    def _create_archive_day_summary_card(self, day: ArchiveDay) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        status = "Сформированы" if day.has_day_summary else "Не сформированы"
+        label = QLabel(f"Дата: {day.workday.isoformat()}\nСтатус: {status}")
+        label.setObjectName("sectionHint")
+        label.setWordWrap(True)
+        body_layout.addWidget(label)
+        return self._create_card("Итоги дня", body_layout)
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()
