@@ -1528,10 +1528,13 @@ class MainWindow(QMainWindow):
         self.setup_state = normalize_setup_config(self.config.get("setup", {}))
         self._write_local_config(self.config)
         self.storage.root = Path(self.config["storage"]["root"])
+        self.storage.load_today_state()
+        self.past_workday_folder = self.storage.find_past_active_workday()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
         self._refresh_navigation_state(self.pages.currentIndex())
         self.pages.setCurrentIndex(0)
+        self.show_floating_control()
         if hasattr(self, "status_label"):
             self.status_label.setText("Настройка BK Scribe завершена. Можно начать рабочий день.")
 

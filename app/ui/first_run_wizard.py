@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,6 +32,10 @@ from app.services.first_run import (
     setup_completed,
     validate_data_root,
 )
+from app.services.recorder import RecorderError
+
+
+logger = logging.getLogger(__name__)
 
 
 class FirstRunWizard(QWidget):
@@ -276,7 +281,11 @@ class FirstRunWizard(QWidget):
             return
         try:
             self.recorder.check_connection()
+        except RecorderError:
+            self._mark_error("obs", "OBS не подключен. Запустите OBS и проверьте WebSocket.")
+            return
         except Exception:
+            logger.exception("First-run OBS connection check failed.")
             self._mark_error("obs", "OBS не подключен. Запустите OBS и проверьте WebSocket.")
             return
         self._mark_ok("obs", "OBS подключен.")

@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from openai import AuthenticationError
+
 CURRENT_SETUP_VERSION = 1
 
 FIRST_RUN_STEPS = (
@@ -307,7 +309,7 @@ def check_aitunnel_key(
             timeout=20,
         )
         client.models.list()
-    except PermissionError:
+    except AuthenticationError:
         return FirstRunCheckResult(False, "Ключ не подошел.")
     except Exception:
         return FirstRunCheckResult(False, "Сервис временно недоступен.")

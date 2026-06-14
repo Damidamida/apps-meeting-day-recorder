@@ -112,3 +112,51 @@ def test_setup_completed_allows_navigation_and_start_workday(
     assert "Рабочий день начат" in window.status_label.text()
 
     window.close()
+
+
+def test_setup_completion_reloads_storage_state_and_restores_floating_control(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app()
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path / "config.yaml", setup_completed=False)
+    storage = StorageService(tmp_path / "old-data", NoopRecorder())
+    window = MainWindow(storage, NoopRecorder())
+    app.processEvents()
+    calls = []
+
+    def fake_load_today_state() -> None:
+        calls.append("load_today_state")
+
+    def fake_find_past_active_workday():
+        calls.append("find_past_active_workday")
+        return None
+
+    window.storage.load_today_state = fake_load_today_state
+    window.storage.find_past_active_workday = fake_find_past_active_workday
+    window.show_floating_control = lambda: calls.append("show_floating_control")
+
+    setup = default_setup_config()
+    setup["completed"] = True
+    setup["version"] = 1
+    for step in setup["steps"].values():
+        step["status"] = "ok"
+        step["message"] = "Готово"
+
+    window._on_first_run_completed(
+        {
+            **window.config,
+            "storage": {"root": str(tmp_path / "new-data")},
+            "setup": setup,
+        }
+    )
+
+    assert window.storage.root == tmp_path / "new-data"
+    assert calls == [
+        "load_today_state",
+        "find_past_active_workday",
+        "show_floating_control",
+    ]
+
+    window.close()

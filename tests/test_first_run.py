@@ -1,6 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+from openai import AuthenticationError
+
 from app.config import load_config
 from app.services.first_run import (
     CURRENT_SETUP_VERSION,
@@ -154,12 +157,13 @@ def test_aitunnel_key_success_writes_env_without_leaking_key(tmp_path: Path) -> 
     assert calls[0]["api_key"] == "test-secret-key"
 
 
-def test_aitunnel_key_failure_does_not_write_env(tmp_path: Path) -> None:
+def test_aitunnel_key_authentication_error_does_not_write_env(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
 
     def client_factory(**kwargs):
         del kwargs
-        raise PermissionError("bad key test-secret-key")
+        response = httpx.Response(401, request=httpx.Request("GET", "https://api.aitunnel.ru/v1/models"))
+        raise AuthenticationError("bad key test-secret-key", response=response, body=None)
 
     result = check_aitunnel_key(
         "test-secret-key",
