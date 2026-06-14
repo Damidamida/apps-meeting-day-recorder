@@ -2616,6 +2616,35 @@ def test_archive_search_filters_days_and_shows_fixed_results(tmp_path: Path) -> 
     app.processEvents()
 
 
+def test_archive_meeting_detail_shows_summary_and_readonly_transcript(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary_draft(meeting, "# Итоги встречи\n")
+    (meeting / "transcript.md").write_text("Текст transcript", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.edit_archive_meeting_summary(meeting)
+
+    assert window.archive_editor.toPlainText() == "# Итоги встречи\n"
+    assert not window.archive_editor.isReadOnly()
+
+    window.show_archive_transcript(meeting)
+
+    assert window.archive_editor.toPlainText() == "Текст transcript"
+    assert window.archive_editor.isReadOnly()
+
+    window.close()
+    app.processEvents()
+
+
 def test_help_page_explains_local_flow(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

@@ -1244,6 +1244,8 @@ class MainWindow(QMainWindow):
         self.archive_period = "all"
         self.archive_query = ""
         self.selected_archive_day_folder: Path | None = None
+        self.selected_archive_meeting_folder: Path | None = None
+        self.archive_selected_material: str | None = None
         self.workday_action_mode: str | None = None
         self.allow_close_with_processing = False
         self.workday_meeting_cards: dict[Path, ClickableFrame] = {}
@@ -4355,6 +4357,10 @@ class MainWindow(QMainWindow):
         self.archive_splitter.setStretchFactor(0, 0)
         self.archive_splitter.setStretchFactor(1, 1)
         layout.addWidget(self.archive_splitter, 1)
+
+        self.archive_editor = QPlainTextEdit()
+        self.archive_editor.setObjectName("archiveEditor")
+        self.archive_editor.setPlaceholderText("Выберите материал Архива.")
         page.setLayout(layout)
         return page
 
@@ -4480,16 +4486,7 @@ class MainWindow(QMainWindow):
             return
         self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
         for meeting in self._archive_visible_meetings(day):
-            body_layout = QVBoxLayout()
-            body_layout.setSpacing(6)
-            started_at = self._short_time(meeting.started_at)
-            title = QLabel(f"{started_at}   {meeting.title}".strip())
-            title.setObjectName("meetingHeaderLabel")
-            body_layout.addWidget(title)
-            status = QLabel(meeting.status_label)
-            status.setObjectName("sectionHint")
-            body_layout.addWidget(status)
-            self.archive_detail_layout.addWidget(self._create_card("Встреча", body_layout))
+            self.archive_detail_layout.addWidget(self._create_archive_meeting_card(meeting))
         self.archive_detail_layout.addStretch(1)
 
     def _create_archive_day_summary_card(self, day: ArchiveDay) -> QWidget:
@@ -4502,6 +4499,31 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(label)
         return self._create_card("Итоги дня", body_layout)
 
+    def _create_archive_meeting_card(self, meeting) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        started_at = self._short_time(meeting.started_at)
+        title = QLabel(f"{started_at}   {meeting.title}".strip())
+        title.setObjectName("meetingHeaderLabel")
+        body_layout.addWidget(title)
+        status = QLabel(meeting.status_label)
+        status.setObjectName("sectionHint")
+        body_layout.addWidget(status)
+        actions = QHBoxLayout()
+        self._add_button(
+            actions,
+            "Редактировать итоги",
+            lambda checked=False, folder=meeting.folder: self.edit_archive_meeting_summary(folder),
+        )
+        self._add_button(
+            actions,
+            "Просмотреть transcript",
+            lambda checked=False, folder=meeting.folder: self.show_archive_transcript(folder),
+        )
+        actions.addStretch(1)
+        body_layout.addLayout(actions)
+        return self._create_card("Встреча", body_layout)
+
     def _archive_visible_meetings(self, day: ArchiveDay):
         if not self.archive_query:
             return day.meetings
@@ -4511,6 +4533,35 @@ class MainWindow(QMainWindow):
             if match.day_folder == day.folder and match.meeting_folder is not None
         }
         return [meeting for meeting in day.meetings if meeting.folder in matching_folders]
+
+    def select_archive_meeting(self, meeting_folder: Path) -> None:
+        self.edit_archive_meeting_summary(meeting_folder)
+
+    def edit_archive_meeting_summary(self, meeting_folder: Path) -> None:
+        self.selected_archive_meeting_folder = meeting_folder
+        self.archive_selected_material = "meeting_summary"
+        self.archive_editor.setReadOnly(False)
+        self.archive_editor.setPlainText(self.storage.read_meeting_summary_draft(meeting_folder))
+        self._show_archive_editor("Итоги встречи")
+
+    def show_archive_transcript(self, meeting_folder: Path) -> None:
+        self.selected_archive_meeting_folder = meeting_folder
+        self.archive_selected_material = "transcript"
+        transcript_path = Path(meeting_folder) / "transcript.md"
+        if transcript_path.is_file():
+            text = transcript_path.read_text(encoding="utf-8")
+        else:
+            text = "Transcript пока не найден."
+        self.archive_editor.setReadOnly(True)
+        self.archive_editor.setPlainText(text)
+        self._show_archive_editor("Транскрипт")
+
+    def _show_archive_editor(self, title: str) -> None:
+        self._clear_layout(self.archive_detail_layout)
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        self.archive_detail_layout.addWidget(title_label)
+        self.archive_detail_layout.addWidget(self.archive_editor, 1)
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()
