@@ -11,6 +11,7 @@ import yaml
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy, QWidget
 
 from app.services.recorder import NoopRecorder
@@ -3670,6 +3671,90 @@ def test_archive_transcript_action_toggles_back_to_summary(tmp_path: Path) -> No
 
     assert window.archive_open_material == ("meeting_summary", meeting)
     assert not window.archive_summary_view.preview.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_transcript_mode_switches_to_other_meeting_summary(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    first = storage.create_meeting_folder(
+        "Первая архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T10:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+    storage.ensure_day_summary_metadata(day_folder)
+    storage.save_meeting_summary(first, "# Итог первой встречи\n\n## Кратко\n\nПервый итог")
+    storage.save_meeting_summary(second, "# Итог второй встречи\n\n## Кратко\n\nВторой итог")
+    (first / "transcript.md").write_text("Транскрипт первой встречи", encoding="utf-8")
+    (second / "transcript.md").write_text("Транскрипт второй встречи", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.show()
+    app.processEvents()
+    page = window.pages.widget(2)
+
+    first_card = next(
+        card
+        for card in window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+        if card.property("meeting_folder") == first
+    )
+    first_card.clicked.emit()
+    app.processEvents()
+
+    transcript_button = next(
+        button for button in page.findChildren(QPushButton) if button.text() == "Просмотреть транскрипт"
+    )
+    transcript_button.click()
+    app.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+    assert window.archive_open_material == ("meeting_transcript", first)
+    assert window.archive_material_mode == "transcript"
+
+    second_card = next(
+        card
+        for card in window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+        if card.property("meeting_folder") == second
+    )
+    second_title = next(label for label in second_card.findChildren(QLabel) if label.text() == "Вторая архивная встреча")
+    QTest.mouseClick(second_title, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+    day_card = next(card for card in detail_cards if card.property("material_kind") == "day_summary")
+    first_card = next(card for card in detail_cards if card.property("meeting_folder") == first)
+    second_card = next(card for card in detail_cards if card.property("meeting_folder") == second)
+    second_buttons = [button.text() for button in second_card.findChildren(QPushButton)]
+
+    assert window.archive_open_material == ("meeting_summary", second)
+    assert window.archive_material_mode == "summary"
+    assert window.selected_archive_meeting_folder == second
+    assert window.archive_editor == window.archive_summary_view.editor
+    assert day_card.property("open") is False
+    assert first_card.property("open") is False
+    assert second_card.property("open") is True
+    assert window.archive_summary_view.title_label.text() == "Итог встречи"
+    assert "Вторая архивная встреча" in window.archive_summary_view.meta_label.text()
+    assert "Второй итог" in window.archive_summary_view.preview.toPlainText()
+    assert "Транскрипт первой встречи" not in window.archive_summary_view.preview.toPlainText()
+    assert "Просмотреть транскрипт" in second_buttons
+    assert "Показать итог" not in second_buttons
+    assert window.archive_detail_layout.count() >= 4
 
     window.close()
     app.processEvents()

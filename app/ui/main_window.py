@@ -2874,9 +2874,21 @@ class MainWindow(QMainWindow):
                 MainWindow._clear_layout(child_layout, preserve)
             widget = item.widget()
             if widget is not None:
+                if widget not in preserve:
+                    MainWindow._detach_preserved_descendants(widget, preserve)
                 widget.setParent(None)
                 if widget not in preserve:
                     widget.deleteLater()
+
+    @staticmethod
+    def _detach_preserved_descendants(widget: QWidget, preserve: set[QWidget]) -> None:
+        for preserved_widget in preserve:
+            parent = preserved_widget.parentWidget()
+            while parent is not None:
+                if parent is widget:
+                    preserved_widget.setParent(None)
+                    break
+                parent = parent.parentWidget()
 
     def _meeting_header_text(self, meeting_folder: Path, metadata: dict[str, object]) -> str:
         title = str(metadata.get("title") or meeting_folder.name)
