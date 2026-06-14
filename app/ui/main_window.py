@@ -48,7 +48,13 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import DEFAULT_CONFIG, load_config
-from app.services.archive import ArchiveDay, build_archive_days
+from app.services.archive import (
+    ArchiveDateFilter,
+    ArchiveDay,
+    ArchiveSearchMatch,
+    build_archive_days,
+    search_archive,
+)
 from app.services.readiness import READINESS_CARDS, check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
@@ -1234,6 +1240,9 @@ class MainWindow(QMainWindow):
         self.selected_review_meeting_folder: Path | None = None
         self.review_day_summary_selected = False
         self.archive_days: list[ArchiveDay] = []
+        self.archive_matches: list[ArchiveSearchMatch] = []
+        self.archive_period = "all"
+        self.archive_query = ""
         self.selected_archive_day_folder: Path | None = None
         self.workday_action_mode: str | None = None
         self.allow_close_with_processing = False
@@ -2643,6 +2652,7 @@ class MainWindow(QMainWindow):
                 MainWindow._clear_layout(child_layout)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
 
     def _meeting_header_text(self, meeting_folder: Path, metadata: dict[str, object]) -> str:
@@ -4260,6 +4270,53 @@ class MainWindow(QMainWindow):
             )
         )
 
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(8)
+        self.archive_search_input = QLineEdit()
+        self.archive_search_input.setPlaceholderText("Поиск по дате, названию, итогам или transcript")
+        self.archive_search_input.textChanged.connect(self._schedule_archive_search)
+        controls_layout.addWidget(self.archive_search_input)
+
+        filter_row = QHBoxLayout()
+        self.archive_week_button = self._add_button(
+            filter_row, "Неделя", lambda checked=False: self.set_archive_period("week")
+        )
+        self.archive_month_button = self._add_button(
+            filter_row, "Месяц", lambda checked=False: self.set_archive_period("month")
+        )
+        self.archive_all_button = self._add_button(
+            filter_row, "Все", lambda checked=False: self.set_archive_period("all")
+        )
+        filter_row.addWidget(QLabel("с"))
+        self.archive_from_input = QLineEdit()
+        self.archive_from_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_from_input.textChanged.connect(self._schedule_archive_search)
+        filter_row.addWidget(self.archive_from_input)
+        filter_row.addWidget(QLabel("по"))
+        self.archive_to_input = QLineEdit()
+        self.archive_to_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_to_input.textChanged.connect(self._schedule_archive_search)
+        filter_row.addWidget(self.archive_to_input)
+        filter_row.addStretch(1)
+        controls_layout.addLayout(filter_row)
+
+        self.archive_results_list = QWidget()
+        self.archive_results_layout = QVBoxLayout()
+        self.archive_results_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_results_layout.setSpacing(6)
+        self.archive_results_list.setLayout(self.archive_results_layout)
+        self.archive_results_scroll = QScrollArea()
+        self.archive_results_scroll.setWidgetResizable(True)
+        self.archive_results_scroll.setMaximumHeight(150)
+        self.archive_results_scroll.setWidget(self.archive_results_list)
+        controls_layout.addWidget(self.archive_results_scroll)
+        layout.addWidget(self._create_card("Поиск", controls_layout))
+
+        self.archive_search_timer = QTimer(self)
+        self.archive_search_timer.setInterval(250)
+        self.archive_search_timer.setSingleShot(True)
+        self.archive_search_timer.timeout.connect(self.apply_archive_filters)
+
         self.archive_empty_state = QLabel(
             "Прошлых рабочих дней пока нет.\n"
             "Сегодняшний день находится во вкладке `Рабочий день`."
@@ -4306,16 +4363,83 @@ class MainWindow(QMainWindow):
         self.refresh_archive()
 
     def refresh_archive(self) -> None:
-        self.archive_days = build_archive_days(self.storage)
+        self.apply_archive_filters()
+
+    def set_archive_period(self, period: str) -> None:
+        self.archive_period = period
+        if period in {"week", "month", "all"}:
+            self.archive_from_input.clear()
+            self.archive_to_input.clear()
+        self.apply_archive_filters()
+
+    def _schedule_archive_search(self) -> None:
+        if hasattr(self, "archive_search_timer"):
+            self.archive_search_timer.start()
+
+    def apply_archive_filters(self) -> None:
+        self.archive_query = self.archive_search_input.text().strip()
+        date_filter = self._archive_date_filter()
+        all_days = build_archive_days(self.storage, date_filter=date_filter)
+        self.archive_matches = search_archive(all_days, self.archive_query)
+        if self.archive_query:
+            matched_day_folders = {match.day_folder for match in self.archive_matches}
+            self.archive_days = [day for day in all_days if day.folder in matched_day_folders]
+        else:
+            self.archive_days = all_days
         if self.selected_archive_day_folder not in {day.folder for day in self.archive_days}:
             self.selected_archive_day_folder = self.archive_days[0].folder if self.archive_days else None
 
         self.archive_empty_state.setVisible(not self.archive_days)
         self.archive_splitter.setVisible(bool(self.archive_days))
+        self._render_archive_search_results()
         self._clear_layout(self.archive_days_layout)
         for day in self.archive_days:
             self.archive_days_layout.addWidget(self._create_archive_day_card(day))
         self.archive_days_layout.addStretch(1)
+        self._render_archive_detail()
+
+    def _archive_date_filter(self) -> ArchiveDateFilter | None:
+        manual_start = self._parse_archive_date(self.archive_from_input.text())
+        manual_end = self._parse_archive_date(self.archive_to_input.text())
+        if manual_start is not None or manual_end is not None:
+            return ArchiveDateFilter(start=manual_start, end=manual_end)
+        now = datetime.now()
+        if self.archive_period == "week":
+            return ArchiveDateFilter.week(now)
+        if self.archive_period == "month":
+            return ArchiveDateFilter.month(now)
+        return None
+
+    @staticmethod
+    def _parse_archive_date(value: str) -> date | None:
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _render_archive_search_results(self) -> None:
+        self.archive_results_scroll.setVisible(bool(self.archive_query))
+        self._clear_layout(self.archive_results_layout)
+        for match in self.archive_matches:
+            row = QHBoxLayout()
+            label = QLabel(f"{match.kind}: {match.title}\n{match.snippet}")
+            label.setObjectName("sectionHint")
+            label.setWordWrap(True)
+            row.addWidget(label, 1)
+            self._add_button(
+                row,
+                "Открыть",
+                lambda checked=False, selected=match: self.open_archive_search_match(selected),
+                "secondaryButton",
+            )
+            self.archive_results_layout.addLayout(row)
+        self.archive_results_layout.addStretch(1)
+
+    def open_archive_search_match(self, match: ArchiveSearchMatch) -> None:
+        self.selected_archive_day_folder = match.day_folder
         self._render_archive_detail()
 
     def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
@@ -4355,7 +4479,7 @@ class MainWindow(QMainWindow):
         if day is None:
             return
         self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
-        for meeting in day.meetings:
+        for meeting in self._archive_visible_meetings(day):
             body_layout = QVBoxLayout()
             body_layout.setSpacing(6)
             started_at = self._short_time(meeting.started_at)
@@ -4377,6 +4501,16 @@ class MainWindow(QMainWindow):
         label.setWordWrap(True)
         body_layout.addWidget(label)
         return self._create_card("Итоги дня", body_layout)
+
+    def _archive_visible_meetings(self, day: ArchiveDay):
+        if not self.archive_query:
+            return day.meetings
+        matching_folders = {
+            match.meeting_folder
+            for match in self.archive_matches
+            if match.day_folder == day.folder and match.meeting_folder is not None
+        }
+        return [meeting for meeting in day.meetings if meeting.folder in matching_folders]
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()

@@ -2552,6 +2552,70 @@ def test_archive_lists_past_days_newest_first_and_excludes_today(tmp_path: Path)
     app.processEvents()
 
 
+def test_archive_filters_by_week_and_manual_date_range(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    old_day = storage.create_day_folder((datetime.now() - timedelta(days=20)).date())
+    recent_day = storage.create_day_folder((datetime.now() - timedelta(days=2)).date())
+    storage._write_json(old_day / "day_metadata.json", {"date": old_day.name, "status": "ended"})
+    storage._write_json(recent_day / "day_metadata.json", {"date": recent_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.set_archive_period("week")
+
+    day_texts = [label.text() for label in window.archive_days_list.findChildren(QLabel)]
+    assert recent_day.name in day_texts
+    assert old_day.name not in day_texts
+
+    window.archive_from_input.setText(old_day.name)
+    window.archive_to_input.setText(old_day.name)
+    window.apply_archive_filters()
+
+    day_texts = [label.text() for label in window.archive_days_list.findChildren(QLabel)]
+    assert old_day.name in day_texts
+    assert recent_day.name not in day_texts
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_search_filters_days_and_shows_fixed_results(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    release_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    other_day = storage.create_day_folder((datetime.now() - timedelta(days=2)).date())
+    storage._write_json(release_day / "day_metadata.json", {"date": release_day.name, "status": "ended"})
+    storage._write_json(other_day / "day_metadata.json", {"date": other_day.name, "status": "ended"})
+    release_meeting = storage.create_meeting_folder(
+        "Планирование релиза",
+        datetime.fromisoformat(f"{release_day.name}T09:30:00"),
+    )
+    other_meeting = storage.create_meeting_folder(
+        "Обычная встреча",
+        datetime.fromisoformat(f"{other_day.name}T09:30:00"),
+    )
+    (release_meeting / "transcript.md").write_text("Обсудили релиз и метрики", encoding="utf-8")
+    (other_meeting / "transcript.md").write_text("Обсудили задачи", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.archive_search_input.setText("релиз")
+    window.apply_archive_filters()
+
+    day_texts = [label.text() for label in window.archive_days_list.findChildren(QLabel)]
+    result_texts = [label.text() for label in window.archive_results_list.findChildren(QLabel)]
+    assert release_day.name in day_texts
+    assert other_day.name not in day_texts
+    assert any("Планирование релиза" in text or "Транскрипт" in text for text in result_texts)
+    assert window.archive_results_scroll.maximumHeight() == 150
+
+    window.close()
+    app.processEvents()
+
+
 def test_help_page_explains_local_flow(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
