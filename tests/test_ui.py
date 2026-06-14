@@ -2524,7 +2524,6 @@ def test_archive_empty_state_points_to_today_workday(tmp_path: Path) -> None:
     archive_text = "\n".join(label.text() for label in window.pages.widget(2).findChildren(QLabel))
     assert "Прошлых рабочих дней пока нет" in archive_text
     assert "Сегодняшний день находится во вкладке `Рабочий день`." in archive_text
-    assert "Архив пока не реализован" not in archive_text
 
     window.close()
     app.processEvents()
@@ -2673,6 +2672,29 @@ def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path)
 
     assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
     assert (day_folder / "00_day_summary_final.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_page_contains_expected_controls(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    archive_text = "\n".join(label.text() for label in window.pages.widget(2).findChildren(QLabel))
+    buttons = "\n".join(button.text() for button in window.pages.widget(2).findChildren(QPushButton))
+
+    assert "Архив" in archive_text
+    assert "Прошлые дни" in archive_text
+    assert "Итоги дня" in archive_text
+    assert "Неделя" in buttons
+    assert "Месяц" in buttons
+    assert "Все" in buttons
 
     window.close()
     app.processEvents()
