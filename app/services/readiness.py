@@ -199,7 +199,7 @@ def _summary_status(
                 _detail("Генерация", "Выключена настройками"),
                 _detail("Модель", model),
                 _detail("API key", "Не требуется"),
-                _detail("Итог", "summary_draft.md не будет создан автоматически"),
+                _detail("Итог", "summary.md не будет создан автоматически"),
             ],
         )
     api_key_env = str(config.get("api_key_env") or "AITUNNEL_KEY")

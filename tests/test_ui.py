@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -24,6 +24,7 @@ from app.ui.main_window import (
     RiskyActionConfirmationOverlay,
     StartMeetingOverlay,
 )
+from app.ui.summary_viewer import SummaryMaterialView
 
 
 class CloseEventStub:
@@ -37,6 +38,50 @@ class CloseEventStub:
 class EnabledRecorder(NoopRecorder):
     enabled = True
     status_text = "OBS: подключен"
+
+
+def test_summary_material_view_starts_in_preview_mode() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итоги встречи")
+    view.set_markdown("# Итоги встречи\n\n## Кратко\n- Обсудили релиз")
+    view.show()
+    app.processEvents()
+
+    assert view.mode == "preview"
+    assert view.editor.isHidden()
+    assert view.preview.isVisible()
+    assert view.edit_button.isVisible()
+    assert view.save_button.isHidden()
+    assert view.cancel_button.isHidden()
+    assert "Обсудили релиз" in view.preview.toPlainText()
+
+    view.close()
+    app.processEvents()
+
+
+def test_summary_material_view_edit_save_and_cancel_signals() -> None:
+    app = QApplication.instance() or QApplication([])
+    saved: list[str] = []
+    view = SummaryMaterialView("Итоги встречи")
+    view.save_requested.connect(saved.append)
+    view.set_markdown("# Старый итог\n")
+
+    view.enter_edit_mode()
+    view.editor.setPlainText("# Новый итог\n")
+    view.save_button.click()
+
+    assert saved == ["# Новый итог\n"]
+    assert view.mode == "preview"
+
+    view.enter_edit_mode()
+    view.editor.setPlainText("# Несохраненный итог\n")
+    view.cancel_button.click()
+
+    assert view.markdown == "# Новый итог\n"
+    assert view.mode == "preview"
+
+    view.close()
+    app.processEvents()
 
 
 def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
@@ -2175,7 +2220,8 @@ def test_review_screen_uses_meeting_summary_transcript_and_day_summary_card(
     assert window.meeting_summary_editor.toPlainText() == "# Итоги дня\n"
     assert "Ревью" in window.meeting_transcript_editor.toPlainText()
     assert "Открыть транскрипт внутри приложения" in window.meeting_transcript_editor.toPlainText()
-    assert window.save_final_files_button.isEnabled()
+    assert not hasattr(window, "save_final_files_button")
+    assert window.review_summary_view.mode == "preview"
 
     window.close()
     app.processEvents()
@@ -2967,7 +3013,7 @@ def test_archive_editor_survives_multiple_detail_rebuilds(tmp_path: Path) -> Non
     app.processEvents()
 
 
-def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path) -> None:
+def test_archive_saves_meeting_and_day_summary_single_files(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
@@ -2981,20 +3027,20 @@ def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path)
     window = MainWindow(storage, recorder)
     window.open_archive()
     window.edit_archive_meeting_summary(meeting)
-    window.archive_editor.setPlainText("# Новый черновик встречи\n")
+    window.archive_summary_view.enter_edit_mode()
+    window.archive_editor.setPlainText("# Новый итог встречи\n")
     window.save_archive_draft()
-    window.save_archive_final()
 
-    assert (meeting / "summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
-    assert (meeting / "summary_final.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
+    assert (meeting / "summary.md").read_text(encoding="utf-8") == "# Новый итог встречи\n"
+    assert not (meeting / "summary_final.md").exists()
 
     window.edit_archive_day_summary(day_folder)
-    window.archive_editor.setPlainText("# Новый черновик дня\n")
+    window.archive_summary_view.enter_edit_mode()
+    window.archive_editor.setPlainText("# Новый итог дня\n")
     window.save_archive_draft()
-    window.save_archive_final()
 
-    assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
-    assert (day_folder / "00_day_summary_final.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
+    assert (day_folder / "00_day_summary.md").read_text(encoding="utf-8") == "# Новый итог дня\n"
+    assert not (day_folder / "00_day_summary_final.md").exists()
 
     window.close()
     app.processEvents()
@@ -3150,6 +3196,43 @@ def test_archive_visible_text_is_russian_and_actions_are_specific(tmp_path: Path
     assert "Просмотреть транскрипт" in visible_text
     assert "Редактировать итоги" not in visible_text
     assert "Сформировать итоги дня" not in visible_text
+
+    window.close()
+    app.processEvents()
+
+
+def test_summary_review_and_archive_ui_no_longer_shows_draft_or_final_words(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date.today())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder("Проверка", datetime.fromisoformat(f"{day_folder.name}T10:00:00"))
+    storage.save_meeting_summary(meeting, "# Итог\n")
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+
+    archive_day = storage.create_day_folder(date.today() - timedelta(days=1))
+    storage._write_json(archive_day / "day_metadata.json", {"date": archive_day.name, "status": "ended"})
+    storage.save_day_summary(archive_day, "# Архивный итог дня\n")
+
+    window = MainWindow(storage, recorder)
+    window.open_review()
+    window.open_archive()
+
+    pages = [window.pages.widget(1), window.pages.widget(2)]
+    visible_text = "\n".join(
+        text
+        for page in pages
+        for text in (
+            [label.text() for label in page.findChildren(QLabel)]
+            + [button.text() for button in page.findChildren(QPushButton)]
+        )
+    ).casefold()
+
+    assert "чернов" not in visible_text
+    assert "финал" not in visible_text
+    assert "draft" not in visible_text
+    assert "final" not in visible_text
 
     window.close()
     app.processEvents()

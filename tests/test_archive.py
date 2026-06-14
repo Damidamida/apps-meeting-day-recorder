@@ -60,6 +60,20 @@ def test_search_archive_finds_title_summary_day_summary_and_transcript(tmp_path)
     assert all(match.day_folder == day_folder for match in matches)
 
 
+def test_search_archive_finds_single_summary_files(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 12))
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    storage.save_day_summary(day_folder, "Дневной релиз найден")
+    meeting = storage.create_meeting_folder("План", datetime(2026, 6, 12, 10, 0))
+    storage.save_meeting_summary(meeting, "Встреча про релиз найдена")
+
+    days = build_archive_days(storage, now=datetime(2026, 6, 14, 12, 0))
+    matches = search_archive(days, "релиз")
+
+    assert {match.kind for match in matches} >= {"Итоги дня", "Итоги встречи"}
+
+
 def test_build_archive_days_survives_corrupted_meeting_metadata(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 12))

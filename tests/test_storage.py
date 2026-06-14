@@ -44,8 +44,8 @@ def test_placeholder_summary_file_generation(tmp_path) -> None:
 
     summary_path = storage.write_placeholder_summary(meeting_folder)
 
-    assert summary_path == meeting_folder / "summary_draft.md"
-    assert "Черновик итогов встречи" in summary_path.read_text(encoding="utf-8")
+    assert summary_path == meeting_folder / "summary.md"
+    assert "Итоги встречи" in summary_path.read_text(encoding="utf-8")
 
 
 def test_start_workday_creates_day_metadata(tmp_path) -> None:
@@ -172,7 +172,7 @@ def test_end_meeting_creates_placeholder_files_and_updates_day(tmp_path) -> None
     assert metadata["summary_status"] == "disabled"
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
-    assert (meeting_folder / "summary_draft.md").is_file()
+    assert (meeting_folder / "summary.md").is_file()
     assert day_metadata["meetings"] == [{"folder": "09-15_Planning", **metadata}]
     assert not storage.meeting_active
 
@@ -810,7 +810,7 @@ def test_end_workday_creates_day_drafts(tmp_path) -> None:
         {"type": "started", "at": "2026-06-01T08:30:00"},
         {"type": "ended", "at": "2026-06-01T18:00:00"},
     ]
-    assert (day_folder / "00_day_summary_draft.md").is_file()
+    assert (day_folder / "00_day_summary.md").is_file()
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
 
@@ -938,8 +938,8 @@ def test_full_happy_path_still_works(tmp_path) -> None:
     assert (meeting_folder / "meeting_metadata.json").is_file()
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
-    assert (meeting_folder / "summary_draft.md").is_file()
-    assert (day_folder / "00_day_summary_draft.md").is_file()
+    assert (meeting_folder / "summary.md").is_file()
+    assert (day_folder / "00_day_summary.md").is_file()
     assert (day_folder / "00_tasks_draft.md").is_file()
     assert not storage.workday_active
     assert not storage.meeting_active
@@ -1001,7 +1001,7 @@ def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) ->
         def summarize_meeting(self, meeting_folder, metadata):
             self.called = True
             assert metadata["transcription_status"] == "completed"
-            (meeting_folder / "summary_draft.md").write_text(
+            (meeting_folder / "summary.md").write_text(
                 "# Итоги встречи\n\n## Кратко\n\nОбсудили план.\n",
                 encoding="utf-8",
             )
@@ -1009,7 +1009,7 @@ def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) ->
                 "summary_status": "draft_created",
                 "summary_provider": "openai",
                 "summary_model": "gpt-5.4-mini",
-                "summary_path": str(meeting_folder / "summary_draft.md"),
+                "summary_path": str(meeting_folder / "summary.md"),
                 "summary_generated_at": "2026-06-01T09:41:00",
             }
 
@@ -1030,8 +1030,8 @@ def test_end_meeting_runs_summarizer_after_successful_transcription(tmp_path) ->
     assert summarizer.called
     assert metadata["summary_status"] == "draft_created"
     assert metadata["summary_provider"] == "openai"
-    assert storage.last_summary_message == "Черновик итогов подготовлен."
-    assert "Обсудили план" in (meeting_folder / "summary_draft.md").read_text(encoding="utf-8")
+    assert storage.last_summary_message == "Итоги подготовлены."
+    assert "Обсудили план" in (meeting_folder / "summary.md").read_text(encoding="utf-8")
 
 
 def test_end_meeting_pipeline_emits_progress_events(tmp_path) -> None:
@@ -1115,9 +1115,24 @@ def test_read_and_save_meeting_summary_draft(tmp_path) -> None:
     placeholder = storage.read_meeting_summary_draft(meeting_folder)
     saved_path = storage.save_meeting_summary_draft(meeting_folder, "# Обновленные итоги\n")
 
-    assert "Черновик итогов встречи" in placeholder
+    assert "Итоги встречи" in placeholder
     assert saved_path == meeting_folder / "summary_draft.md"
     assert storage.read_meeting_summary_draft(meeting_folder) == "# Обновленные итоги\n"
+
+
+def test_read_and_save_meeting_summary_single_file_with_legacy_fallback(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    meeting_folder = storage.create_meeting_folder("Новая модель", datetime(2026, 6, 14, 10, 0))
+
+    (meeting_folder / "summary.md").unlink()
+    (meeting_folder / "summary_draft.md").write_text("# Старый итог\n", encoding="utf-8")
+    assert storage.read_meeting_summary(meeting_folder) == "# Старый итог\n"
+
+    saved_path = storage.save_meeting_summary(meeting_folder, "# Новый итог\n")
+
+    assert saved_path == meeting_folder / "summary.md"
+    assert storage.read_meeting_summary(meeting_folder) == "# Новый итог\n"
+    assert (meeting_folder / "summary.md").read_text(encoding="utf-8") == "# Новый итог\n"
 
 
 def test_save_meeting_summary_final_writes_final_without_touching_draft(tmp_path) -> None:
@@ -1141,10 +1156,24 @@ def test_read_and_save_day_summary_and_tasks_drafts(tmp_path) -> None:
     storage.save_day_summary_draft(day_folder, "# Итоги дня\n")
     storage.save_tasks_draft(day_folder, "# Задачи\n")
 
-    assert "Черновик итогов дня" in day_placeholder
+    assert "Итоги дня" in day_placeholder
     assert "Черновик задач" in tasks_placeholder
     assert storage.read_day_summary_draft(day_folder) == "# Итоги дня\n"
     assert storage.read_tasks_draft(day_folder) == "# Задачи\n"
+
+
+def test_read_and_save_day_summary_single_file_with_legacy_fallback(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+
+    (day_folder / "00_day_summary_draft.md").write_text("# Старый итог дня\n", encoding="utf-8")
+    assert storage.read_day_summary(day_folder) == "# Старый итог дня\n"
+
+    saved_path = storage.save_day_summary(day_folder, "# Новый итог дня\n")
+
+    assert saved_path == day_folder / "00_day_summary.md"
+    assert storage.read_day_summary(day_folder) == "# Новый итог дня\n"
+    assert (day_folder / "00_day_summary.md").read_text(encoding="utf-8") == "# Новый итог дня\n"
 
 
 def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_meetings(
@@ -1160,10 +1189,10 @@ def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_m
 
         def summarize_day(self, day_folder, current_summary, meeting_summaries):
             self.calls.append(meeting_summaries)
-            assert "# Черновик итогов дня" in current_summary
+            assert "# Итоги дня" in current_summary
             assert meeting_summaries[0]["summary_source"] == "draft"
             assert meeting_summaries[1]["summary_source"] == "missing"
-            (day_folder / "00_day_summary_draft.md").write_text(
+            (day_folder / "00_day_summary.md").write_text(
                 "# Итоги встреч\n\nСводка дня.\n",
                 encoding="utf-8",
             )
@@ -1171,7 +1200,7 @@ def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_m
                 "day_summary_status": "draft_created",
                 "day_summary_provider": "openai",
                 "day_summary_model": "gpt-5.4-mini",
-                "day_summary_path": str(day_folder / "00_day_summary_draft.md"),
+                "day_summary_path": str(day_folder / "00_day_summary.md"),
                 "day_summary_generated_at": "2026-06-01T18:10:00",
             }
 
