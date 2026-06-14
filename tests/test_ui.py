@@ -613,6 +613,97 @@ def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_sidebar_theme_toggle_applies_and_saves_theme(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.theme_toggle_button.text() == "Светлая тема"
+    assert window.config["ui"]["theme"] == "light"
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["ui"]["theme"] == "dark"
+    assert window.config["ui"]["theme"] == "dark"
+    assert window.settings_theme_select.currentData() == "dark"
+    assert window.theme_toggle_button.text() == "Темная тема"
+    assert "#0f172a" in window.styleSheet()
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["ui"]["theme"] == "light"
+    assert window.config["ui"]["theme"] == "light"
+    assert window.settings_theme_select.currentData() == "light"
+    assert window.theme_toggle_button.text() == "Светлая тема"
+    assert "#f6efe6" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_sidebar_theme_toggle_preserves_existing_config_without_runtime_keys(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text(
+        "storage:\n"
+        "  root: CustomSummaries\n"
+        "ui:\n"
+        "  theme: light\n"
+        "  floating_theme: dark\n"
+        "custom_flag: keep-me\n",
+        encoding="utf-8",
+    )
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["storage"]["root"] == "CustomSummaries"
+    assert config["ui"] == {"theme": "dark", "floating_theme": "dark"}
+    assert config["custom_flag"] == "keep-me"
+    assert "_warnings" not in config
+    assert "obs" not in config
+
+    window.close()
+    app.processEvents()
+
+
+def test_sidebar_theme_toggle_refuses_to_overwrite_invalid_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("- broken\n", encoding="utf-8")
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    assert config_path.read_text(encoding="utf-8") == "- broken\n"
+    assert window.config["ui"]["theme"] == "light"
+    assert "Тема не изменена" in window.status_label.text()
+    assert "config.yaml" in window.status_label.text()
+
+    window.close()
+    app.processEvents()
+
+
 def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -1779,18 +1870,19 @@ def test_settings_screen_handles_config_write_error(
     recorder = NoopRecorder()
     storage = StorageService(tmp_path / "data", recorder)
     window = MainWindow(storage, recorder)
-    original_write_text = main_window_module.Path.write_text
+    original_replace = main_window_module.Path.replace
 
-    def flaky_write_text(self: Path, *args, **kwargs) -> int:
-        if self.name == "config.yaml":
+    def flaky_replace(self: Path, target: Path) -> Path:
+        if Path(target).name == "config.yaml":
             raise OSError("disk full")
-        return original_write_text(self, *args, **kwargs)
+        return original_replace(self, target)
 
-    monkeypatch.setattr(main_window_module.Path, "write_text", flaky_write_text)
+    monkeypatch.setattr(main_window_module.Path, "replace", flaky_replace)
 
     window.save_settings()
 
     assert not (tmp_path / "config.yaml").exists()
+    assert not list(tmp_path.glob(".config.yaml.*.tmp"))
     assert "Настройки не сохранены" in window.settings_status_label.text()
     assert "config.yaml" in window.settings_status_label.text()
     assert "disk full" in window.settings_status_label.text()
