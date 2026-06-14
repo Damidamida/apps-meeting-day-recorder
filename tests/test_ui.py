@@ -10,14 +10,19 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy, QWidget
 
 from app.services.recorder import NoopRecorder
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
 from app.ui import main_window as main_window_module
-from app.ui.main_window import FloatingMeetingControl, MainWindow, StartMeetingOverlay
+from app.ui.main_window import (
+    FloatingMeetingControl,
+    MainWindow,
+    RiskyActionConfirmationOverlay,
+    StartMeetingOverlay,
+)
 
 
 class CloseEventStub:
@@ -148,6 +153,65 @@ def test_start_meeting_overlay_uses_prototype_style_and_validates_title() -> Non
     assert enabled_overlay.recording_status_label.text() == "OBS будет запущен автоматически"
     assert enabled_overlay.recording_status_label.property("state") == "ok"
     enabled_overlay.close()
+    app.processEvents()
+
+
+def test_risky_action_confirmation_overlay_shows_exact_meeting_warning_in_app() -> None:
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(900, 600)
+    overlay = RiskyActionConfirmationOverlay(parent)
+    overlay.apply_theme("dark")
+
+    overlay.open_confirmation(
+        "Повторить обработку встречи?",
+        "Если вы вручную меняли Итог встречи, новая обработка заменит ваши изменения.",
+        "Повторить обработку",
+    )
+
+    assert overlay.objectName() == "meetingOverlay"
+    assert overlay.card.objectName() == "meetingOverlayCard"
+    assert not overlay.isHidden()
+    assert overlay.title_label.text() == "Повторить обработку встречи?"
+    assert overlay.message_label.text() == (
+        "Если вы вручную меняли Итог встречи, новая обработка заменит ваши изменения."
+    )
+    assert overlay.confirm_button.text() == "Повторить обработку"
+    assert overlay.cancel_button.text() == "Отмена"
+    assert overlay.cancel_button.isDefault()
+    assert "QMessageBox" not in type(overlay).__name__
+
+    overlay.cancel_button.click()
+    assert overlay.isHidden()
+    parent.deleteLater()
+    app.processEvents()
+
+
+def test_risky_action_confirmation_overlay_shows_exact_day_warning_in_app() -> None:
+    app = QApplication.instance() or QApplication([])
+    parent = QWidget()
+    parent.resize(900, 600)
+    overlay = RiskyActionConfirmationOverlay(parent)
+    overlay.apply_theme("dark")
+
+    overlay.open_confirmation(
+        "Обновить итоги дня?",
+        "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+        "Обновить итоги дня",
+    )
+
+    assert overlay.title_label.text() == "Обновить итоги дня?"
+    assert overlay.message_label.text() == (
+        "Если вы вручную меняли Итог дня, обновление заменит ваши изменения."
+    )
+    assert overlay.confirm_button.text() == "Обновить итоги дня"
+    assert overlay.cancel_button.text() == "Отмена"
+    assert overlay.cancel_button.isDefault()
+    assert "#111827" in overlay.styleSheet()
+
+    overlay.cancel_button.click()
+    assert overlay.isHidden()
+    parent.deleteLater()
     app.processEvents()
 
 
