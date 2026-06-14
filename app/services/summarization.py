@@ -198,7 +198,7 @@ class OpenAISummarizer:
                 **ai_error_metadata("summary", error, OPENAI_FAILED_ERROR),
             }
 
-        summary_path = meeting_folder / "summary_draft.md"
+        summary_path = meeting_folder / "summary.md"
         summary_path.write_text(summary_text.rstrip() + "\n", encoding="utf-8")
         result: dict[str, Any] = {
             "summary_status": "draft_created",
@@ -212,7 +212,7 @@ class OpenAISummarizer:
         return result
 
     def _write_suspect_summary(self, meeting_folder: Path) -> dict[str, Any]:
-        summary_path = meeting_folder / "summary_draft.md"
+        summary_path = meeting_folder / "summary.md"
         summary_path.write_text(
             "# Итоги встречи\n\n"
             "Транскрипция требует проверки. Итоги не сформированы, "
@@ -275,7 +275,7 @@ class OpenAISummarizer:
                 ),
             }
 
-        summary_path = day_folder / "00_day_summary_draft.md"
+        summary_path = day_folder / "00_day_summary.md"
         summary_path.write_text(summary_text.rstrip() + "\n", encoding="utf-8")
         result: dict[str, Any] = {
             "day_summary_status": "draft_created",
@@ -471,7 +471,7 @@ def skipped_summary_metadata(reason: str = TRANSCRIPT_NOT_READY_ERROR) -> dict[s
 def summary_message(metadata: dict[str, Any]) -> str:
     status = metadata.get("summary_status")
     if status == "draft_created":
-        return "Черновик итогов подготовлен."
+        return "Итоги подготовлены."
     if status == "disabled":
         return "Итоги не подготовлены: генерация итогов выключена в настройках."
     if status == "skipped":

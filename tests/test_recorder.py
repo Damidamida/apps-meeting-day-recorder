@@ -197,4 +197,4 @@ def test_stop_recording_failure_keeps_metadata_and_placeholder_files(tmp_path) -
     assert metadata["transcription_status"] == "skipped"
     assert (meeting_folder / "transcript.md").is_file()
     assert (meeting_folder / "transcript.json").is_file()
-    assert (meeting_folder / "summary_draft.md").is_file()
+    assert (meeting_folder / "summary.md").is_file()
