@@ -86,12 +86,19 @@ def build_archive_days(
             continue
         meetings = _archive_meetings(storage, day_folder)
         has_summary = storage.day_summary_exists(day_folder)
-        has_unfinished = storage.has_unfinished_meeting_processing(day_folder)
+        try:
+            has_unfinished = storage.has_unfinished_meeting_processing(day_folder)
+            status_label = _day_status_label(storage, day_folder, metadata, has_summary, has_unfinished)
+        except MetadataReadError:
+            has_unfinished = False
+            status_label = "Требует внимания"
+        if not has_unfinished and any(meeting.status_label == "Требует внимания" for meeting in meetings):
+            status_label = "Требует внимания"
         days.append(
             ArchiveDay(
                 folder=day_folder,
                 workday=workday,
-                status_label=_day_status_label(storage, day_folder, metadata, has_summary, has_unfinished),
+                status_label=status_label,
                 detail_text=_meeting_count_text(len(meetings)),
                 meeting_count=len(meetings),
                 has_day_summary=has_summary,
@@ -185,7 +192,17 @@ def _archive_meetings(storage: StorageService, day_folder: Path) -> list[Archive
         try:
             metadata = storage.read_meeting_metadata(meeting_folder)
         except MetadataReadError:
-            metadata = {}
+            meetings.append(
+                ArchiveMeeting(
+                    folder=meeting_folder,
+                    day_folder=day_folder,
+                    title=meeting_folder.name,
+                    started_at="",
+                    status_label="Требует внимания",
+                    metadata={"status": "corrupted"},
+                )
+            )
+            continue
         meetings.append(
             ArchiveMeeting(
                 folder=meeting_folder,
@@ -232,6 +249,8 @@ def _day_status_label(
 
 def _meeting_status_label(metadata: dict[str, object]) -> str:
     processing_status = metadata.get("processing_status")
+    if metadata.get("__auto_healed") or metadata.get("status") == "corrupted":
+        return "Требует внимания"
     if metadata.get("status") == "active":
         return "Активна"
     if processing_status in {"pending", "running"}:
@@ -256,7 +275,7 @@ def _append_file_match(
         return
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return
     index = text.casefold().find(normalized_query)
     if index < 0:

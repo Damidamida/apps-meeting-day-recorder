@@ -58,3 +58,28 @@ def test_search_archive_finds_title_summary_day_summary_and_transcript(tmp_path)
         "Транскрипт",
     }
     assert all(match.day_folder == day_folder for match in matches)
+
+
+def test_build_archive_days_survives_corrupted_meeting_metadata(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 12))
+    storage._write_json(day_folder / "day_metadata.json", {"date": "2026-06-12", "status": "ended"})
+    meeting = storage.create_meeting_folder("Поврежденная встреча", datetime(2026, 6, 12, 9, 30))
+    (meeting / "meeting_metadata.json").write_text("{", encoding="utf-8")
+
+    days = build_archive_days(storage, now=datetime(2026, 6, 14, 12, 0))
+
+    assert len(days) == 1
+    assert days[0].status_label == "Требует внимания"
+
+
+def test_search_archive_skips_non_utf8_files(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 12))
+    storage._write_json(day_folder / "day_metadata.json", {"date": "2026-06-12", "status": "ended"})
+    meeting = storage.create_meeting_folder("Архив", datetime(2026, 6, 12, 9, 30))
+    (meeting / "transcript.md").write_bytes(b"\xff\xfe\xfa")
+
+    days = build_archive_days(storage, now=datetime(2026, 6, 14, 12, 0))
+
+    assert search_archive(days, "релиз") == []

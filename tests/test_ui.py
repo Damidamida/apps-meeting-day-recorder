@@ -10,6 +10,7 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy
 
 from app.services.recorder import NoopRecorder
@@ -2615,6 +2616,33 @@ def test_archive_search_filters_days_and_shows_fixed_results(tmp_path: Path) -> 
     app.processEvents()
 
 
+def test_archive_search_match_opens_matched_transcript(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Планирование",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    (meeting / "transcript.md").write_text("Обсудили релиз и метрики", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.archive_search_input.setText("релиз")
+    window.apply_archive_filters()
+    transcript_match = next(match for match in window.archive_matches if match.kind == "Транскрипт")
+
+    window.open_archive_search_match(transcript_match)
+
+    assert window.archive_editor.isReadOnly()
+    assert window.archive_editor.toPlainText() == "Обсудили релиз и метрики"
+
+    window.close()
+    app.processEvents()
+
+
 def test_archive_meeting_detail_shows_summary_and_readonly_transcript(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -2639,6 +2667,33 @@ def test_archive_meeting_detail_shows_summary_and_readonly_transcript(tmp_path: 
 
     assert window.archive_editor.toPlainText() == "Текст transcript"
     assert window.archive_editor.isReadOnly()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_editor_survives_multiple_detail_rebuilds(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary_draft(meeting, "# Итоги встречи\n")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.edit_archive_meeting_summary(meeting)
+    app.processEvents()
+    window.refresh_archive()
+    app.processEvents()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    window.edit_archive_meeting_summary(meeting)
+
+    assert window.archive_editor.toPlainText() == "# Итоги встречи\n"
 
     window.close()
     app.processEvents()
@@ -2694,7 +2749,7 @@ def test_archive_page_contains_expected_controls(tmp_path: Path) -> None:
     assert "Итоги дня" in archive_text
     assert "Неделя" in buttons
     assert "Месяц" in buttons
-    assert "Все" in buttons
+    assert "Все" in buttons  # noqa: RUF001
 
     window.close()
     app.processEvents()
@@ -2719,6 +2774,7 @@ def test_archive_finish_active_past_day_recovers_meetings_and_requests_day_summa
     window = MainWindow(storage, recorder)
     window._request_day_summary_update = lambda day_folder, force=False: requested.append(day_folder) or "ok"
     window._enqueue_meeting_processing = lambda meeting_folder: enqueued.append(meeting_folder)
+    window.past_workday_folder = past_day
     window.finish_archive_workday(past_day)
 
     day_metadata = storage.read_day_metadata(past_day)
@@ -2727,6 +2783,7 @@ def test_archive_finish_active_past_day_recovers_meetings_and_requests_day_summa
     assert meeting_metadata["processing_status"] == "pending"
     assert enqueued == [meeting]
     assert requested == [past_day]
+    assert window.past_workday_folder is None
 
     window.close()
     app.processEvents()
@@ -2761,6 +2818,23 @@ def test_archive_reprocess_meeting_uses_existing_queue(tmp_path: Path) -> None:
 
     assert storage.read_meeting_metadata(meeting)["processing_status"] == "pending"
     assert enqueued == [meeting]
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_refreshes_after_lifecycle_change_when_visible(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    calls: list[str] = []
+
+    window.open_archive()
+    window.refresh_archive = lambda: calls.append("archive")
+    window._refresh_after_lifecycle_change()
+
+    assert calls == ["archive"]
 
     window.close()
     app.processEvents()

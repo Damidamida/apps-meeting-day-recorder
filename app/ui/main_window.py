@@ -2646,16 +2646,18 @@ class MainWindow(QMainWindow):
         return started_at, meeting_folder.name
 
     @staticmethod
-    def _clear_layout(layout) -> None:
+    def _clear_layout(layout, preserve: set[QWidget] | None = None) -> None:
+        preserve = preserve or set()
         while layout.count():
             item = layout.takeAt(0)
             child_layout = item.layout()
             if child_layout is not None:
-                MainWindow._clear_layout(child_layout)
+                MainWindow._clear_layout(child_layout, preserve)
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
-                widget.deleteLater()
+                if widget not in preserve:
+                    widget.deleteLater()
 
     def _meeting_header_text(self, meeting_folder: Path, metadata: dict[str, object]) -> str:
         title = str(metadata.get("title") or meeting_folder.name)
@@ -4446,6 +4448,15 @@ class MainWindow(QMainWindow):
 
     def open_archive_search_match(self, match: ArchiveSearchMatch) -> None:
         self.selected_archive_day_folder = match.day_folder
+        if match.meeting_folder is not None:
+            if match.kind == "Транскрипт":
+                self.show_archive_transcript(match.meeting_folder)
+            else:
+                self.edit_archive_meeting_summary(match.meeting_folder)
+            return
+        if match.kind == "Итоги дня":
+            self.edit_archive_day_summary(match.day_folder)
+            return
         self._render_archive_detail()
 
     def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
@@ -4480,7 +4491,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _render_archive_detail(self) -> None:
-        self._clear_layout(self.archive_detail_layout)
+        self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
         day = self._selected_archive_day()
         if day is None:
             return
@@ -4584,7 +4595,10 @@ class MainWindow(QMainWindow):
         self.archive_selected_material = "transcript"
         transcript_path = Path(meeting_folder) / "transcript.md"
         if transcript_path.is_file():
-            text = transcript_path.read_text(encoding="utf-8")
+            try:
+                text = transcript_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                text = "Transcript пока не удалось прочитать."
         else:
             text = "Transcript пока не найден."
         self.archive_editor.setReadOnly(True)
@@ -4592,7 +4606,7 @@ class MainWindow(QMainWindow):
         self._show_archive_editor("Транскрипт")
 
     def _show_archive_editor(self, title: str) -> None:
-        self._clear_layout(self.archive_detail_layout)
+        self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
         title_label = QLabel(title)
         title_label.setObjectName("cardTitle")
         self.archive_detail_layout.addWidget(title_label)
@@ -4653,6 +4667,7 @@ class MainWindow(QMainWindow):
         if pending or recovered:
             self.storage.mark_day_summary_waiting(day_folder)
         self._request_day_summary_update(day_folder, force=False)
+        self.past_workday_folder = self.storage.find_past_active_workday()
         self._refresh_past_workday_recovery_card()
         self.refresh_archive()
 
@@ -6290,6 +6305,8 @@ class MainWindow(QMainWindow):
         self.refresh_buttons()
         if self.pages.currentIndex() == 1:
             self.refresh_review()
+        elif self.pages.currentIndex() == 2:
+            self.refresh_archive()
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
