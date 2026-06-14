@@ -4497,6 +4497,20 @@ class MainWindow(QMainWindow):
         label.setObjectName("sectionHint")
         label.setWordWrap(True)
         body_layout.addWidget(label)
+        actions = QHBoxLayout()
+        self._add_button(
+            actions,
+            "Редактировать",
+            lambda checked=False, folder=day.folder: self.edit_archive_day_summary(folder),
+        )
+        self._add_button(
+            actions,
+            "Сформировать итоги дня",
+            lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
+            "primaryButton",
+        )
+        actions.addStretch(1)
+        body_layout.addLayout(actions)
         return self._create_card("Итоги дня", body_layout)
 
     def _create_archive_meeting_card(self, meeting) -> QWidget:
@@ -4544,6 +4558,14 @@ class MainWindow(QMainWindow):
         self.archive_editor.setPlainText(self.storage.read_meeting_summary_draft(meeting_folder))
         self._show_archive_editor("Итоги встречи")
 
+    def edit_archive_day_summary(self, day_folder: Path) -> None:
+        self.selected_archive_day_folder = day_folder
+        self.selected_archive_meeting_folder = None
+        self.archive_selected_material = "day_summary"
+        self.archive_editor.setReadOnly(False)
+        self.archive_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
+        self._show_archive_editor("Итоги дня")
+
     def show_archive_transcript(self, meeting_folder: Path) -> None:
         self.selected_archive_meeting_folder = meeting_folder
         self.archive_selected_material = "transcript"
@@ -4562,6 +4584,47 @@ class MainWindow(QMainWindow):
         title_label.setObjectName("cardTitle")
         self.archive_detail_layout.addWidget(title_label)
         self.archive_detail_layout.addWidget(self.archive_editor, 1)
+        if not self.archive_editor.isReadOnly():
+            actions = QHBoxLayout()
+            self._add_button(actions, "Сохранить черновик", self.save_archive_draft)
+            self._add_button(actions, "Сохранить финал", self.save_archive_final)
+            self._add_button(actions, "Отмена", self.refresh_archive)
+            actions.addStretch(1)
+            self.archive_detail_layout.addLayout(actions)
+
+    def save_archive_draft(self) -> None:
+        if self.archive_editor.isReadOnly():
+            return
+        text = self.archive_editor.toPlainText()
+        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
+            self.storage.save_day_summary_draft(self.selected_archive_day_folder, text)
+            self.status_label.setText("Черновик итогов дня сохранен локально.")
+        elif (
+            self.archive_selected_material == "meeting_summary"
+            and self.selected_archive_meeting_folder is not None
+        ):
+            self.storage.save_meeting_summary_draft(self.selected_archive_meeting_folder, text)
+            self.status_label.setText("Черновик итогов встречи сохранен локально.")
+        self.refresh_archive()
+
+    def save_archive_final(self) -> None:
+        if self.archive_editor.isReadOnly():
+            return
+        text = self.archive_editor.toPlainText()
+        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
+            self.storage.save_day_summary_final(self.selected_archive_day_folder, text)
+            self.status_label.setText("Финальные итоги дня сохранены локально. Черновик не удален.")
+        elif (
+            self.archive_selected_material == "meeting_summary"
+            and self.selected_archive_meeting_folder is not None
+        ):
+            self.storage.save_meeting_summary_final(self.selected_archive_meeting_folder, text)
+            self.status_label.setText("Финальные итоги встречи сохранены локально. Черновик не удален.")
+        self.refresh_archive()
+
+    def request_archive_day_summary_update(self, day_folder: Path) -> None:
+        self._request_day_summary_update(day_folder, force=True)
+        self.refresh_archive()
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()

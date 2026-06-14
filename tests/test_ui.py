@@ -2645,6 +2645,39 @@ def test_archive_meeting_detail_shows_summary_and_readonly_transcript(tmp_path: 
     app.processEvents()
 
 
+def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.edit_archive_meeting_summary(meeting)
+    window.archive_editor.setPlainText("# Новый черновик встречи\n")
+    window.save_archive_draft()
+    window.save_archive_final()
+
+    assert (meeting / "summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
+    assert (meeting / "summary_final.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
+
+    window.edit_archive_day_summary(day_folder)
+    window.archive_editor.setPlainText("# Новый черновик дня\n")
+    window.save_archive_draft()
+    window.save_archive_final()
+
+    assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
+    assert (day_folder / "00_day_summary_final.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
+
+    window.close()
+    app.processEvents()
+
+
 def test_help_page_explains_local_flow(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
