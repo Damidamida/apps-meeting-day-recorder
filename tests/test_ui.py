@@ -3107,6 +3107,10 @@ def test_archive_search_no_matches_stays_at_top_with_dark_empty_result(tmp_path:
     assert window.archive_search_card.objectName() == "archiveSearchCard"
     assert window.archive_search_card.maximumHeight() <= 360
     assert window.archive_search_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
+    assert window.archive_no_matches_spacer.objectName() == "archiveNoMatchesSpacer"
+    assert not window.archive_no_matches_spacer.isHidden()
+    assert window.archive_no_matches_spacer.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    assert window.archive_no_matches_spacer.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     assert window.archive_results_list.objectName() == "archiveResultsList"
     assert window.archive_results_list.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     assert window.archive_results_scroll.maximumHeight() >= 190

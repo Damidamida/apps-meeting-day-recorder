@@ -1780,6 +1780,7 @@ class MainWindow(QMainWindow):
             QStackedWidget#pages,
             QWidget#pageSurface,
             QWidget#archiveHeader,
+            QWidget#archiveNoMatchesSpacer,
             QWidget#scrollViewport,
             QWidget#archiveScrollViewport {
                 background: %(bg)s;
@@ -4606,6 +4607,16 @@ class MainWindow(QMainWindow):
         self.archive_splitter.setSizes([320, 760])
         layout.addWidget(self.archive_splitter, 1)
 
+        self.archive_no_matches_spacer = QWidget()
+        self.archive_no_matches_spacer.setObjectName("archiveNoMatchesSpacer")
+        self.archive_no_matches_spacer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.archive_no_matches_spacer.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.archive_no_matches_spacer.setVisible(False)
+        layout.addWidget(self.archive_no_matches_spacer, 1)
+
         self.archive_editor = QPlainTextEdit()
         self.archive_editor.setObjectName("archiveEditor")
         self.archive_editor.setPlaceholderText("Выберите материал Архива.")
@@ -4653,6 +4664,7 @@ class MainWindow(QMainWindow):
 
         self.archive_empty_state.setVisible(not self.archive_days and not self.archive_query)
         self.archive_splitter.setVisible(bool(self.archive_days))
+        self.archive_no_matches_spacer.setVisible(bool(self.archive_query and not self.archive_days))
         self._render_archive_search_results()
         self._render_archive_days()
         self._render_archive_detail()
