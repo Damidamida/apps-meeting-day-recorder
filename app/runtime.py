@@ -14,4 +14,4 @@ def resource_path(relative_path: str | Path) -> Path:
 
 
 def bundled_tool_path(tool_name: str) -> Path:
-    return app_root() / "resources" / "ffmpeg" / tool_name
+    return resource_path(Path("resources") / "ffmpeg" / tool_name)

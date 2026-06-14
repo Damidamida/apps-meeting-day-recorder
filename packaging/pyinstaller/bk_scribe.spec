@@ -7,14 +7,15 @@ ROOT = Path(SPECPATH).resolve().parents[1]
 APP_NAME = "BK Scribe"
 ICON_PATH = ROOT / "app" / "assets" / "bk_scribe.ico"
 FFMPEG_DIR = ROOT / "packaging" / "ffmpeg" / "bin"
+FFMPEG_EXE = FFMPEG_DIR / "ffmpeg.exe"
 
 datas = [
     (str(ROOT / "app" / "assets"), "app/assets"),
     (str(ROOT / "config.yaml.example"), "."),
 ]
 
-if FFMPEG_DIR.is_dir():
-    datas.append(Tree(str(FFMPEG_DIR), prefix="resources/ffmpeg"))
+if FFMPEG_EXE.is_file():
+    datas.append((str(FFMPEG_EXE), "resources/ffmpeg"))
 
 a = Analysis(
     [str(ROOT / "app" / "main.py")],
