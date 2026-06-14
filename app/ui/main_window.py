@@ -1847,7 +1847,8 @@ class MainWindow(QMainWindow):
                 border-radius: 8px;
                 padding: 18px;
             }
-            QWidget#card {
+            QWidget#card,
+            QWidget#archiveDetailCard {
                 background: %(surface)s;
                 border: 1px solid %(border)s;
                 border-radius: 8px;
@@ -2102,6 +2103,36 @@ class MainWindow(QMainWindow):
             QScrollArea#archiveDaysScroll,
             QScrollArea#archiveResultsScroll {
                 background: %(bg)s;
+            }
+            QWidget#archiveDaysList,
+            QWidget#archiveResultsList {
+                background: %(bg)s;
+            }
+            QPushButton#archivePeriodButton {
+                min-width: 86px;
+                max-width: 86px;
+                padding: 6px 10px;
+            }
+            QPushButton#archivePeriodButton:checked {
+                background: %(accent)s;
+                color: #ffffff;
+                border-color: %(accent)s;
+            }
+            QPushButton#archiveDayCard {
+                background: %(surface)s;
+                color: %(text)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+                padding: 0;
+                text-align: left;
+            }
+            QPushButton#archiveDayCard:hover {
+                border-color: %(accent)s;
+                color: %(text)s;
+            }
+            QPushButton#archiveDayCard[selected="true"] {
+                background: %(surface_soft)s;
+                border-color: %(accent)s;
             }
             QWidget#archiveSearchResult {
                 background: %(surface_soft)s;
@@ -4469,20 +4500,30 @@ class MainWindow(QMainWindow):
         self.archive_all_button = self._add_button(
             filter_row, "Все", lambda checked=False: self.set_archive_period("all")
         )
+        for button in (self.archive_week_button, self.archive_month_button, self.archive_all_button):
+            button.setObjectName("archivePeriodButton")
+            button.setCheckable(True)
+            button.setMinimumWidth(86)
+            button.setMaximumWidth(86)
         filter_row.addWidget(QLabel("с"))
         self.archive_from_input = QLineEdit()
         self.archive_from_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_from_input.setInputMask("0000-00-00;_")
         self.archive_from_input.textChanged.connect(self._schedule_archive_search)
         filter_row.addWidget(self.archive_from_input)
         filter_row.addWidget(QLabel("по"))
         self.archive_to_input = QLineEdit()
         self.archive_to_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_to_input.setInputMask("0000-00-00;_")
         self.archive_to_input.textChanged.connect(self._schedule_archive_search)
         filter_row.addWidget(self.archive_to_input)
         filter_row.addStretch(1)
         controls_layout.addLayout(filter_row)
+        self._sync_archive_period_buttons()
 
         self.archive_results_list = QWidget()
+        self.archive_results_list.setObjectName("archiveResultsList")
+        self.archive_results_list.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.archive_results_layout = QVBoxLayout()
         self.archive_results_layout.setContentsMargins(0, 0, 0, 0)
         self.archive_results_layout.setSpacing(6)
@@ -4493,7 +4534,8 @@ class MainWindow(QMainWindow):
         self.archive_results_scroll.viewport().setObjectName("archiveScrollViewport")
         self.archive_results_scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.archive_results_scroll.setWidgetResizable(True)
-        self.archive_results_scroll.setMaximumHeight(150)
+        self.archive_results_scroll.setMinimumHeight(196)
+        self.archive_results_scroll.setMaximumHeight(196)
         self.archive_results_scroll.setWidget(self.archive_results_list)
         controls_layout.addWidget(self.archive_results_scroll)
         layout.addWidget(self._create_card("Поиск", controls_layout))
@@ -4521,6 +4563,8 @@ class MainWindow(QMainWindow):
         days_layout.addWidget(QLabel("Прошлые дни"))
         days_panel.setMinimumWidth(300)
         self.archive_days_list = QWidget()
+        self.archive_days_list.setObjectName("archiveDaysList")
+        self.archive_days_list.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.archive_days_layout = QVBoxLayout()
         self.archive_days_layout.setContentsMargins(0, 0, 0, 0)
         self.archive_days_layout.setSpacing(8)
@@ -4537,7 +4581,7 @@ class MainWindow(QMainWindow):
 
         details_panel = QWidget()
         self.archive_detail_layout = QVBoxLayout()
-        self.archive_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_detail_layout.setContentsMargins(0, 28, 0, 0)
         self.archive_detail_layout.setSpacing(10)
         details_panel.setLayout(self.archive_detail_layout)
 
@@ -4566,7 +4610,15 @@ class MainWindow(QMainWindow):
         if period in {"week", "month", "all"}:
             self.archive_from_input.clear()
             self.archive_to_input.clear()
+        self._sync_archive_period_buttons()
         self.apply_archive_filters()
+
+    def _sync_archive_period_buttons(self) -> None:
+        if not hasattr(self, "archive_week_button"):
+            return
+        self.archive_week_button.setChecked(self.archive_period == "week")
+        self.archive_month_button.setChecked(self.archive_period == "month")
+        self.archive_all_button.setChecked(self.archive_period == "all")
 
     def _schedule_archive_search(self) -> None:
         if hasattr(self, "archive_search_timer"):
@@ -4585,13 +4637,10 @@ class MainWindow(QMainWindow):
         if self.selected_archive_day_folder not in {day.folder for day in self.archive_days}:
             self.selected_archive_day_folder = self.archive_days[0].folder if self.archive_days else None
 
-        self.archive_empty_state.setVisible(not self.archive_days)
+        self.archive_empty_state.setVisible(not self.archive_days and not self.archive_query)
         self.archive_splitter.setVisible(bool(self.archive_days))
         self._render_archive_search_results()
-        self._clear_layout(self.archive_days_layout)
-        for day in self.archive_days:
-            self.archive_days_layout.addWidget(self._create_archive_day_card(day))
-        self.archive_days_layout.addStretch(1)
+        self._render_archive_days()
         self._render_archive_detail()
 
     def _archive_date_filter(self) -> ArchiveDateFilter | None:
@@ -4608,8 +4657,10 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _parse_archive_date(value: str) -> date | None:
-        value = value.strip()
+        value = value.strip().replace("_", "")
         if not value:
+            return None
+        if len(value) != 10:
             return None
         try:
             return date.fromisoformat(value)
@@ -4619,6 +4670,13 @@ class MainWindow(QMainWindow):
     def _render_archive_search_results(self) -> None:
         self.archive_results_scroll.setVisible(bool(self.archive_query))
         self._clear_layout(self.archive_results_layout)
+        if self.archive_query and not self.archive_matches:
+            empty_label = QLabel("Совпадений не найдено")
+            empty_label.setObjectName("sectionHint")
+            empty_label.setWordWrap(True)
+            self.archive_results_layout.addWidget(empty_label)
+            self.archive_results_layout.addStretch(1)
+            return
         for match in self.archive_matches:
             result = QWidget()
             result.setObjectName("archiveSearchResult")
@@ -4664,8 +4722,19 @@ class MainWindow(QMainWindow):
         self._render_archive_detail()
 
     def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
+        selected = day.folder == self.selected_archive_day_folder
+        card = QPushButton()
+        card.setObjectName("archiveDayCard")
+        card.setProperty("selected", selected)
+        card.setProperty("day_folder", day.folder)
+        card.setCheckable(True)
+        card.setChecked(selected)
+        card.setMaximumHeight(72)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.clicked.connect(lambda checked=False, folder=day.folder: self.select_archive_day(folder))
         body_layout = QVBoxLayout()
-        body_layout.setSpacing(6)
+        body_layout.setContentsMargins(12, 8, 12, 8)
+        body_layout.setSpacing(3)
         date_label = QLabel(day.workday.isoformat())
         date_label.setObjectName("meetingHeaderLabel")
         body_layout.addWidget(date_label)
@@ -4673,20 +4742,19 @@ class MainWindow(QMainWindow):
         details.setObjectName("sectionHint")
         details.setWordWrap(True)
         body_layout.addWidget(details)
-        button_row = QHBoxLayout()
-        self._add_button(
-            button_row,
-            "Открыть",
-            lambda checked=False, folder=day.folder: self.select_archive_day(folder),
-            "secondaryButton",
-        )
-        button_row.addStretch(1)
-        body_layout.addLayout(button_row)
-        return self._create_card("", body_layout)
+        card.setLayout(body_layout)
+        return card
 
     def select_archive_day(self, day_folder: Path) -> None:
         self.selected_archive_day_folder = day_folder
+        self._render_archive_days()
         self._render_archive_detail()
+
+    def _render_archive_days(self) -> None:
+        self._clear_layout(self.archive_days_layout)
+        for day in self.archive_days:
+            self.archive_days_layout.addWidget(self._create_archive_day_card(day))
+        self.archive_days_layout.addStretch(1)
 
     def _selected_archive_day(self) -> ArchiveDay | None:
         for day in self.archive_days:
@@ -4734,7 +4802,9 @@ class MainWindow(QMainWindow):
             )
         actions.addStretch(1)
         body_layout.addLayout(actions)
-        return self._create_card("Итоги дня", body_layout)
+        card = self._create_card("Итоги дня", body_layout)
+        card.setObjectName("archiveDetailCard")
+        return card
 
     def _create_archive_meeting_card(self, meeting) -> QWidget:
         body_layout = QVBoxLayout()
@@ -4765,7 +4835,9 @@ class MainWindow(QMainWindow):
         reprocess_button.setEnabled(self._can_reprocess_meeting(meeting.folder, meeting.metadata))
         actions.addStretch(1)
         body_layout.addLayout(actions)
-        return self._create_card("Встреча", body_layout)
+        card = self._create_card("Встреча", body_layout)
+        card.setObjectName("archiveDetailCard")
+        return card
 
     def _archive_visible_meetings(self, day: ArchiveDay):
         if not self.archive_query:
