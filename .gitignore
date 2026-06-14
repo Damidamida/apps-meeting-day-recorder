@@ -13,6 +13,7 @@ __pycache__/
 .venv/
 dist/
 build/
-*.spec
 *.egg-info/
 .pytest_cache/
+packaging/output/
+packaging/ffmpeg/bin/ffmpeg.exe
