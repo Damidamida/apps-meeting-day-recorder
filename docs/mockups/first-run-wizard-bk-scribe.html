@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BK Scribe - макет мастера настройки</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --sidebar: #111827;
+      --surface: #111827;
+      --surface-soft: #182235;
+      --surface-alt: #1f2937;
+      --surface-warm: #1f2937;
+      --line: #374151;
+      --line-soft: #263244;
+      --text: #f9fafb;
+      --muted: #d1d5db;
+      --hint: #9ca3af;
+      --accent: #f97316;
+      --accent-hover: #ea580c;
+      --danger: #ef4444;
+      --ok-bg: #064e3b;
+      --ok-text: #bbf7d0;
+      --warn-bg: #7f1d1d;
+      --warn-text: #fecaca;
+      --wait-bg: #1f2937;
+      --wait-text: #d1d5db;
+      --active-bg: #1e3a8a;
+      --active-text: #bfdbfe;
+      --disabled: #6b7280;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 230px minmax(900px, 1fr);
+      min-height: 720px;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      padding: 18px 0;
+    }
+
+    .brand {
+      padding: 2px 14px 18px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .brand-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-weight: 800;
+      font-size: 18px;
+      line-height: 1.15;
+    }
+
+    .brand-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .nav {
+      display: grid;
+      gap: 0;
+    }
+
+    .nav-item {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line-soft);
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .nav-item.active {
+      color: var(--accent);
+      background: var(--surface-soft);
+      border-left: 3px solid var(--accent);
+      padding-left: 15px;
+    }
+
+    .nav-item.locked {
+      color: var(--disabled);
+    }
+
+    .lock {
+      color: var(--disabled);
+      font-size: 13px;
+    }
+
+    .sidebar-bottom {
+      margin-top: auto;
+      padding: 14px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .theme-toggle,
+    .float-action {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--muted);
+      font-weight: 700;
+      text-align: left;
+      padding: 8px 12px;
+    }
+
+    .content {
+      min-width: 0;
+      padding: 14px 24px;
+      background: var(--bg);
+    }
+
+    .page-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .setup-badge {
+      min-width: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--surface);
+    }
+
+    .setup-badge strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--warn-text);
+      font-size: 13px;
+    }
+
+    .setup-badge span {
+      color: var(--hint);
+      font-size: 12px;
+    }
+
+    .wizard-intro {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .wizard-intro-note {
+      color: var(--hint);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .step-panel h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .progress-pill {
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: var(--warn-bg);
+      color: var(--warn-text);
+      font-weight: 800;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-weight: 800;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .status.ok {
+      background: var(--ok-bg);
+      color: var(--ok-text);
+    }
+
+    .status.warn {
+      background: var(--warn-bg);
+      color: var(--warn-text);
+    }
+
+    .status.wait {
+      background: var(--wait-bg);
+      color: var(--wait-text);
+    }
+
+    .wizard {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 14px;
+      min-height: 560px;
+      align-items: stretch;
+    }
+
+    .step-list {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 8px;
+      align-self: stretch;
+      min-height: 100%;
+    }
+
+    .step-item {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      padding: 12px 10px;
+      cursor: pointer;
+    }
+
+    .step-item + .step-item {
+      margin-top: 4px;
+    }
+
+    .step-item:hover {
+      background: #172236;
+      border-color: #29384f;
+    }
+
+    .step-item.locked-step {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
+    .step-item.locked-step:hover {
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .step-item.active {
+      background: #172236;
+      border-color: var(--accent);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+
+    .step-num {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: #0b1220;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-weight: 900;
+      font-size: 12px;
+    }
+
+    .step-item.active .step-num {
+      background: var(--accent);
+      color: #111827;
+      border-color: var(--accent);
+    }
+
+    .step-title {
+      font-weight: 900;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .step-note {
+      color: var(--hint);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .step-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-self: stretch;
+      min-height: 100%;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+      padding: 15px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .panel-body {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .notice {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1220;
+      padding: 14px;
+    }
+
+    .notice-title {
+      font-weight: 900;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .notice p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      max-width: 800px;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 0 16px;
+      background: transparent;
+      color: var(--text);
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background: #172236;
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn.primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .btn.disabled,
+    .btn:disabled {
+      color: var(--disabled);
+      background: #111827;
+      border-color: #273244;
+      cursor: not-allowed;
+    }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      max-width: 900px;
+    }
+
+    .field-row label {
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .text-field,
+    .select-field {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0b1220;
+      color: var(--text);
+      padding: 0 12px;
+    }
+
+    .select-field {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--hint) 50%),
+        linear-gradient(135deg, var(--hint) 50%, transparent 50%);
+      background-position: calc(100% - 18px) 18px, calc(100% - 12px) 18px;
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 34px;
+    }
+
+    .field-row.compact {
+      grid-template-columns: 160px minmax(0, 1fr);
+    }
+
+    .field-help {
+      grid-column: 2 / -1;
+      margin-top: -4px;
+      color: var(--hint);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .inline-link {
+      color: var(--accent);
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .inline-link:hover {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+
+    .final-grid {
+      display: grid;
+      gap: 9px;
+      max-width: 760px;
+    }
+
+    .final-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: #0b1220;
+    }
+
+    .panel-footer {
+      margin-top: auto;
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .footer-hint {
+      color: var(--hint);
+      font-size: 12px;
+    }
+
+    .footer-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 1100px) {
+      .app {
+        grid-template-columns: 210px minmax(760px, 1fr);
+      }
+
+      .wizard {
+        grid-template-columns: 240px minmax(0, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-title"><span class="brand-dot"></span><span>BK<br>Scribe</span></div>
+      </div>
+
+      <nav class="nav" aria-label="Навигация">
+        <div class="nav-item locked"><span>Рабочий день</span><span class="lock">закрыто</span></div>
+        <div class="nav-item locked"><span>Ревью</span><span class="lock">закрыто</span></div>
+        <div class="nav-item locked"><span>Архив</span><span class="lock">закрыто</span></div>
+        <div class="nav-item active"><span>Настройка</span></div>
+        <div class="nav-item"><span>Справка</span></div>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="theme-toggle" type="button">Темная тема</button>
+        <button class="float-action" type="button">Показать плавающую кнопку</button>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="page-title">
+        <div>
+          <h1>Настройка BK Scribe</h1>
+          <p class="subtitle">Подготовьте приложение к записи, транскрипции и формированию итогов встреч.</p>
+        </div>
+        <div class="setup-badge">
+          <strong>Настройка не завершена</strong>
+          <span>Рабочий день станет доступен после всех обязательных проверок.</span>
+        </div>
+      </header>
+
+      <div class="wizard-intro">
+        <div class="wizard-intro-note">Пройдите шаги настройки. Рабочий день откроется после успешной проверки OBS, аудио, AI Tunnel, транскрипции и AI-итогов.</div>
+        <span class="progress-pill">2 из 7 готово</span>
+      </div>
+
+      <section class="wizard">
+        <div class="step-list" aria-label="Шаги настройки">
+          <button class="step-item" type="button" data-step="data">
+            <span class="step-num">1</span>
+            <span>
+              <span class="step-title">Папка данных</span>
+              <span class="step-note">Где будут храниться рабочие дни</span>
+            </span>
+          </button>
+          <button class="step-item active" type="button" data-step="obs">
+            <span class="step-num">2</span>
+            <span>
+              <span class="step-title">Запись OBS</span>
+              <span class="step-note">Подключение к записи разговоров</span>
+            </span>
+          </button>
+          <button class="step-item" type="button" data-step="audio">
+            <span class="step-num">3</span>
+            <span>
+              <span class="step-title">Аудио</span>
+              <span class="step-note">Проверка извлечения аудио</span>
+            </span>
+          </button>
+          <button class="step-item locked-step" type="button" data-step="tunnel" disabled>
+            <span class="step-num">4</span>
+            <span>
+              <span class="step-title">AI Tunnel</span>
+              <span class="step-note">Один ключ для транскрипции и итогов</span>
+            </span>
+          </button>
+          <button class="step-item locked-step" type="button" data-step="transcription" disabled>
+            <span class="step-num">5</span>
+            <span>
+              <span class="step-title">Транскрипция</span>
+              <span class="step-note">Проверка распознавания речи</span>
+            </span>
+          </button>
+          <button class="step-item locked-step" type="button" data-step="ai" disabled>
+            <span class="step-num">6</span>
+            <span>
+              <span class="step-title">AI-итоги</span>
+              <span class="step-note">Проверка итогов встреч и дня</span>
+            </span>
+          </button>
+          <button class="step-item locked-step" type="button" data-step="ready" disabled>
+            <span class="step-num">7</span>
+            <span>
+              <span class="step-title">Готовность</span>
+              <span class="step-note">Финальная проверка перед стартом</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="step-panel">
+          <article class="panel-screen hidden" data-panel="data">
+            <div class="panel-header">
+              <div>
+                <h2>Папка данных</h2>
+                <p>Выберите место, где BK Scribe будет хранить рабочие дни, записи, транскрипты и итоги.</p>
+              </div>
+              <span class="status ok">Готово</span>
+            </div>
+            <div class="panel-body">
+              <div class="field-row">
+                <label for="data-path">Папка данных</label>
+                <input class="text-field" id="data-path" value="C:\Users\damir\Documents\BK Scribe" readonly>
+                <button class="btn" type="button">Выбрать</button>
+              </div>
+              <div class="notice">
+                <div class="notice-title">Данные сохраняются отдельно от приложения</div>
+                <p>При обновлении или удалении BK Scribe рабочие дни останутся в выбранной папке.</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen" data-panel="obs">
+            <div class="panel-header">
+              <div>
+                <h2>Запись разговоров</h2>
+                <p>BK Scribe записывает встречи через OBS. Откройте OBS и убедитесь, что WebSocket включен.</p>
+              </div>
+              <span class="status warn">Требует действия</span>
+            </div>
+            <div class="panel-body">
+              <div class="notice">
+                <div class="notice-title">OBS не подключен</div>
+                <p>Запустите OBS, проверьте, что WebSocket включен, затем нажмите проверку. Без OBS рабочий день будет недоступен.</p>
+              </div>
+              <div class="action-row">
+                <button class="btn" type="button">Открыть OBS</button>
+                <button class="btn primary" type="button">Проверить OBS</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen hidden" data-panel="audio">
+            <div class="panel-header">
+              <div>
+                <h2>Аудио из записей</h2>
+                <p>Проверяем, что BK Scribe сможет извлекать аудио из записей после завершения встречи.</p>
+              </div>
+              <span class="status ok">Готово</span>
+            </div>
+            <div class="panel-body">
+              <div class="notice">
+                <div class="notice-title">Аудио из записей готово</div>
+                <p>Встроенный FFmpeg найден. Дополнительная установка пользователю не нужна.</p>
+              </div>
+              <div class="action-row">
+                <button class="btn" type="button">Повторить проверку</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen hidden" data-panel="tunnel">
+            <div class="panel-header">
+              <div>
+                <h2>AI Tunnel</h2>
+                <p>Введите один ключ AI Tunnel. Он будет использоваться и для транскрипции, и для формирования итогов.</p>
+              </div>
+              <span class="status wait">Не проверено</span>
+            </div>
+            <div class="panel-body">
+              <div class="field-row compact">
+                <label for="ai-tunnel-key">AI Tunnel key</label>
+                <input class="text-field" id="ai-tunnel-key" type="password" value="" placeholder="Вставьте ключ AI Tunnel">
+                <div class="field-help">Ключ сохранится только локально в файле `.env` на этом компьютере.</div>
+              </div>
+              <div class="notice">
+                <div class="notice-title">Где получить ключ</div>
+                <p>Если ключа еще нет, оформите его на сайте <a class="inline-link" href="https://aitunnel.ru/" target="_blank" rel="noopener">aitunnel.ru</a>, затем вернитесь в BK Scribe и вставьте ключ сюда.</p>
+              </div>
+              <div class="action-row">
+                <button class="btn primary" type="button">Проверить ключ AI Tunnel</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen hidden" data-panel="transcription">
+            <div class="panel-header">
+              <div>
+                <h2>Транскрипция</h2>
+                <p>Выберите способ распознавания речи. Для коллег транскрипция обязательна.</p>
+              </div>
+              <span class="status wait">Не проверено</span>
+            </div>
+            <div class="panel-body">
+              <div class="field-row compact">
+                <label for="stt-mode">Режим</label>
+                <select class="select-field" id="stt-mode">
+                  <option selected>AI Tunnel STT</option>
+                  <option>Локально: faster-whisper</option>
+                  <option>Локально: Whisper CLI</option>
+                </select>
+                <div class="field-help">AI Tunnel выбран по умолчанию как основной режим для коллег.</div>
+              </div>
+              <div class="notice">
+                <div class="notice-title">Проверка без реальной встречи</div>
+                <p>Для AI Tunnel STT используется ключ из предыдущего шага. Мастер проверит настройки транскрипции без создания записи, transcript или рабочего дня.</p>
+              </div>
+              <div class="action-row">
+                <button class="btn primary" type="button">Проверить транскрипцию</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen hidden" data-panel="ai">
+            <div class="panel-header">
+              <div>
+                <h2>AI-итоги</h2>
+                <p>Настройте модель, которая будет формировать итоги встреч и дня. Это обязательный шаг.</p>
+              </div>
+              <span class="status wait">Не проверено</span>
+            </div>
+            <div class="panel-body">
+              <div class="field-row compact">
+                <label for="summary-model">Модель итогов</label>
+                <select class="select-field" id="summary-model">
+                  <option selected>GPT 5.4 Nano — быстрее и дешевле</option>
+                  <option>GPT 5.4 Mini — подробнее</option>
+                  <option>Другая модель AI Tunnel</option>
+                </select>
+                <div class="field-help">Эта модель будет формировать итоги встреч и итог дня.</div>
+              </div>
+              <div class="notice">
+                <div class="notice-title">Тест коротким текстом</div>
+                <p>Для итогов используется тот же ключ AI Tunnel. BK Scribe отправит небольшой тестовый текст в выбранную модель. Реальные записи, transcript и итоги пользователя не создаются.</p>
+              </div>
+              <div class="action-row">
+                <button class="btn primary" type="button">Проверить AI-итоги</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-screen hidden" data-panel="ready">
+            <div class="panel-header">
+              <div>
+                <h2>Готовность</h2>
+                <p>Финальная проверка перед началом рабочего дня.</p>
+              </div>
+              <span class="status warn">Еще не готово</span>
+            </div>
+            <div class="panel-body">
+              <div class="final-grid">
+                <div class="final-row"><strong>Папка данных</strong><span class="status ok">Готово</span></div>
+                <div class="final-row"><strong>OBS</strong><span class="status warn">Требует действия</span></div>
+                <div class="final-row"><strong>Аудио</strong><span class="status ok">Готово</span></div>
+                <div class="final-row"><strong>AI Tunnel</strong><span class="status wait">Не проверено</span></div>
+                <div class="final-row"><strong>Транскрипция</strong><span class="status wait">Не проверено</span></div>
+                <div class="final-row"><strong>AI-итоги</strong><span class="status wait">Не проверено</span></div>
+              </div>
+            </div>
+          </article>
+
+          <footer class="panel-footer">
+            <div class="footer-hint">Рабочий день откроется после успешной настройки всех обязательных пунктов.</div>
+            <div class="footer-actions">
+              <button class="btn" type="button">Назад</button>
+              <button class="btn disabled" type="button" disabled>Далее</button>
+              <button class="btn disabled" type="button" disabled>Начать работу</button>
+            </div>
+          </footer>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const stepButtons = Array.from(document.querySelectorAll(".step-item"));
+    const panels = Array.from(document.querySelectorAll(".panel-screen"));
+
+    function activateStep(step) {
+      stepButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.step === step);
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.panel !== step);
+      });
+    }
+
+    stepButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        activateStep(button.dataset.step);
+      });
+    });
+  </script>
+</body>
+</html>
