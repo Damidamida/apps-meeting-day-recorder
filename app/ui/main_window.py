@@ -4509,6 +4509,13 @@ class MainWindow(QMainWindow):
             lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
             "primaryButton",
         )
+        if day.metadata.get("status") == "active":
+            self._add_button(
+                actions,
+                "Завершить день",
+                lambda checked=False, folder=day.folder: self.finish_archive_workday(folder),
+                "primaryButton",
+            )
         actions.addStretch(1)
         body_layout.addLayout(actions)
         return self._create_card("Итоги дня", body_layout)
@@ -4534,6 +4541,12 @@ class MainWindow(QMainWindow):
             "Просмотреть transcript",
             lambda checked=False, folder=meeting.folder: self.show_archive_transcript(folder),
         )
+        reprocess_button = self._add_button(
+            actions,
+            "Повторить обработку",
+            lambda checked=False, folder=meeting.folder: self.archive_reprocess_meeting(folder),
+        )
+        reprocess_button.setEnabled(self._can_reprocess_meeting(meeting.folder, meeting.metadata))
         actions.addStretch(1)
         body_layout.addLayout(actions)
         return self._create_card("Встреча", body_layout)
@@ -4624,6 +4637,27 @@ class MainWindow(QMainWindow):
 
     def request_archive_day_summary_update(self, day_folder: Path) -> None:
         self._request_day_summary_update(day_folder, force=True)
+        self.refresh_archive()
+
+    def finish_archive_workday(self, day_folder: Path) -> None:
+        try:
+            self.storage.end_workday_folder(day_folder)
+        except ValueError as error:
+            self.status_label.setText(str(error))
+            self.refresh_archive()
+            return
+        recovered = self.storage.recover_interrupted_meeting_processing(day_folder)
+        pending = self.storage.list_pending_meeting_processing_folders(day_folder)
+        for meeting_folder in pending:
+            self._enqueue_meeting_processing(meeting_folder)
+        if pending or recovered:
+            self.storage.mark_day_summary_waiting(day_folder)
+        self._request_day_summary_update(day_folder, force=False)
+        self._refresh_past_workday_recovery_card()
+        self.refresh_archive()
+
+    def archive_reprocess_meeting(self, meeting_folder: Path) -> None:
+        self.reprocess_meeting(meeting_folder)
         self.refresh_archive()
 
     def _create_help_page(self) -> QWidget:

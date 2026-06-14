@@ -2678,6 +2678,72 @@ def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path)
     app.processEvents()
 
 
+def test_archive_finish_active_past_day_recovers_meetings_and_requests_day_summary(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "active"})
+    meeting = storage.create_meeting_folder(
+        "Прошлая встреча",
+        datetime.fromisoformat(f"{past_day.name}T09:30:00"),
+    )
+    metadata = storage.read_meeting_metadata(meeting)
+    metadata.update({"status": "ended", "processing_status": "running"})
+    storage.write_metadata(meeting, metadata)
+    requested: list[Path] = []
+    enqueued: list[Path] = []
+
+    window = MainWindow(storage, recorder)
+    window._request_day_summary_update = lambda day_folder, force=False: requested.append(day_folder) or "ok"
+    window._enqueue_meeting_processing = lambda meeting_folder: enqueued.append(meeting_folder)
+    window.finish_archive_workday(past_day)
+
+    day_metadata = storage.read_day_metadata(past_day)
+    meeting_metadata = storage.read_meeting_metadata(meeting)
+    assert day_metadata["status"] == "ended"
+    assert meeting_metadata["processing_status"] == "pending"
+    assert enqueued == [meeting]
+    assert requested == [past_day]
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_reprocess_meeting_uses_existing_queue(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Прошлая встреча",
+        datetime.fromisoformat(f"{past_day.name}T09:30:00"),
+    )
+    metadata = storage.read_meeting_metadata(meeting)
+    metadata.update(
+        {
+            "status": "ended",
+            "processing_status": "completed",
+            "summary_status": "draft_created",
+            "recording_path": str(meeting / "recording.mkv"),
+        }
+    )
+    (meeting / "recording.mkv").write_text("recording", encoding="utf-8")
+    storage.write_metadata(meeting, metadata)
+    enqueued: list[Path] = []
+
+    window = MainWindow(storage, recorder)
+    window._enqueue_meeting_processing = lambda meeting_folder: enqueued.append(meeting_folder)
+    window.archive_reprocess_meeting(meeting)
+
+    assert storage.read_meeting_metadata(meeting)["processing_status"] == "pending"
+    assert enqueued == [meeting]
+
+    window.close()
+    app.processEvents()
+
+
 def test_help_page_explains_local_flow(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
