@@ -129,6 +129,30 @@ def test_summary_material_view_uses_primary_save_and_block_preview() -> None:
     app.processEvents()
 
 
+def test_summary_material_view_renders_summary_blocks_for_light_and_dark_themes() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+    markdown = "# Итоги встречи\n\n## Кратко\n\nОбсудили релиз."
+
+    view.apply_theme("light")
+    view.set_markdown(markdown)
+    light_html = view.preview.toHtml()
+
+    assert "#fff8ef" in light_html
+    assert "#111827" not in light_html
+    assert "#334155" not in light_html
+
+    view.apply_theme("dark")
+    dark_html = view.preview.toHtml()
+
+    assert "#111827" in dark_html
+    assert "#334155" in dark_html
+    assert "Обсудили релиз" in view.preview.toPlainText()
+
+    view.close()
+    app.processEvents()
+
+
 def test_summary_material_view_skips_top_h1_and_never_renders_no_data_block() -> None:
     app = QApplication.instance() or QApplication([])
     view = SummaryMaterialView("Итог встречи")
@@ -3157,6 +3181,54 @@ def test_theme_reapply_preserves_readiness_detail_states(tmp_path: Path) -> None
 
     assert error_label.property("readiness_state") == "error"
     assert "font-weight: 700" in error_label.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_theme_reapply_updates_open_review_and_archive_summary_blocks(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(datetime.now().date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "План релиза",
+        datetime.fromisoformat(f"{day_folder.name}T10:00:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_meeting_summary(meeting, "# Итоги встречи\n\n## Кратко\n\nОбсудили релиз.")
+
+    archive_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(
+        archive_day / "day_metadata.json",
+        {"date": archive_day.name, "status": "ended"},
+    )
+    storage.save_day_summary(archive_day, "# Итоги дня\n\n## Главное\n\nДень закрыт.")
+
+    window = MainWindow(storage, recorder)
+    window.open_review()
+    window.open_meeting_summary_review(meeting)
+    window.open_archive()
+    window.open_archive_day_summary(archive_day)
+
+    window.config["ui"]["theme"] = "dark"
+    window._apply_theme_settings()
+    assert "#111827" in window.review_summary_view.preview.toHtml()
+    assert "#111827" in window.archive_summary_view.preview.toHtml()
+
+    window.review_summary_view.enter_edit_mode()
+    window.review_summary_view.editor.setPlainText("# Несохраненный итог\n")
+    window.config["ui"]["theme"] = "light"
+    window._apply_theme_settings()
+
+    assert "#fff8ef" in window.archive_summary_view.preview.toHtml()
+    assert "#111827" not in window.archive_summary_view.preview.toHtml()
+    assert window.review_summary_view.mode == "edit"
+    assert window.review_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    window.review_summary_view.cancel_button.click()
+    assert "#fff8ef" in window.review_summary_view.preview.toHtml()
+    assert "#111827" not in window.review_summary_view.preview.toHtml()
 
     window.close()
     app.processEvents()

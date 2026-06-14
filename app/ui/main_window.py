@@ -2196,6 +2196,10 @@ class MainWindow(QMainWindow):
             self.safety_close_overlay.apply_theme(self.current_theme)
         if hasattr(self, "risky_action_confirmation_overlay"):
             self.risky_action_confirmation_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "review_summary_view"):
+            self.review_summary_view.apply_theme(self.current_theme)
+        if hasattr(self, "archive_summary_view"):
+            self.archive_summary_view.apply_theme(self.current_theme)
         if hasattr(self, "floating_control"):
             self.floating_control.apply_theme(self._effective_floating_theme())
         if hasattr(self, "readiness_detail_values"):
@@ -3409,6 +3413,7 @@ class MainWindow(QMainWindow):
         review_content_layout.setSpacing(12)
         self.review_tabs = QTabWidget()
         self.review_summary_view = SummaryMaterialView("Итоги встречи", show_height_toggle=False)
+        self.review_summary_view.apply_theme(self.current_theme)
         self.review_summary_view.save_requested.connect(self.save_review_summary)
         self.meeting_summary_editor = self.review_summary_view.editor
         self.meeting_transcript_editor = QTextBrowser()
@@ -4647,6 +4652,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.archive_no_matches_spacer, 1)
 
         self.archive_summary_view = SummaryMaterialView("Итоги")
+        self.archive_summary_view.apply_theme(self.current_theme)
         self.archive_summary_view.save_requested.connect(self.save_archive_summary)
         self.archive_editor = self.archive_summary_view.editor
         self.archive_transcript_view = QTextBrowser()
