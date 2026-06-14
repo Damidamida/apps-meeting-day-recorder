@@ -17,8 +17,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.first_run import (
+    AITUNNEL_API_KEY_ENV,
+    AITUNNEL_BASE_URL_DEFAULT,
+    DEFAULT_ENV_FILE,
     FIRST_RUN_STEPS,
     SUMMARY_MODEL_OPTIONS,
+    TRANSCRIPTION_MODEL_OPTIONS,
     TRANSCRIPTION_OPTIONS,
     FirstRunState,
     check_aitunnel_key,
@@ -57,6 +61,7 @@ class FirstRunWizard(QWidget):
         self.recorder = recorder
         self.step_buttons: dict[str, QPushButton] = {}
         self.step_status_labels: dict[str, QLabel] = {}
+        self.step_message_label: dict[str, QLabel] = {}
         self.step_pages: dict[str, QWidget] = {}
         self.current_step = self.state.current_step
         self.setObjectName("firstRunWizard")
@@ -96,7 +101,7 @@ class FirstRunWizard(QWidget):
             button.setObjectName("firstRunStepButton")
             button.setCheckable(True)
             button.clicked.connect(
-                lambda _=False, key=step_key: self.open_step(key)
+                lambda checked, key=step_key: self.open_step(key)
             )
             status = QLabel("")
             status.setObjectName("firstRunStepStatus")
@@ -157,7 +162,6 @@ class FirstRunWizard(QWidget):
         title = QLabel(self.state.steps[step_key].title)
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        self.step_message_label = getattr(self, "step_message_label", {})
         self.step_message_label[step_key] = QLabel("")
         self.step_message_label[step_key].setWordWrap(True)
         self.step_message_label[step_key].setObjectName("inlineStatus")
@@ -210,12 +214,8 @@ class FirstRunWizard(QWidget):
             for value, label in TRANSCRIPTION_OPTIONS:
                 self.transcription_backend_select.addItem(label, value)
             self.transcription_model_select = QComboBox()
-            self.transcription_model_select.addItem(
-                "Whisper Large V3 Turbo — 0.13 ₽/мин",
-                "whisper-large-v3-turbo",
-            )
-            self.transcription_model_select.addItem("Whisper Large V3 — 0.36 ₽/мин", "whisper-large-v3")
-            self.transcription_model_select.addItem("Whisper 1 — 1.15 ₽/мин", "whisper-1")
+            for value, label in TRANSCRIPTION_MODEL_OPTIONS:
+                self.transcription_model_select.addItem(label, value)
             check = QPushButton("Проверить транскрипцию")
             check.setObjectName("primaryButton")
             check.clicked.connect(self.check_transcription)
@@ -302,9 +302,9 @@ class FirstRunWizard(QWidget):
     def check_aitunnel(self) -> None:
         result = check_aitunnel_key(self.aitunnel_key_input.text(), self.config)
         if result.ok:
-            self.config.setdefault("secrets", {}).setdefault("env_file", ".env")
-            self.config.setdefault("summary", {})["api_key_env"] = "AITUNNEL_KEY"
-            self.config.setdefault("transcription", {})["api_key_env"] = "AITUNNEL_KEY"
+            self.config.setdefault("secrets", {}).setdefault("env_file", DEFAULT_ENV_FILE)
+            self.config.setdefault("summary", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
+            self.config.setdefault("transcription", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
             self._mark_ok("aitunnel", result.message)
         else:
             self._mark_error("aitunnel", result.message)
@@ -329,8 +329,8 @@ class FirstRunWizard(QWidget):
             model = "gpt-5.4-mini"
         self.config.setdefault("summary", {})["enabled"] = True
         self.config["summary"]["model"] = model
-        self.config["summary"]["api_key_env"] = "AITUNNEL_KEY"
-        self.config["summary"]["base_url"] = "https://api.aitunnel.ru/v1/"
+        self.config["summary"]["api_key_env"] = AITUNNEL_API_KEY_ENV
+        self.config["summary"]["base_url"] = AITUNNEL_BASE_URL_DEFAULT
         result = check_summary_settings(self.config, self.state)
         if result.ok:
             self._mark_ok("summary", result.message)

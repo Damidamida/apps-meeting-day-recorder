@@ -8,6 +8,9 @@ from typing import Any, Callable
 from openai import AuthenticationError
 
 CURRENT_SETUP_VERSION = 1
+DEFAULT_ENV_FILE = ".env"
+AITUNNEL_API_KEY_ENV = "AITUNNEL_KEY"
+AITUNNEL_BASE_URL_DEFAULT = "https://api.aitunnel.ru/v1/"
 
 FIRST_RUN_STEPS = (
     "data_root",
@@ -32,6 +35,11 @@ TRANSCRIPTION_OPTIONS = (
     ("aitunnel", "AI Tunnel STT"),
     ("faster_whisper", "faster-whisper"),
     ("whisper_cli", "Whisper CLI"),
+)
+TRANSCRIPTION_MODEL_OPTIONS = (
+    ("whisper-large-v3-turbo", "Whisper Large V3 Turbo — 0.13 ₽/мин"),
+    ("whisper-large-v3", "Whisper Large V3 — 0.36 ₽/мин"),
+    ("whisper-1", "Whisper 1 — 1.15 ₽/мин"),
 )
 SUMMARY_MODEL_OPTIONS = (
     ("gpt-5.4-nano", "GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход"),
@@ -267,9 +275,14 @@ def resolve_first_run_env_file(config: dict[str, Any]) -> Path:
         secrets.get("env_file")
         or summary.get("env_file")
         or transcription.get("env_file")
-        or ".env"
+        or DEFAULT_ENV_FILE
     )
     return Path(str(raw_path)).expanduser()
+
+
+def _quote_env_value(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def write_env_secret(env_file: Path, name: str, value: str) -> None:
@@ -284,12 +297,12 @@ def write_env_secret(env_file: Path, name: str, value: str) -> None:
         if stripped and not stripped.startswith("#") and "=" in stripped:
             existing_name = stripped.split("=", 1)[0].strip()
             if existing_name == name:
-                output.append(f"{name}={value}")
+                output.append(f"{name}={_quote_env_value(value)}")
                 written = True
                 continue
         output.append(line)
     if not written:
-        output.append(f"{name}={value}")
+        output.append(f"{name}={_quote_env_value(value)}")
     env_file.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
 
 
@@ -305,7 +318,7 @@ def check_aitunnel_key(
     try:
         client = client_factory(
             api_key=key,
-            base_url="https://api.aitunnel.ru/v1/",
+            base_url=AITUNNEL_BASE_URL_DEFAULT,
             timeout=20,
         )
         client.models.list()
@@ -314,7 +327,7 @@ def check_aitunnel_key(
     except Exception:
         return FirstRunCheckResult(False, "Сервис временно недоступен.")
 
-    write_env_secret(resolve_first_run_env_file(config), "AITUNNEL_KEY", key)
+    write_env_secret(resolve_first_run_env_file(config), AITUNNEL_API_KEY_ENV, key)
     return FirstRunCheckResult(True, "Ключ AI Tunnel проверен.")
 
 

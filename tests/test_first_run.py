@@ -153,7 +153,7 @@ def test_aitunnel_key_success_writes_env_without_leaking_key(tmp_path: Path) -> 
     assert result.message == "Ключ AI Tunnel проверен."
     assert "test-secret-key" not in result.message
     assert "OTHER=value" in env_file.read_text(encoding="utf-8")
-    assert "AITUNNEL_KEY=test-secret-key" in env_file.read_text(encoding="utf-8")
+    assert 'AITUNNEL_KEY="test-secret-key"' in env_file.read_text(encoding="utf-8")
     assert calls[0]["api_key"] == "test-secret-key"
 
 
