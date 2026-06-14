@@ -1779,7 +1779,8 @@ class MainWindow(QMainWindow):
             QWidget#content,
             QStackedWidget#pages,
             QWidget#pageSurface,
-            QWidget#scrollViewport {
+            QWidget#scrollViewport,
+            QWidget#archiveScrollViewport {
                 background: %(bg)s;
             }
             QLabel {
@@ -2097,8 +2098,22 @@ class MainWindow(QMainWindow):
                 border: none;
             }
             QScrollArea#workdayScrollArea,
-            QScrollArea#settingsScrollArea {
+            QScrollArea#settingsScrollArea,
+            QScrollArea#archiveDaysScroll,
+            QScrollArea#archiveResultsScroll {
                 background: %(bg)s;
+            }
+            QWidget#archiveSearchResult {
+                background: %(surface_soft)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
+            QLabel#archiveSearchTitle {
+                color: %(text)s;
+                font-weight: 800;
+            }
+            QLabel#archiveSearchSnippet {
+                color: %(hint)s;
             }
             QScrollBar:vertical {
                 background: %(bg)s;
@@ -4433,14 +4448,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(
             self._create_page_header(
                 "Архив",
-                "Прошлые рабочие дни, итоги и transcript остаются в локальной папке данных.",
+                "Прошлые рабочие дни, итоги и транскрипты остаются в локальной папке данных.",
             )
         )
 
         controls_layout = QVBoxLayout()
         controls_layout.setSpacing(8)
         self.archive_search_input = QLineEdit()
-        self.archive_search_input.setPlaceholderText("Поиск по дате, названию, итогам или transcript")
+        self.archive_search_input.setPlaceholderText("Поиск по дате, названию, итогам или транскрипту")
         self.archive_search_input.textChanged.connect(self._schedule_archive_search)
         controls_layout.addWidget(self.archive_search_input)
 
@@ -4473,6 +4488,10 @@ class MainWindow(QMainWindow):
         self.archive_results_layout.setSpacing(6)
         self.archive_results_list.setLayout(self.archive_results_layout)
         self.archive_results_scroll = QScrollArea()
+        self.archive_results_scroll.setObjectName("archiveResultsScroll")
+        self.archive_results_scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.archive_results_scroll.viewport().setObjectName("archiveScrollViewport")
+        self.archive_results_scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.archive_results_scroll.setWidgetResizable(True)
         self.archive_results_scroll.setMaximumHeight(150)
         self.archive_results_scroll.setWidget(self.archive_results_list)
@@ -4500,15 +4519,20 @@ class MainWindow(QMainWindow):
         days_layout.setContentsMargins(0, 0, 0, 0)
         days_layout.setSpacing(10)
         days_layout.addWidget(QLabel("Прошлые дни"))
+        days_panel.setMinimumWidth(300)
         self.archive_days_list = QWidget()
         self.archive_days_layout = QVBoxLayout()
         self.archive_days_layout.setContentsMargins(0, 0, 0, 0)
         self.archive_days_layout.setSpacing(8)
         self.archive_days_list.setLayout(self.archive_days_layout)
-        days_scroll = QScrollArea()
-        days_scroll.setWidgetResizable(True)
-        days_scroll.setWidget(self.archive_days_list)
-        days_layout.addWidget(days_scroll, 1)
+        self.archive_days_scroll = QScrollArea()
+        self.archive_days_scroll.setObjectName("archiveDaysScroll")
+        self.archive_days_scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.archive_days_scroll.viewport().setObjectName("archiveScrollViewport")
+        self.archive_days_scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.archive_days_scroll.setWidgetResizable(True)
+        self.archive_days_scroll.setWidget(self.archive_days_list)
+        days_layout.addWidget(self.archive_days_scroll, 1)
         days_panel.setLayout(days_layout)
 
         details_panel = QWidget()
@@ -4521,6 +4545,7 @@ class MainWindow(QMainWindow):
         self.archive_splitter.addWidget(details_panel)
         self.archive_splitter.setStretchFactor(0, 0)
         self.archive_splitter.setStretchFactor(1, 1)
+        self.archive_splitter.setSizes([320, 760])
         layout.addWidget(self.archive_splitter, 1)
 
         self.archive_editor = QPlainTextEdit()
@@ -4595,18 +4620,34 @@ class MainWindow(QMainWindow):
         self.archive_results_scroll.setVisible(bool(self.archive_query))
         self._clear_layout(self.archive_results_layout)
         for match in self.archive_matches:
+            result = QWidget()
+            result.setObjectName("archiveSearchResult")
+            result.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             row = QHBoxLayout()
-            label = QLabel(f"{match.kind}: {match.title}\n{match.snippet}")
-            label.setObjectName("sectionHint")
-            label.setWordWrap(True)
-            row.addWidget(label, 1)
-            self._add_button(
+            row.setContentsMargins(10, 8, 10, 8)
+            row.setSpacing(8)
+            text_layout = QVBoxLayout()
+            text_layout.setContentsMargins(0, 0, 0, 0)
+            text_layout.setSpacing(2)
+            title = QLabel(f"{match.kind}: {match.title}")
+            title.setObjectName("archiveSearchTitle")
+            title.setWordWrap(True)
+            snippet = QLabel(match.snippet)
+            snippet.setObjectName("archiveSearchSnippet")
+            snippet.setWordWrap(True)
+            snippet.setMaximumHeight(44)
+            text_layout.addWidget(title)
+            text_layout.addWidget(snippet)
+            row.addLayout(text_layout, 1)
+            open_button = self._add_button(
                 row,
                 "Открыть",
                 lambda checked=False, selected=match: self.open_archive_search_match(selected),
                 "secondaryButton",
             )
-            self.archive_results_layout.addLayout(row)
+            open_button.setMaximumWidth(90)
+            result.setLayout(row)
+            self.archive_results_layout.addWidget(result)
         self.archive_results_layout.addStretch(1)
 
     def open_archive_search_match(self, match: ArchiveSearchMatch) -> None:
@@ -4658,7 +4699,8 @@ class MainWindow(QMainWindow):
         day = self._selected_archive_day()
         if day is None:
             return
-        self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
+        if self._archive_day_summary_visible(day):
+            self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
         for meeting in self._archive_visible_meetings(day):
             self.archive_detail_layout.addWidget(self._create_archive_meeting_card(meeting))
         self.archive_detail_layout.addStretch(1)
@@ -4674,12 +4716,12 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self._add_button(
             actions,
-            "Редактировать",
+            "Редактировать итог дня",
             lambda checked=False, folder=day.folder: self.edit_archive_day_summary(folder),
         )
         self._add_button(
             actions,
-            "Сформировать итоги дня",
+            "Обновить итоги дня",
             lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
             "primaryButton",
         )
@@ -4707,12 +4749,12 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self._add_button(
             actions,
-            "Редактировать итоги",
+            "Редактировать итог встречи",
             lambda checked=False, folder=meeting.folder: self.edit_archive_meeting_summary(folder),
         )
         self._add_button(
             actions,
-            "Просмотреть transcript",
+            "Просмотреть транскрипт",
             lambda checked=False, folder=meeting.folder: self.show_archive_transcript(folder),
         )
         reprocess_button = self._add_button(
@@ -4734,6 +4776,16 @@ class MainWindow(QMainWindow):
             if match.day_folder == day.folder and match.meeting_folder is not None
         }
         return [meeting for meeting in day.meetings if meeting.folder in matching_folders]
+
+    def _archive_day_summary_visible(self, day: ArchiveDay) -> bool:
+        if not self.archive_query:
+            return True
+        return any(
+            match.day_folder == day.folder
+            and match.meeting_folder is None
+            and match.kind == "Итоги дня"
+            for match in self.archive_matches
+        )
 
     def select_archive_meeting(self, meeting_folder: Path) -> None:
         self.edit_archive_meeting_summary(meeting_folder)
@@ -4761,9 +4813,9 @@ class MainWindow(QMainWindow):
             try:
                 text = transcript_path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
-                text = "Transcript пока не удалось прочитать."
+                text = "Транскрипт пока не удалось прочитать."
         else:
-            text = "Transcript пока не найден."
+            text = "Транскрипт пока не найден."
         self.archive_editor.setReadOnly(True)
         self.archive_editor.setPlainText(text)
         self._show_archive_editor("Транскрипт")

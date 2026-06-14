@@ -295,11 +295,16 @@ def _snippet(text: str, index: int, query_length: int) -> str:
     start = max(0, index - 40)
     end = min(len(text), index + query_length + 80)
     snippet = " ".join(text[start:end].split())
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(text):
-        snippet += "..."
-    return snippet
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(text) else ""
+    max_length = 96
+    max_body_length = max_length - len(prefix) - len(suffix)
+    if len(snippet) > max_body_length:
+        snippet = snippet[:max_body_length].rstrip()
+        suffix = "..."
+        max_body_length = max_length - len(prefix) - len(suffix)
+        snippet = snippet[:max_body_length].rstrip()
+    return f"{prefix}{snippet}{suffix}"
 
 
 def _meeting_count_text(count: int) -> str:
