@@ -8,6 +8,7 @@ import yaml
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEventLoop,
     QObject,
     Property,
     QPointF,
@@ -516,6 +517,11 @@ class StartMeetingOverlay(QWidget):
                 color: %(muted)s;
                 font-weight: 500;
             }
+            QLabel#overlayMessage {
+                color: %(text)s;
+                font-size: 14px;
+                font-weight: 500;
+            }
             QLineEdit#meetingTitleInput {
                 background: %(surface)s;
                 color: %(text)s;
@@ -721,6 +727,143 @@ class SafetyCloseOverlay(QWidget):
     def _confirm(self) -> None:
         self.hide()
         self.confirmed.emit()
+
+
+class RiskyActionConfirmationOverlay(QWidget):
+    confirmed = Signal()
+    canceled = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("meetingOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._confirmation_result = False
+        self.hide()
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addStretch(1)
+
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(24, 24, 24, 24)
+        center_row.addStretch(1)
+
+        self.card = QFrame()
+        self.card.setObjectName("meetingOverlayCard")
+        self.card.setFixedWidth(560)
+        shadow = QGraphicsDropShadowEffect(self.card)
+        shadow.setBlurRadius(32)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(58, 20, 8, 90))
+        self.card.setGraphicsEffect(shadow)
+
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        body = QWidget()
+        body.setObjectName("meetingOverlayBody")
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 22, 24, 18)
+        body_layout.setSpacing(12)
+
+        self.title_label = QLabel()
+        self.title_label.setObjectName("overlayTitle")
+        self.title_label.setMinimumHeight(26)
+        self.message_label = QLabel()
+        self.message_label.setObjectName("overlayMessage")
+        self.message_label.setWordWrap(True)
+
+        body_layout.addWidget(self.title_label)
+        body_layout.addWidget(self.message_label)
+        body.setLayout(body_layout)
+
+        footer = QWidget()
+        footer.setObjectName("meetingOverlayFooter")
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(24, 14, 16, 14)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch(1)
+        self.cancel_button = QPushButton("Отмена")
+        self.cancel_button.setObjectName("dialogButton")
+        self.cancel_button.setDefault(True)
+        self.cancel_button.clicked.connect(self._cancel)
+        self.confirm_button = QPushButton()
+        self.confirm_button.setObjectName("dialogPrimaryButton")
+        self.confirm_button.setDefault(False)
+        self.confirm_button.clicked.connect(self._confirm)
+        footer_layout.addWidget(self.cancel_button)
+        footer_layout.addWidget(self.confirm_button)
+        footer.setLayout(footer_layout)
+
+        card_layout.addWidget(body)
+        card_layout.addWidget(footer)
+        self.card.setLayout(card_layout)
+        center_row.addWidget(self.card, 0, Qt.AlignmentFlag.AlignCenter)
+        center_row.addStretch(1)
+        root_layout.addLayout(center_row)
+        root_layout.addStretch(1)
+        self.setLayout(root_layout)
+        self.apply_theme("light")
+
+    def apply_theme(self, theme: str) -> None:
+        self.setStyleSheet(StartMeetingOverlay._overlay_style(theme))
+
+    def open_confirmation(
+        self,
+        title: str,
+        text: str,
+        confirm_button_text: str,
+    ) -> None:
+        self.title_label.setText(title)
+        self.message_label.setText(text)
+        self.confirm_button.setText(confirm_button_text)
+        self.cancel_button.setDefault(True)
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.cancel_button.setFocus()
+
+    def confirm_action(
+        self,
+        title: str,
+        text: str,
+        confirm_button_text: str,
+    ) -> bool:
+        loop = QEventLoop()
+
+        def finish_confirmed() -> None:
+            self._confirmation_result = True
+            loop.quit()
+
+        def finish_canceled() -> None:
+            self._confirmation_result = False
+            loop.quit()
+
+        self.confirmed.connect(finish_confirmed)
+        self.canceled.connect(finish_canceled)
+        self._confirmation_result = False
+        self.open_confirmation(title, text, confirm_button_text)
+        loop.exec()
+        self.confirmed.disconnect(finish_confirmed)
+        self.canceled.disconnect(finish_canceled)
+        return self._confirmation_result
+
+    def _cancel(self) -> None:
+        self.hide()
+        self.canceled.emit()
+
+    def _confirm(self) -> None:
+        self.hide()
+        self.confirmed.emit()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._cancel()
+            return
+        super().keyPressEvent(event)
 
 
 class FloatingMeetingControl(QWidget):
@@ -1276,6 +1419,9 @@ class MainWindow(QMainWindow):
         self.safety_close_overlay.apply_theme(self.current_theme)
         self.safety_close_overlay.confirmed.connect(self._confirm_close_with_processing)
         self._resize_safety_close_overlay()
+        self.risky_action_confirmation_overlay = RiskyActionConfirmationOverlay(container)
+        self.risky_action_confirmation_overlay.apply_theme(self.current_theme)
+        self._resize_risky_action_confirmation_overlay()
         self.floating_control = FloatingMeetingControl()
         self.floating_control.apply_theme(self._effective_floating_theme())
         self.floating_control.start_workday_requested.connect(self.start_workday)
@@ -1319,6 +1465,7 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._resize_start_meeting_overlay()
         self._resize_safety_close_overlay()
+        self._resize_risky_action_confirmation_overlay()
 
     def _resize_start_meeting_overlay(self) -> None:
         if not hasattr(self, "start_meeting_overlay"):
@@ -1333,6 +1480,13 @@ class MainWindow(QMainWindow):
         parent = self.safety_close_overlay.parentWidget()
         if parent is not None:
             self.safety_close_overlay.setGeometry(parent.rect())
+
+    def _resize_risky_action_confirmation_overlay(self) -> None:
+        if not hasattr(self, "risky_action_confirmation_overlay"):
+            return
+        parent = self.risky_action_confirmation_overlay.parentWidget()
+        if parent is not None:
+            self.risky_action_confirmation_overlay.setGeometry(parent.rect())
 
     def show_floating_control(self) -> None:
         if not hasattr(self, "floating_control"):
@@ -1970,6 +2124,8 @@ class MainWindow(QMainWindow):
             self.start_meeting_overlay.apply_theme(self.current_theme)
         if hasattr(self, "safety_close_overlay"):
             self.safety_close_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "risky_action_confirmation_overlay"):
+            self.risky_action_confirmation_overlay.apply_theme(self.current_theme)
         if hasattr(self, "floating_control"):
             self.floating_control.apply_theme(self._effective_floating_theme())
         if hasattr(self, "readiness_detail_values"):
@@ -4470,22 +4626,11 @@ class MainWindow(QMainWindow):
         text: str,
         confirm_button_text: str,
     ) -> bool:
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle(title)
-        dialog.setText(text)
-        confirm_button = dialog.addButton(
+        return self.risky_action_confirmation_overlay.confirm_action(
+            title,
+            text,
             confirm_button_text,
-            QMessageBox.ButtonRole.AcceptRole,
         )
-        cancel_button = dialog.addButton(
-            "Отмена",
-            QMessageBox.ButtonRole.RejectRole,
-        )
-        dialog.setDefaultButton(cancel_button)
-        dialog.setEscapeButton(cancel_button)
-        dialog.exec()
-        return dialog.clickedButton() == confirm_button
 
     def _readiness_component_state(self, component: str) -> str | None:
         if self.last_readiness_statuses is None or self.readiness_check_stale:
