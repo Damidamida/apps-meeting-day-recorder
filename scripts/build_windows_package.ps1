@@ -15,10 +15,10 @@ Set-Location $repoRoot
 if ($ffmpegSource -and (Test-Path -LiteralPath $ffmpegSource)) {
     New-Item -ItemType Directory -Force (Split-Path -Parent $ffmpegDestination) | Out-Null
     Copy-Item -LiteralPath $ffmpegSource -Destination $ffmpegDestination -Force
-    Write-Host "FFmpeg добавлен в сборку: packaging\ffmpeg\bin\ffmpeg.exe"
+    Write-Host "FFmpeg added to package: packaging\ffmpeg\bin\ffmpeg.exe"
 } elseif (-not (Test-Path -LiteralPath $ffmpegDestination)) {
-    Write-Warning "Bundled FFmpeg не найден. Установщик соберется без resources\ffmpeg\ffmpeg.exe."
-    Write-Warning "Для полной сборки положите файл в packaging\ffmpeg\bin\ffmpeg.exe или задайте BK_SCRIBE_FFMPEG."
+    Write-Warning "Bundled FFmpeg not found. Package will be built without resources\ffmpeg\ffmpeg.exe."
+    Write-Warning "For a complete package, put the file into packaging\ffmpeg\bin\ffmpeg.exe or set BK_SCRIBE_FFMPEG."
 }
 
 $python = Join-Path $repoRoot ".venv\Scripts\python.exe"
@@ -30,7 +30,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 & $python -m PyInstaller --clean --noconfirm $specPath
 
 if ($SkipInstaller) {
-    Write-Host "Сборка приложения готова: dist\BK Scribe"
+    Write-Host "Application build is ready: dist\BK Scribe"
     exit 0
 }
 
@@ -48,11 +48,11 @@ if (-not $InnoSetupPath) {
 }
 
 if (-not $InnoSetupPath -or -not (Test-Path -LiteralPath $InnoSetupPath)) {
-    Write-Warning "ISCC.exe не найден. Приложение собрано, установщик Inno Setup пропущен."
-    Write-Warning "Установите Inno Setup 6 или передайте -InnoSetupPath."
+    Write-Warning "ISCC.exe not found. Application was built, Inno Setup installer was skipped."
+    Write-Warning "Install Inno Setup 6 or pass -InnoSetupPath."
     exit 0
 }
 
 $innoScript = Join-Path $repoRoot "packaging\inno\bk_scribe.iss"
 & $InnoSetupPath $innoScript
-Write-Host "Установщик готов: packaging\output\BK-Scribe-Setup.exe"
+Write-Host "Installer is ready: packaging\output\BK-Scribe-Setup.exe"
