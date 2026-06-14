@@ -38,6 +38,7 @@ class SummaryMaterialView(QWidget):
         self.height_mode = "base"
         self.show_height_toggle = show_height_toggle
         self.markdown = ""
+        self.theme = "light"
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 8, 0, 0)
@@ -129,9 +130,13 @@ class SummaryMaterialView(QWidget):
         self.markdown = markdown
         self.editor.setPlainText(markdown)
         self.preview.setProperty("summary_block_view", True)
-        self.preview.setHtml(self._markdown_to_html(markdown))
+        self.preview.setHtml(self._markdown_to_html(markdown, self.theme))
         self.mode = "preview"
         self._sync_mode()
+
+    def apply_theme(self, theme: str) -> None:
+        self.theme = "dark" if theme == "dark" else "light"
+        self.preview.setHtml(self._markdown_to_html(self.markdown, self.theme))
 
     def has_unsaved_changes(self) -> bool:
         return self.mode == "edit" and self.editor.toPlainText() != self.markdown
@@ -149,7 +154,7 @@ class SummaryMaterialView(QWidget):
     def _save(self) -> None:
         self.markdown = self.editor.toPlainText()
         self.preview.setProperty("summary_block_view", True)
-        self.preview.setHtml(self._markdown_to_html(self.markdown))
+        self.preview.setHtml(self._markdown_to_html(self.markdown, self.theme))
         self.mode = "preview"
         self._sync_mode()
         self.save_requested.emit(self.markdown)
@@ -193,7 +198,8 @@ class SummaryMaterialView(QWidget):
             widget.setMaximumHeight(maximum)
 
     @staticmethod
-    def _markdown_to_html(markdown: str) -> str:
+    def _markdown_to_html(markdown: str, theme: str = "light") -> str:
+        colors = SummaryMaterialView._html_palette(theme)
         lines = markdown.splitlines()
         sections: list[tuple[str, list[str]]] = []
         current_title = ""
@@ -232,23 +238,41 @@ class SummaryMaterialView(QWidget):
             title_html = f"<h2>{escape(title)}</h2>" if title else ""
             rendered_sections.append(
                 '<table class="summary-section" width="100%" cellspacing="0" cellpadding="12" '
-                'style="margin-bottom:12px; border:1px solid #334155; '
-                'background-color:#111827; border-radius:8px;"><tr><td>'
+                f'style="margin-bottom:12px; border:1px solid {colors["border"]}; '
+                f'background-color:{colors["section_bg"]}; border-radius:8px;"><tr><td>'
                 f"{title_html}{body}</td></tr></table>"
             )
         return (
             "<html><head><style>"
-            "body { margin: 0; color: #e5e7eb; font-family: Segoe UI, Arial, sans-serif; }"
+            f'body {{ margin: 0; color: {colors["text"]}; font-family: Segoe UI, Arial, sans-serif; }}'
             ".summary-document { padding: 2px; }"
-            ".summary-section h2 { margin: 0 0 10px 0; font-size: 18px; font-weight: 800; color: #f8fafc; }"
-            ".summary-section p { margin: 8px 0; line-height: 1.45; color: #e5e7eb; }"
+            f'.summary-section h2 {{ margin: 0 0 10px 0; font-size: 18px; font-weight: 800; color: {colors["title"]}; }}'
+            f'.summary-section p {{ margin: 8px 0; line-height: 1.45; color: {colors["text"]}; }}'
             ".summary-section ul { margin: 8px 0 4px 20px; padding: 0; }"
             ".summary-section li { margin: 5px 0; line-height: 1.4; }"
-            ".summary-empty { color: #94a3b8; font-style: italic; }"
+            f'.summary-empty {{ color: {colors["muted"]}; font-style: italic; }}'
             "</style></head><body><div class=\"summary-document\">"
             + "".join(rendered_sections)
             + "</div></body></html>"
         )
+
+    @staticmethod
+    def _html_palette(theme: str) -> dict[str, str]:
+        if theme == "dark":
+            return {
+                "section_bg": "#111827",
+                "border": "#334155",
+                "title": "#f8fafc",
+                "text": "#e5e7eb",
+                "muted": "#94a3b8",
+            }
+        return {
+            "section_bg": "#fff8ef",
+            "border": "#ead8c6",
+            "title": "#3a1408",
+            "text": "#3a1408",
+            "muted": "#8a6a58",
+        }
 
     @staticmethod
     def _render_markdown_lines(lines: list[str]) -> str:
