@@ -42,4 +42,4 @@
 - [x] Update project state with status, implemented work, next step, risks/decisions, changelog entry for `codex/recover-past-workdays`, and test results.
 - [x] Run `python -m pytest`.
 - [x] Run `python -m compileall -q app`.
-- [ ] Commit changes and create a PR to `main` with a Russian title and description.
+- [x] Commit changes and create a PR to `main` with a Russian title and description.
