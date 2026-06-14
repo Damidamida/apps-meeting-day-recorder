@@ -2614,6 +2614,13 @@ class MainWindow(QMainWindow):
                 "обработки и наличие файла записи."
             )
             return
+        if not self._confirm_risky_action(
+            "Повторить обработку встречи?",
+            "Если вы вручную меняли Итог встречи, новая обработка заменит ваши изменения.",
+            "Повторить обработку",
+        ):
+            self.status_label.setText("Повторная обработка встречи отменена.")
+            return
         self.storage.mark_meeting_for_reprocessing(meeting_folder)
         self._enqueue_meeting_processing(meeting_folder)
         self.status_label.setText(f"Повторная обработка встречи добавлена в очередь: {meeting_folder.name}")
@@ -4457,6 +4464,29 @@ class MainWindow(QMainWindow):
             == QMessageBox.StandardButton.Yes
         )
 
+    def _confirm_risky_action(
+        self,
+        title: str,
+        text: str,
+        confirm_button_text: str,
+    ) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(title)
+        dialog.setText(text)
+        confirm_button = dialog.addButton(
+            confirm_button_text,
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = dialog.addButton(
+            "Отмена",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+        return dialog.clickedButton() == confirm_button
+
     def _readiness_component_state(self, component: str) -> str | None:
         if self.last_readiness_statuses is None or self.readiness_check_stale:
             return None
@@ -4957,6 +4987,13 @@ class MainWindow(QMainWindow):
         day_folder = self.storage.get_today_day_folder()
         if day_folder is None:
             self.status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
+            return
+        if not self._confirm_risky_action(
+            "Обновить итоги дня?",
+            "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+            "Обновить итоги дня",
+        ):
+            self.status_label.setText("Обновление итогов дня отменено.")
             return
         self._request_day_summary_update(day_folder, force=True)
 
