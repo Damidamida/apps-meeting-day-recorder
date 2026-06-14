@@ -4915,7 +4915,8 @@ class MainWindow(QMainWindow):
         card.setProperty("material_kind", "meeting_summary")
         card.setProperty("meeting_folder", meeting.folder)
         card.setProperty("open", is_open)
-        card.clicked.connect(lambda folder=meeting.folder: self.open_archive_meeting_summary(folder))
+        if not is_open:
+            card.clicked.connect(lambda folder=meeting.folder: self.open_archive_meeting_summary(folder))
         body_layout = QVBoxLayout()
         body_layout.setContentsMargins(18, 14, 18, 16)
         body_layout.setSpacing(10)

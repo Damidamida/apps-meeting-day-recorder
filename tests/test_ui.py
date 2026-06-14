@@ -3646,6 +3646,24 @@ def test_archive_transcript_action_toggles_back_to_summary(tmp_path: Path) -> No
     assert any(button.text() == "Показать итог" for button in page.findChildren(QPushButton))
     assert not any(button.text() == "Просмотреть транскрипт" for button in page.findChildren(QPushButton))
 
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+    day_card = next(card for card in detail_cards if card.property("material_kind") == "day_summary")
+    meeting_card = next(card for card in detail_cards if card.property("material_kind") == "meeting_summary")
+
+    meeting_card.clicked.emit()
+    app.processEvents()
+
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+    day_card = next(card for card in detail_cards if card.property("material_kind") == "day_summary")
+    meeting_card = next(card for card in detail_cards if card.property("material_kind") == "meeting_summary")
+
+    assert window.archive_open_material == ("meeting_transcript", meeting)
+    assert day_card.property("open") is False
+    assert meeting_card.property("open") is True
+    assert window.archive_transcript_view.toPlainText() == "Текст транскрипта"
+    assert any(button.text() == "Показать итог" for button in meeting_card.findChildren(QPushButton))
+    assert not any(button.text() == "Итог дня" for button in meeting_card.findChildren(QLabel))
+
     summary_button = next(button for button in page.findChildren(QPushButton) if button.text() == "Показать итог")
     summary_button.click()
     app.processEvents()
