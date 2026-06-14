@@ -854,26 +854,28 @@ def test_active_meeting_is_restored_after_restart(tmp_path) -> None:
 
 
 def test_past_active_workday_is_found_without_restoring_as_today(tmp_path) -> None:
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     storage = StorageService(tmp_path)
     past_day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
 
     restored_storage = StorageService(tmp_path)
-    restored_storage.load_today_state(datetime.now())
+    restored_storage.load_today_state(now)
 
     assert not restored_storage.workday_active
-    assert restored_storage.find_past_active_workday(datetime.now()) == past_day_folder
+    assert restored_storage.find_past_active_workday(now) == past_day_folder
 
 
 def test_end_workday_folder_finishes_past_day_without_touching_today(tmp_path) -> None:
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     past_storage = StorageService(tmp_path)
     past_day_folder = past_storage.start_workday(yesterday.replace(hour=8, minute=30))
 
     storage = StorageService(tmp_path)
-    today_day_folder = storage.start_workday(datetime.now().replace(hour=9, minute=0))
+    today_day_folder = storage.start_workday(now.replace(hour=9, minute=0))
 
-    ended_at = datetime.now().replace(hour=18, minute=0)
+    ended_at = now.replace(hour=18, minute=0)
     finished_folder = storage.end_workday_folder(past_day_folder, ended_at)
 
     past_metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
@@ -887,8 +889,25 @@ def test_end_workday_folder_finishes_past_day_without_touching_today(tmp_path) -
     assert storage.workday_active
 
 
+def test_end_workday_folder_rejects_active_meetings(tmp_path) -> None:
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    storage = StorageService(tmp_path)
+    past_day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
+    storage.start_meeting("Active", yesterday.replace(hour=9, minute=0))
+
+    with pytest.raises(ValueError, match="активную встречу"):
+        storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+
+    metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["status"] == "active"
+    assert "ended_at" not in metadata
+    assert not any(event.get("type") == "ended" for event in metadata.get("events", []))
+
+
 def test_pending_processing_folders_include_recovered_running_meetings(tmp_path) -> None:
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     storage = StorageService(tmp_path)
     day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
     pending_meeting = storage.start_meeting("Pending", yesterday.replace(hour=9, minute=0))

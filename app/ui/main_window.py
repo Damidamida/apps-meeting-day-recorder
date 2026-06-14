@@ -2163,14 +2163,18 @@ class MainWindow(QMainWindow):
             return "Требует внимания", "error"
         if day_metadata.get("status") == "active":
             return "Найден", "active"
-        if self.storage.has_unfinished_meeting_processing(day_folder):
+        try:
+            has_unfinished_meetings = self.storage.has_unfinished_meeting_processing(day_folder)
+        except MetadataReadError:
+            return "Требует внимания", "error"
+        if has_unfinished_meetings:
             return "Обработка встреч", "active"
         if self.day_summary_running and self.day_summary_day_folder == day_folder:
             return "Формируются итоги дня", "active"
         if self.storage.day_summary_exists(day_folder):
             metadata = self.storage.read_day_summary_metadata(day_folder)
             status = metadata.get("day_summary_status")
-            if status == "draft_created":
+            if status in {"draft_created", "up_to_date"}:
                 return "Итоги готовы", "ok"
             if status == "running":
                 return "Формируются итоги дня", "active"
@@ -2189,11 +2193,17 @@ class MainWindow(QMainWindow):
         except MetadataReadError as error:
             return f"Metadata дня поврежден и сохранен в backup: {error.backup_path}"
         meeting_count = len(self.storage.list_meeting_folders(day_folder))
-        unfinished = self.storage.has_unfinished_meeting_processing(day_folder)
+        try:
+            unfinished = self.storage.has_unfinished_meeting_processing(day_folder)
+        except MetadataReadError as error:
+            return f"Metadata встречи поврежден и сохранен в backup: {error.backup_path}"
         summary_ready = False
         if self.storage.day_summary_exists(day_folder):
             summary_metadata = self.storage.read_day_summary_metadata(day_folder)
-            summary_ready = summary_metadata.get("day_summary_status") == "draft_created"
+            summary_ready = summary_metadata.get("day_summary_status") in {
+                "draft_created",
+                "up_to_date",
+            }
         workday_date = str(day_metadata.get("date") or day_folder.name)
         processing_text = (
             "есть незавершенная обработка встреч"
@@ -4525,6 +4535,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 f"Прошлый рабочий день завершен. {update_message}"
             )
+        self.past_workday_folder = self.storage.find_past_active_workday()
         self._refresh_past_workday_recovery_card()
 
     def _restore_today_pending_processing_queue(self) -> None:
@@ -5836,6 +5847,8 @@ class MainWindow(QMainWindow):
         ):
             self.storage.root = self.pending_storage_root_path
             self.storage.load_today_state()
+            self.past_workday_folder = self.storage.find_past_active_workday()
+            self.past_workday_recovery_hidden = False
             self.pending_storage_root_path = None
             applied = True
         if applied:

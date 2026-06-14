@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Storage behavior
+## Task 1: Storage behavior
 
 **Files:**
 - Modify: `app/services/storage.py`
@@ -21,7 +21,7 @@
 - [x] Add focused `StorageService` methods for `find_past_active_workday`, `end_workday_folder`, and pending processing discovery for an arbitrary day.
 - [x] Run the storage tests and verify they pass.
 
-### Task 2: Workday screen recovery card
+## Task 2: Workday screen recovery card
 
 **Files:**
 - Modify: `app/ui/main_window.py`
@@ -34,7 +34,7 @@
 - [x] Reuse existing pipeline sequencing so today's queue and past recovery queue do not run heavy work in parallel.
 - [x] Run the UI tests and verify they pass.
 
-### Task 3: Project state and verification
+## Task 3: Project state and verification
 
 **Files:**
 - Modify: `PROJECT_STATE.md`

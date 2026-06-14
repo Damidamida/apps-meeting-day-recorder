@@ -1386,7 +1386,8 @@ def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
 def test_past_active_workday_card_is_shown_on_startup(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     setup_storage = StorageService(tmp_path, recorder)
     past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
     setup_storage.start_meeting("Прошлая встреча", yesterday.replace(hour=9, minute=0))
@@ -1408,17 +1409,70 @@ def test_past_active_workday_card_is_shown_on_startup(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_past_workday_card_treats_up_to_date_summary_as_ready(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = StorageService(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    setup_storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+    metadata = setup_storage.ensure_day_summary_metadata(past_day_folder)
+    metadata["day_summary_status"] = "up_to_date"
+    setup_storage._write_json(setup_storage.day_summary_metadata_path(past_day_folder), metadata)
+
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.past_workday_folder = past_day_folder
+    window._refresh_past_workday_recovery_card()
+
+    assert window._past_workday_recovery_badge() == ("Итоги готовы", "ok")
+    assert "итоги дня готовы" in window._past_workday_recovery_detail_text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_card_handles_corrupted_meeting_metadata(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+
+    class BrokenMeetingMetadataStorage(StorageService):
+        def has_unfinished_meeting_processing(self, day_folder):
+            raise MetadataReadError(
+                Path(day_folder) / "meeting_metadata.json",
+                Path(day_folder) / "meeting_metadata.corrupt-test.json",
+            )
+
+    setup_storage = BrokenMeetingMetadataStorage(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    setup_storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+
+    storage = BrokenMeetingMetadataStorage(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.past_workday_folder = past_day_folder
+
+    assert window._past_workday_recovery_badge() == ("Требует внимания", "error")
+    assert "Metadata встречи поврежден" in window._past_workday_recovery_detail_text()
+
+    window.close()
+    app.processEvents()
+
+
 def test_past_workday_card_does_not_mix_past_meetings_into_today(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     setup_storage = StorageService(tmp_path, recorder)
     past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
     past_meeting = setup_storage.start_meeting("Прошлая встреча", yesterday.replace(hour=9, minute=0))
     setup_storage.finish_active_meeting_recording(yesterday.replace(hour=9, minute=30))
 
     storage = StorageService(tmp_path, recorder)
-    today_day_folder = storage.start_workday(datetime.now().replace(hour=9, minute=0))
+    today_day_folder = storage.start_workday(now.replace(hour=9, minute=0))
     window = MainWindow(storage, recorder)
 
     assert window.past_workday_folder == past_day_folder
@@ -1433,17 +1487,19 @@ def test_past_workday_card_does_not_mix_past_meetings_into_today(tmp_path: Path)
 def test_today_workday_can_start_when_past_workday_card_exists(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     setup_storage = StorageService(tmp_path, recorder)
     setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
 
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
+    today_date = datetime.now().date()
     window.start_workday()
 
     assert storage.workday_active
-    assert storage.active_day_folder == tmp_path / datetime.now().date().isoformat()
+    assert storage.active_day_folder == tmp_path / today_date.isoformat()
     assert window.past_workday_folder == tmp_path / yesterday.date().isoformat()
     assert not window.past_workday_recovery_card.isHidden()
 
@@ -1477,7 +1533,8 @@ def test_past_workday_recovery_button_ends_day_and_waits_for_meetings(
             day_summary_calls.append(day_folder)
             return super().process_day_summary_pipeline(day_folder, force, progress_callback)
 
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     setup_storage = BlockingStorage(tmp_path, recorder)
     past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
     pending_meeting = setup_storage.start_meeting("Нужно обработать", yesterday.replace(hour=9, minute=0))
@@ -1522,7 +1579,8 @@ def test_past_workday_recovery_starts_day_summary_immediately_without_pending_me
             day_summary_calls.append(day_folder)
             return super().process_day_summary_pipeline(day_folder, force, progress_callback)
 
-    yesterday = datetime.now() - timedelta(days=1)
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
     setup_storage = SummaryStorage(tmp_path, recorder)
     past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
 
@@ -1535,6 +1593,8 @@ def test_past_workday_recovery_starts_day_summary_immediately_without_pending_me
     metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
     assert metadata["status"] == "ended"
     assert not window.day_summary_pending
+    assert window.past_workday_folder is None
+    assert window.past_workday_recovery_card.isHidden()
 
     if window.day_summary_thread is not None:
         window.day_summary_thread.quit()

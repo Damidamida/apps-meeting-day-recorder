@@ -700,6 +700,15 @@ class StorageService:
         metadata = self._read_json(metadata_path)
         if metadata.get("status") != "active":
             raise ValueError("Рабочий день уже завершен или недоступен.")
+        active_meetings = [
+            meeting_folder
+            for meeting_folder in self.list_meeting_folders(day_folder)
+            if self._meeting_has_status(meeting_folder, "active")
+        ]
+        if active_meetings:
+            raise ValueError(
+                "Завершите активную встречу перед завершением рабочего дня."
+            )
 
         ended_event = {"type": "ended", "at": ended_at.isoformat()}
         events = metadata.setdefault("events", [])
