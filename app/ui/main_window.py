@@ -174,7 +174,6 @@ class ThemeToggleButton(QPushButton):
         bg_color = self._mix("#fff8ef", "#111827", progress)
         border_color = self._mix("#ead8c6", "#374151", progress)
         text_color = self._mix("#3a1408", "#f9fafb", progress)
-        hint_color = self._mix("#7b4b35", "#d1d5db", progress)
         accent_color = self._mix("#ff6f1a", "#60a5fa", progress)
 
         painter.setPen(QPen(border_color, 1))
@@ -227,30 +226,18 @@ class ThemeToggleButton(QPushButton):
 
         label_rect = QRectF(
             switch_rect.right() + 12,
-            button_rect.top() + 5,
+            button_rect.top(),
             button_rect.right() - switch_rect.right() - 22,
-            17,
+            button_rect.height(),
         )
         painter.setPen(QPen(text_color))
         font = painter.font()
         font.setBold(True)
         painter.setFont(font)
-        painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft, self.text())
-
-        hint_rect = QRectF(
-            label_rect.left(),
-            label_rect.bottom() + 1,
-            label_rect.width(),
-            15,
-        )
-        font.setBold(False)
-        font.setPointSize(max(8, font.pointSize() - 1))
-        painter.setFont(font)
-        painter.setPen(QPen(hint_color))
         painter.drawText(
-            hint_rect,
-            Qt.AlignmentFlag.AlignLeft,
-            "Нажмите, чтобы сменить",
+            label_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.text(),
         )
 
 
