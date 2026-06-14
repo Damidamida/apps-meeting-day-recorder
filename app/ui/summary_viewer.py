@@ -104,6 +104,9 @@ class SummaryMaterialView(QWidget):
         self.mode = "preview"
         self._sync_mode()
 
+    def has_unsaved_changes(self) -> bool:
+        return self.mode == "edit" and self.editor.toPlainText() != self.markdown
+
     def enter_edit_mode(self) -> None:
         self.mode = "edit"
         self.editor.setPlainText(self.markdown)

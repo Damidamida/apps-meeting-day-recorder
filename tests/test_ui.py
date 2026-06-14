@@ -85,6 +85,26 @@ def test_summary_material_view_edit_save_and_cancel_signals() -> None:
     app.processEvents()
 
 
+def test_summary_material_view_tracks_unsaved_changes() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+    view.set_markdown("# Старый итог\n")
+
+    assert not view.has_unsaved_changes()
+
+    view.enter_edit_mode()
+    assert not view.has_unsaved_changes()
+
+    view.editor.setPlainText("# Несохраненный итог\n")
+    assert view.has_unsaved_changes()
+
+    view.cancel_button.click()
+    assert not view.has_unsaved_changes()
+
+    view.close()
+    app.processEvents()
+
+
 def test_summary_material_view_uses_primary_save_and_block_preview() -> None:
     app = QApplication.instance() or QApplication([])
     view = SummaryMaterialView("Итог встречи")
@@ -2288,6 +2308,46 @@ def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_review_blocks_material_reload_with_unsaved_summary_edits(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    first = storage.create_meeting_folder(
+        "Первая встреча",
+        datetime(2026, 6, 14, 10, 0),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая встреча",
+        datetime(2026, 6, 14, 11, 0),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_meeting_summary(first, "# Итог первой встречи\n")
+    storage.save_meeting_summary(second, "# Итог второй встречи\n")
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+    storage.ensure_day_summary_metadata(day_folder)
+    window = MainWindow(storage, recorder)
+
+    window.open_review()
+    window.select_review_meeting(first)
+    window.review_summary_view.enter_edit_mode()
+    window.review_summary_view.editor.setPlainText("# Несохраненный итог\n")
+
+    window.select_review_meeting(second)
+    assert window.selected_review_meeting_folder == first
+    assert window.review_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    assert window.review_summary_view.mode == "edit"
+    assert "Сохраните" in window.review_status_label.text()
+
+    window._refresh_after_lifecycle_change()
+    assert window.review_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    assert window.review_summary_view.mode == "edit"
+
+    window.close()
+    app.processEvents()
+
+
 def test_review_legacy_final_save_method_writes_single_summary_file(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -3148,6 +3208,52 @@ def test_archive_saves_meeting_and_day_summary_single_files(tmp_path: Path) -> N
 
     assert (day_folder / "00_day_summary.md").read_text(encoding="utf-8") == "# Новый итог дня\n"
     assert not (day_folder / "00_day_summary_final.md").exists()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_blocks_material_navigation_with_unsaved_summary_edits(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    first = storage.create_meeting_folder(
+        "Первая архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    second = storage.create_meeting_folder(
+        "Вторая архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T10:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_meeting_summary(first, "# Итог первой встречи\n")
+    storage.save_meeting_summary(second, "# Итог второй встречи\n")
+    (first / "transcript.md").write_text("# Транскрипт первой встречи\n", encoding="utf-8")
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+    storage.ensure_day_summary_metadata(day_folder)
+    window = MainWindow(storage, recorder)
+
+    window.open_archive()
+    window.open_archive_meeting_summary(first)
+    window.archive_summary_view.enter_edit_mode()
+    window.archive_summary_view.editor.setPlainText("# Несохраненный итог\n")
+
+    window.open_archive_meeting_summary(second)
+    assert window.archive_open_material == ("meeting_summary", first)
+    assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    assert window.archive_summary_view.mode == "edit"
+    assert "Сохраните" in window.status_label.text()
+
+    window.open_archive_meeting_transcript(first)
+    assert window.archive_open_material == ("meeting_summary", first)
+    assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+
+    window.refresh_archive()
+    assert window.archive_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    assert window.archive_summary_view.mode == "edit"
 
     window.close()
     app.processEvents()

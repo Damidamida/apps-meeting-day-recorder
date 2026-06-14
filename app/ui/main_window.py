@@ -4661,6 +4661,8 @@ class MainWindow(QMainWindow):
             self.archive_search_timer.start()
 
     def apply_archive_filters(self) -> None:
+        if not self._guard_archive_summary_reload():
+            return
         self.archive_query = self.archive_search_input.text().strip()
         date_filter = self._archive_date_filter()
         all_days = build_archive_days(self.storage, date_filter=date_filter)
@@ -4812,6 +4814,8 @@ class MainWindow(QMainWindow):
         return card
 
     def select_archive_day(self, day_folder: Path) -> None:
+        if not self._guard_archive_summary_reload():
+            return
         self.selected_archive_day_folder = day_folder
         self.selected_archive_meeting_folder = None
         self.archive_open_material = ("day_summary", day_folder)
@@ -4983,6 +4987,8 @@ class MainWindow(QMainWindow):
         self.open_archive_meeting_summary(meeting_folder)
 
     def open_archive_day_summary(self, day_folder: Path) -> None:
+        if not self._guard_archive_summary_reload():
+            return
         self.selected_archive_day_folder = day_folder
         self.selected_archive_meeting_folder = None
         self.archive_open_material = ("day_summary", day_folder)
@@ -4992,6 +4998,8 @@ class MainWindow(QMainWindow):
         self._render_archive_detail()
 
     def open_archive_meeting_summary(self, meeting_folder: Path) -> None:
+        if not self._guard_archive_summary_reload():
+            return
         self.selected_archive_meeting_folder = meeting_folder
         self.selected_archive_day_folder = meeting_folder.parent
         self.archive_open_material = ("meeting_summary", meeting_folder)
@@ -5007,6 +5015,8 @@ class MainWindow(QMainWindow):
         self.open_archive_meeting_transcript(meeting_folder)
 
     def open_archive_meeting_transcript(self, meeting_folder: Path) -> None:
+        if not self._guard_archive_summary_reload():
+            return
         self.selected_archive_meeting_folder = meeting_folder
         self.selected_archive_day_folder = meeting_folder.parent
         self.archive_open_material = ("meeting_transcript", meeting_folder)
@@ -5044,6 +5054,8 @@ class MainWindow(QMainWindow):
         elif kind == "meeting_summary":
             self.storage.save_meeting_summary(folder, content)
             self.status_label.setText("Итог встречи сохранен локально.")
+        if kind in {"day_summary", "meeting_summary"}:
+            self.archive_summary_view.set_markdown(content)
         self.refresh_archive()
 
     def request_archive_day_summary_update(self, day_folder: Path) -> None:
@@ -6151,6 +6163,8 @@ class MainWindow(QMainWindow):
         self.refresh_review()
 
     def open_meeting_summary_review(self, meeting_folder: Path) -> None:
+        if not self._guard_review_summary_reload():
+            return
         metadata = self.storage.read_meeting_metadata(meeting_folder)
         if not self._meeting_summary_is_ready(meeting_folder, metadata):
             self.status_label.setText("Итоги этой встречи пока не готовы.")
@@ -6206,17 +6220,19 @@ class MainWindow(QMainWindow):
             )
 
         if self.review_day_summary_selected and has_day_summary:
-            self.load_day_summary_review()
+            loaded = self.load_day_summary_review()
             self.review_meetings_hint.setText(
                 "Выберите «Итоги дня» или встречу, чтобы проверить локальные итоги."
             )
-            self.review_status_label.setText("Итоги дня загружены.")
+            if loaded:
+                self.review_status_label.setText("Итоги дня загружены.")
         elif meeting_folders:
-            self.load_selected_meeting(self.selected_review_meeting_folder)
+            loaded = self.load_selected_meeting(self.selected_review_meeting_folder)
             self.review_meetings_hint.setText(
                 "Выберите встречу, чтобы проверить итоги и transcript."
             )
-            self.review_status_label.setText("Локальные итоги загружены.")
+            if loaded:
+                self.review_status_label.setText("Локальные итоги загружены.")
         else:
             self.meeting_summary_editor.clear()
             self.meeting_transcript_editor.clear()
@@ -6290,23 +6306,29 @@ class MainWindow(QMainWindow):
         return card
 
     def select_review_meeting(self, meeting_folder: Path) -> None:
+        if not self._guard_review_summary_reload():
+            return
         self.review_day_summary_selected = False
         self.selected_review_meeting_folder = meeting_folder
         self.refresh_review()
 
     def select_review_day_summary(self) -> None:
+        if not self._guard_review_summary_reload():
+            return
         self.review_day_summary_selected = True
         self.selected_review_meeting_folder = None
         self.refresh_review()
 
-    def load_selected_meeting(self, meeting_folder: Path | None = None) -> None:
+    def load_selected_meeting(self, meeting_folder: Path | None = None) -> bool:
+        if not self._guard_review_summary_reload():
+            return False
         if meeting_folder is None:
             self.review_summary_view.set_markdown("")
             self.review_summary_view.set_title("Итог встречи")
             self.review_summary_view.set_meta("")
             self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
-            return
+            return True
         self.review_tabs.setTabText(0, "Итоги встречи")
         self.review_tabs.setTabText(1, "Транскрипт")
         metadata = self.storage.read_meeting_metadata(meeting_folder)
@@ -6315,8 +6337,11 @@ class MainWindow(QMainWindow):
         self.review_summary_view.set_markdown(self.storage.read_meeting_summary(meeting_folder))
         self.meeting_transcript_editor.setPlainText(self._read_meeting_transcript(meeting_folder))
         self._refresh_review_buttons()
+        return True
 
-    def load_day_summary_review(self) -> None:
+    def load_day_summary_review(self) -> bool:
+        if not self._guard_review_summary_reload():
+            return False
         day_folder = self.storage.get_today_day_folder()
         self.review_tabs.setTabText(0, "Итоги встреч")
         self.review_tabs.setTabText(1, "Транскрипт")
@@ -6326,12 +6351,13 @@ class MainWindow(QMainWindow):
             self.review_summary_view.set_meta("")
             self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
-            return
+            return True
         self.review_summary_view.set_title("Итог дня")
         self.review_summary_view.set_meta(self._day_material_meta(day_folder))
         self.review_summary_view.set_markdown(self.storage.read_day_summary(day_folder))
         self.meeting_transcript_editor.setHtml(self._day_transcript_links_html(day_folder))
         self._refresh_review_buttons()
+        return True
 
     def _day_transcript_links_html(self, day_folder: Path) -> str:
         meeting_folders = self._today_meeting_folders_newest_first()
@@ -6747,6 +6773,26 @@ class MainWindow(QMainWindow):
             and self.archive_open_material[0] in {"day_summary", "meeting_summary"}
             and self.archive_summary_view.mode == "edit"
         )
+
+    def _guard_review_summary_reload(self) -> bool:
+        if (
+            getattr(self, "review_summary_view", None) is not None
+            and self.review_summary_view.has_unsaved_changes()
+        ):
+            self.review_status_label.setText("Сохраните или отмените текущие правки перед переходом.")
+            return False
+        return True
+
+    def _guard_archive_summary_reload(self) -> bool:
+        if (
+            getattr(self, "archive_summary_view", None) is not None
+            and self.archive_open_material is not None
+            and self.archive_open_material[0] in {"day_summary", "meeting_summary"}
+            and self.archive_summary_view.has_unsaved_changes()
+        ):
+            self.status_label.setText("Сохраните или отмените текущие правки перед переходом в Архиве.")
+            return False
+        return True
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
