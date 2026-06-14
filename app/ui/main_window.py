@@ -1213,6 +1213,10 @@ class MainWindow(QMainWindow):
             summarizer=create_summarizer(self._summary_runtime_config()),
         )
         self.storage.load_today_state()
+        self.past_workday_folder: Path | None = self.storage.find_past_active_workday()
+        self.past_workday_recovery_hidden = False
+        self.past_workday_recovery_badge: QLabel | None = None
+        self.past_workday_recovery_detail: QLabel | None = None
         self.readiness_badges: dict[str, QLabel] = {}
         self.readiness_tiles: dict[str, QWidget] = {}
         self.readiness_detail_rows: dict[str, QWidget] = {}
@@ -2081,6 +2085,131 @@ class MainWindow(QMainWindow):
         self.meetings_body.setVisible(is_collapsed)
         self.toggle_meetings_button.setText("Свернуть" if is_collapsed else "Развернуть")
 
+    def _create_past_workday_recovery_card(self) -> QWidget:
+        card = QFrame()
+        card.setObjectName("activeMeetingCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        title_label = QLabel("Найден незавершенный рабочий день")
+        title_label.setObjectName("meetingHeaderLabel")
+        self.past_workday_recovery_badge = QLabel("Найден")
+        self.past_workday_recovery_badge.setObjectName("statusBadge")
+        self._apply_badge_style(self.past_workday_recovery_badge, "active")
+        header_layout.addWidget(title_label, 1)
+        header_layout.addWidget(self.past_workday_recovery_badge, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header_layout)
+
+        self.past_workday_recovery_detail = QLabel()
+        self.past_workday_recovery_detail.setObjectName("sectionHint")
+        self.past_workday_recovery_detail.setWordWrap(True)
+        layout.addWidget(self.past_workday_recovery_detail)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(8)
+        self.recover_past_workday_button = self._add_button(
+            actions_layout,
+            "Завершить день и сформировать итоги",
+            self.recover_past_workday,
+            "primaryButton",
+        )
+        self.open_past_workday_folder_button = self._add_button(
+            actions_layout,
+            "Открыть папку дня",
+            self.open_past_workday_folder,
+        )
+        self.hide_past_workday_card_button = self._add_button(
+            actions_layout,
+            "Скрыть",
+            self.hide_past_workday_recovery_card,
+            "headerButton",
+        )
+        actions_layout.addStretch(1)
+        layout.addLayout(actions_layout)
+
+        card.setLayout(layout)
+        self.past_workday_recovery_card = card
+        self._refresh_past_workday_recovery_card()
+        return card
+
+    def _refresh_past_workday_recovery_card(self) -> None:
+        card = getattr(self, "past_workday_recovery_card", None)
+        if card is None:
+            return
+        if self.past_workday_folder is None or self.past_workday_recovery_hidden:
+            card.hide()
+            return
+        card.show()
+        badge_text, badge_state = self._past_workday_recovery_badge()
+        if self.past_workday_recovery_badge is not None:
+            self.past_workday_recovery_badge.setText(badge_text)
+            self._apply_badge_style(self.past_workday_recovery_badge, badge_state)
+        if self.past_workday_recovery_detail is not None:
+            self.past_workday_recovery_detail.setText(
+                self._past_workday_recovery_detail_text()
+            )
+
+    def _past_workday_recovery_badge(self) -> tuple[str, str]:
+        day_folder = self.past_workday_folder
+        if day_folder is None:
+            return "Скрыто", "wait"
+        try:
+            day_metadata = self.storage.read_day_metadata(day_folder)
+        except MetadataReadError:
+            return "Требует внимания", "error"
+        if day_metadata.get("status") == "active":
+            return "Найден", "active"
+        if self.storage.has_unfinished_meeting_processing(day_folder):
+            return "Обработка встреч", "active"
+        if self.day_summary_running and self.day_summary_day_folder == day_folder:
+            return "Формируются итоги дня", "active"
+        if self.storage.day_summary_exists(day_folder):
+            metadata = self.storage.read_day_summary_metadata(day_folder)
+            status = metadata.get("day_summary_status")
+            if status == "draft_created":
+                return "Итоги готовы", "ok"
+            if status == "running":
+                return "Формируются итоги дня", "active"
+            if status == "waiting_for_meetings":
+                return "Обработка встреч", "active"
+            if status in {"failed", "openai_unavailable"}:
+                return "Требует внимания", "error"
+        return "Формируются итоги дня", "active"
+
+    def _past_workday_recovery_detail_text(self) -> str:
+        day_folder = self.past_workday_folder
+        if day_folder is None:
+            return ""
+        try:
+            day_metadata = self.storage.read_day_metadata(day_folder)
+        except MetadataReadError as error:
+            return f"Metadata дня поврежден и сохранен в backup: {error.backup_path}"
+        meeting_count = len(self.storage.list_meeting_folders(day_folder))
+        unfinished = self.storage.has_unfinished_meeting_processing(day_folder)
+        summary_ready = False
+        if self.storage.day_summary_exists(day_folder):
+            summary_metadata = self.storage.read_day_summary_metadata(day_folder)
+            summary_ready = summary_metadata.get("day_summary_status") == "draft_created"
+        workday_date = str(day_metadata.get("date") or day_folder.name)
+        processing_text = (
+            "есть незавершенная обработка встреч"
+            if unfinished
+            else "незавершенной обработки встреч нет"
+        )
+        summary_text = "итоги дня готовы" if summary_ready else "итоги дня еще не готовы"
+        return f"Дата: {workday_date}. Встреч: {meeting_count}. {processing_text}, {summary_text}."
+
+    def hide_past_workday_recovery_card(self) -> None:
+        self.past_workday_recovery_hidden = True
+        self._refresh_past_workday_recovery_card()
+        self.status_label.setText(
+            "Карточка прошлого рабочего дня скрыта до следующего запуска приложения."
+        )
+
     def _create_pipeline_step_card(
         self,
         key: str,
@@ -2769,6 +2898,7 @@ class MainWindow(QMainWindow):
                 f"Выбранная дата: сегодня, {date.today().strftime('%d.%m.%Y')}",
             )
         )
+        layout.addWidget(self._create_past_workday_recovery_card())
 
         readiness_layout = QGridLayout()
         readiness_layout.setContentsMargins(0, 0, 0, 0)
@@ -4360,9 +4490,42 @@ class MainWindow(QMainWindow):
         self._refresh_after_lifecycle_change()
 
     def _enqueue_meeting_processing(self, meeting_folder: Path) -> None:
+        if (
+            self.pipeline_running
+            and meeting_folder == self.pipeline_meeting_folder
+        ) or meeting_folder in self.processing_queue:
+            return
         self.processing_queue.append(meeting_folder)
         if not self.pipeline_running:
             self._start_next_pipeline()
+
+    def recover_past_workday(self) -> None:
+        day_folder = self.past_workday_folder
+        if day_folder is None:
+            self.status_label.setText("Прошлый незавершенный рабочий день не найден.")
+            return
+        try:
+            self.storage.end_workday_folder(day_folder)
+            self.storage.recover_interrupted_meeting_processing(day_folder)
+            pending_meetings = self.storage.list_pending_meeting_processing_folders(day_folder)
+        except (ValueError, MetadataReadError) as error:
+            self.status_label.setText(f"Прошлый рабочий день требует внимания: {error}")
+            self._refresh_past_workday_recovery_card()
+            return
+
+        for meeting_folder in pending_meetings:
+            self._enqueue_meeting_processing(meeting_folder)
+        update_message = self._request_day_summary_update(day_folder, force=False)
+        if pending_meetings:
+            self.status_label.setText(
+                "Прошлый рабочий день завершен. "
+                f"Встречи поставлены в обработку: {len(pending_meetings)}. {update_message}"
+            )
+        else:
+            self.status_label.setText(
+                f"Прошлый рабочий день завершен. {update_message}"
+            )
+        self._refresh_past_workday_recovery_card()
 
     def _restore_today_pending_processing_queue(self) -> None:
         """
@@ -5699,6 +5862,14 @@ class MainWindow(QMainWindow):
             self.status_label.setText(message)
             self.review_status_label.setText(message)
 
+    def open_past_workday_folder(self) -> None:
+        day_folder = self.past_workday_folder
+        if day_folder is None:
+            self.status_label.setText("Прошлый незавершенный рабочий день не найден.")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(day_folder.resolve()))):
+            self.status_label.setText(f"Не удалось открыть папку прошлого дня: {day_folder}")
+
     def open_selected_meeting_folder(self) -> None:
         meeting_folder = self.selected_workday_meeting_folder
         if meeting_folder is None:
@@ -5854,7 +6025,14 @@ class MainWindow(QMainWindow):
             return True
         if day_folder is None:
             return False
-        return self.storage.has_unfinished_meeting_processing(day_folder)
+        try:
+            return self.storage.has_unfinished_meeting_processing(day_folder)
+        except MetadataReadError as error:
+            if hasattr(self, "status_label"):
+                self.status_label.setText(
+                    f"Metadata встречи поврежден и сохранен в backup: {error.backup_path}"
+                )
+            return False
 
     @staticmethod
     def _elapsed_text(started_at: object) -> str:
@@ -5926,6 +6104,7 @@ class MainWindow(QMainWindow):
             self.storage.active_meeting_folder.name if self.storage.meeting_active else "нет"
         )
         self.obs_status_value.setText(self.recorder.status_text)
+        self._refresh_past_workday_recovery_card()
         self._refresh_day_status_display(day_folder)
         self._refresh_active_call_display()
         meeting_count = len(self.storage.list_today_meeting_folders()) if day_folder else 0

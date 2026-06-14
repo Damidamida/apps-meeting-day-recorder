@@ -158,6 +158,29 @@ class StorageService:
         if active_meetings:
             self.active_meeting_folder = active_meetings[-1]
 
+    def find_past_active_workday(self, now: datetime | None = None) -> Path | None:
+        now = now or datetime.now()
+        today = now.date()
+        candidates: list[tuple[date, Path]] = []
+        if not self.root.is_dir():
+            return None
+        for day_folder in self.root.iterdir():
+            if not day_folder.is_dir():
+                continue
+            metadata_path = day_folder / "day_metadata.json"
+            if not metadata_path.is_file():
+                continue
+            try:
+                metadata = self._read_json(metadata_path)
+                workday = date.fromisoformat(str(metadata.get("date") or day_folder.name))
+            except (MetadataReadError, ValueError):
+                continue
+            if workday < today and metadata.get("status") == "active":
+                candidates.append((workday, day_folder))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
+
     def start_workday(self, started_at: datetime | None = None) -> Path:
         if self.workday_active:
             raise ValueError("Рабочий день уже активен.")
@@ -422,6 +445,20 @@ class StorageService:
                 recovered.append(meeting_folder)
         return recovered
 
+    def list_pending_meeting_processing_folders(self, day_folder: Path) -> list[Path]:
+        pending: list[Path] = []
+        for meeting_folder in self.list_meeting_folders(day_folder):
+            try:
+                metadata = self.read_meeting_metadata(meeting_folder)
+            except MetadataReadError:
+                continue
+            if (
+                metadata.get("status") == "ended"
+                and metadata.get("processing_status") == "pending"
+            ):
+                pending.append(meeting_folder)
+        return pending
+
     @staticmethod
     def _emit_pipeline(
         progress_callback: Callable[[str, str], None] | None,
@@ -648,6 +685,45 @@ class StorageService:
             self._tasks_placeholder(),
         )
         self.active_day_folder = None
+        return day_folder
+
+    def end_workday_folder(
+        self,
+        day_folder: Path,
+        ended_at: datetime | None = None,
+    ) -> Path:
+        ended_at = ended_at or datetime.now()
+        day_folder = Path(day_folder)
+        metadata_path = day_folder / "day_metadata.json"
+        if not metadata_path.is_file():
+            raise ValueError("Метаданные рабочего дня не найдены.")
+        metadata = self._read_json(metadata_path)
+        if metadata.get("status") != "active":
+            raise ValueError("Рабочий день уже завершен или недоступен.")
+
+        ended_event = {"type": "ended", "at": ended_at.isoformat()}
+        events = metadata.setdefault("events", [])
+        metadata.update(
+            {
+                "ended_at": ended_at.isoformat(),
+                "status": "ended",
+            }
+        )
+        if ended_event not in events:
+            events.append(ended_event)
+        self._write_json(metadata_path, metadata)
+        self._read_or_create_text(
+            day_folder / "00_day_summary_draft.md",
+            self._day_summary_placeholder(),
+        )
+        self.ensure_day_summary_metadata(day_folder, created_at=ended_at)
+        self._read_or_create_text(
+            day_folder / "00_tasks_draft.md",
+            self._tasks_placeholder(),
+        )
+        if self.active_day_folder == day_folder:
+            self.active_day_folder = None
+            self.active_meeting_folder = None
         return day_folder
 
     def ensure_day_summary_metadata(
@@ -904,6 +980,10 @@ class StorageService:
             for folder in day_folder.iterdir()
             if folder.is_dir() and (folder / "meeting_metadata.json").is_file()
         )
+
+    def read_day_metadata(self, day_folder: Path) -> dict[str, Any]:
+        metadata_path = Path(day_folder) / "day_metadata.json"
+        return self._read_json(metadata_path) if metadata_path.exists() else {}
 
     def read_meeting_metadata(self, meeting_folder: Path) -> dict[str, Any]:
         path = meeting_folder / "meeting_metadata.json"
