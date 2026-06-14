@@ -200,6 +200,9 @@ def test_risky_action_confirmation_overlay_shows_exact_day_warning_in_app() -> N
         "Обновить итоги дня",
     )
 
+    assert overlay.objectName() == "meetingOverlay"
+    assert overlay.card.objectName() == "meetingOverlayCard"
+    assert not overlay.isHidden()
     assert overlay.title_label.text() == "Обновить итоги дня?"
     assert overlay.message_label.text() == (
         "Если вы вручную меняли Итог дня, обновление заменит ваши изменения."
@@ -208,6 +211,7 @@ def test_risky_action_confirmation_overlay_shows_exact_day_warning_in_app() -> N
     assert overlay.cancel_button.text() == "Отмена"
     assert overlay.cancel_button.isDefault()
     assert "#111827" in overlay.styleSheet()
+    assert "QMessageBox" not in type(overlay).__name__
 
     overlay.cancel_button.click()
     assert overlay.isHidden()
