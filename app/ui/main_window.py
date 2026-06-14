@@ -5,8 +5,22 @@ from pathlib import Path
 
 import yaml
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    Property,
+    QPointF,
+    QPropertyAnimation,
+    QRectF,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -91,6 +105,153 @@ class NumericLineEdit(QLineEdit):
                 f"{label}: допустимое значение от {self.minimum} до {self.maximum}."
             )
         return value
+
+
+class ThemeToggleButton(QPushButton):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._progress = 0.0
+        self._animation = QPropertyAnimation(self, b"progress", self)
+        self._animation.setDuration(180)
+        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setObjectName("themeToggleButton")
+        self.setMinimumHeight(48)
+        self.setText("Светлая тема")
+        self.setToolTip("Переключить тему приложения")
+        self.setAccessibleName("Переключить тему приложения")
+
+    def sizeHint(self) -> QSize:
+        return QSize(202, 48)
+
+    def get_progress(self) -> float:
+        return self._progress
+
+    def set_progress(self, value: float) -> None:
+        self._progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    progress = Property(float, get_progress, set_progress)
+
+    def set_theme(self, theme: str, *, animated: bool = False) -> None:
+        dark = theme == "dark"
+        target = 1.0 if dark else 0.0
+        self.setChecked(dark)
+        self.setText("Темная тема" if dark else "Светлая тема")
+        self.setAccessibleDescription(
+            "Сейчас включена темная тема" if dark else "Сейчас включена светлая тема"
+        )
+        if animated and abs(self._progress - target) > 0.01:
+            self._animation.stop()
+            self._animation.setStartValue(self._progress)
+            self._animation.setEndValue(target)
+            self._animation.start()
+            return
+        self._animation.stop()
+        self.set_progress(target)
+
+    @staticmethod
+    def _mix(start: str, end: str, progress: float) -> QColor:
+        start_color = QColor(start)
+        end_color = QColor(end)
+        return QColor(
+            int(start_color.red() + (end_color.red() - start_color.red()) * progress),
+            int(
+                start_color.green()
+                + (end_color.green() - start_color.green()) * progress
+            ),
+            int(start_color.blue() + (end_color.blue() - start_color.blue()) * progress),
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        progress = self._progress
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        button_rect = QRectF(self.rect()).adjusted(14, 5, -14, -5)
+        bg_color = self._mix("#fff8ef", "#111827", progress)
+        border_color = self._mix("#ead8c6", "#374151", progress)
+        text_color = self._mix("#3a1408", "#f9fafb", progress)
+        hint_color = self._mix("#7b4b35", "#d1d5db", progress)
+        accent_color = self._mix("#ff6f1a", "#60a5fa", progress)
+
+        painter.setPen(QPen(border_color, 1))
+        painter.setBrush(QBrush(bg_color))
+        painter.drawRoundedRect(button_rect, 10, 10)
+
+        switch_rect = QRectF(button_rect.left() + 10, button_rect.top() + 7, 58, 26)
+        track_color = self._mix("#ffe4cc", "#1f2937", progress)
+        painter.setPen(QPen(border_color, 1))
+        painter.setBrush(QBrush(track_color))
+        painter.drawRoundedRect(switch_rect, 13, 13)
+
+        knob_size = 22
+        knob_x = switch_rect.left() + 2 + (switch_rect.width() - knob_size - 4) * progress
+        knob_rect = QRectF(knob_x, switch_rect.top() + 2, knob_size, knob_size)
+        knob_color = self._mix("#ffffff", "#f8fafc", progress)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(knob_color))
+        painter.drawEllipse(knob_rect)
+
+        icon_center = knob_rect.center()
+        icon_pen = QPen(accent_color, 1.6)
+        icon_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(icon_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if progress < 0.5:
+            painter.drawEllipse(icon_center, 4.2, 4.2)
+            for dx, dy in [
+                (0, -8),
+                (0, 8),
+                (-8, 0),
+                (8, 0),
+                (-5.6, -5.6),
+                (5.6, -5.6),
+                (-5.6, 5.6),
+                (5.6, 5.6),
+            ]:
+                painter.drawLine(
+                    QPointF(icon_center.x() + dx * 0.72, icon_center.y() + dy * 0.72),
+                    QPointF(icon_center.x() + dx, icon_center.y() + dy),
+                )
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(accent_color))
+            painter.drawEllipse(icon_center, 6.2, 6.2)
+            painter.setBrush(QBrush(knob_color))
+            painter.drawEllipse(
+                QRectF(icon_center.x() + 3.5, icon_center.y() - 2.5, 6.2, 6.2)
+            )
+
+        label_rect = QRectF(
+            switch_rect.right() + 12,
+            button_rect.top() + 5,
+            button_rect.right() - switch_rect.right() - 22,
+            17,
+        )
+        painter.setPen(QPen(text_color))
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(label_rect, Qt.AlignmentFlag.AlignLeft, self.text())
+
+        hint_rect = QRectF(
+            label_rect.left(),
+            label_rect.bottom() + 1,
+            label_rect.width(),
+            15,
+        )
+        font.setBold(False)
+        font.setPointSize(max(8, font.pointSize() - 1))
+        painter.setFont(font)
+        painter.setPen(QPen(hint_color))
+        painter.drawText(
+            hint_rect,
+            Qt.AlignmentFlag.AlignLeft,
+            "Нажмите, чтобы сменить",
+        )
 
 
 class MeetingPipelineWorker(QObject):
@@ -1263,6 +1424,10 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
         self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
         layout.addStretch()
+        self.theme_toggle_button = ThemeToggleButton()
+        self.theme_toggle_button.set_theme(self.current_theme)
+        self.theme_toggle_button.clicked.connect(self.toggle_theme_from_sidebar)
+        layout.addWidget(self.theme_toggle_button)
         self.toggle_floating_button = QPushButton("Скрыть плавающую кнопку")
         self.toggle_floating_button.setObjectName("sidebarActionButton")
         self.toggle_floating_button.clicked.connect(self.toggle_floating_control)
@@ -1288,6 +1453,33 @@ class MainWindow(QMainWindow):
     def _refresh_navigation_state(self, current_index: int) -> None:
         for index, button in self.nav_buttons.items():
             button.setChecked(index == current_index)
+
+    def toggle_theme_from_sidebar(self) -> None:
+        previous_theme = self._configured_theme()
+        next_theme = "dark" if previous_theme == "light" else "light"
+        ui_config = self.config.setdefault("ui", {})
+        ui_config["theme"] = next_theme
+        try:
+            self._write_local_config(self.config)
+        except OSError as error:
+            ui_config["theme"] = previous_theme
+            if hasattr(self, "theme_toggle_button"):
+                self.theme_toggle_button.set_theme(previous_theme)
+            if hasattr(self, "status_label"):
+                self.status_label.setText(
+                    f"Тема не изменена: не удалось записать config.yaml. {error}"
+                )
+            return
+
+        if hasattr(self, "settings_theme_select"):
+            self._set_combo_value(self.settings_theme_select, next_theme)
+        self._apply_theme_settings(update_theme_toggle=False)
+        if hasattr(self, "theme_toggle_button"):
+            self.theme_toggle_button.set_theme(next_theme, animated=True)
+        if hasattr(self, "status_label"):
+            self.status_label.setText(
+                "Включена темная тема." if next_theme == "dark" else "Включена светлая тема."
+            )
 
     def _create_page_header(self, title: str, subtitle: str) -> QWidget:
         header = QWidget()
@@ -1781,8 +1973,10 @@ class MainWindow(QMainWindow):
             """ % colors
         )
 
-    def _apply_theme_settings(self) -> None:
+    def _apply_theme_settings(self, *, update_theme_toggle: bool = True) -> None:
         self._apply_app_style()
+        if update_theme_toggle and hasattr(self, "theme_toggle_button"):
+            self.theme_toggle_button.set_theme(self.current_theme)
         if hasattr(self, "start_meeting_overlay"):
             self.start_meeting_overlay.apply_theme(self.current_theme)
         if hasattr(self, "safety_close_overlay"):
@@ -5283,6 +5477,17 @@ class MainWindow(QMainWindow):
             return None
         return str(storage_root_path), storage_root_path
 
+    @staticmethod
+    def _write_local_config(config_to_save: dict[str, object]) -> None:
+        Path("config.yaml").write_text(
+            yaml.safe_dump(
+                config_to_save,
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
     def save_settings(self) -> None:
         storage_root = self._validate_storage_root_from_settings()
         if storage_root is None:
@@ -5295,14 +5500,7 @@ class MainWindow(QMainWindow):
             self.settings_status_label.setText(f"Настройки не сохранены: {error}")
             return
         try:
-            config_path.write_text(
-                yaml.safe_dump(
-                    config_to_save,
-                    allow_unicode=True,
-                    sort_keys=False,
-                ),
-                encoding="utf-8",
-            )
+            self._write_local_config(config_to_save)
         except OSError as error:
             self.settings_status_label.setText(
                 f"Настройки не сохранены: не удалось записать config.yaml. {error}"

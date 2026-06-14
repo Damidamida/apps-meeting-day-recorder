@@ -613,6 +613,42 @@ def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_sidebar_theme_toggle_applies_and_saves_theme(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    assert window.theme_toggle_button.text() == "Светлая тема"
+    assert window.config["ui"]["theme"] == "light"
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["ui"]["theme"] == "dark"
+    assert window.config["ui"]["theme"] == "dark"
+    assert window.settings_theme_select.currentData() == "dark"
+    assert window.theme_toggle_button.text() == "Темная тема"
+    assert "#0f172a" in window.styleSheet()
+
+    window.theme_toggle_button.click()
+    app.processEvents()
+
+    config = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert config["ui"]["theme"] == "light"
+    assert window.config["ui"]["theme"] == "light"
+    assert window.settings_theme_select.currentData() == "light"
+    assert window.theme_toggle_button.text() == "Светлая тема"
+    assert "#f6efe6" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
 def test_workday_screen_shows_active_call_and_meetings_summary(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
