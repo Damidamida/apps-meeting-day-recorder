@@ -10,6 +10,16 @@ $specPath = Join-Path $repoRoot "packaging\pyinstaller\bk_scribe.spec"
 $ffmpegDestination = Join-Path $repoRoot "packaging\ffmpeg\bin\ffmpeg.exe"
 $ffmpegSource = $env:BK_SCRIBE_FFMPEG
 
+function Assert-NativeCommandSucceeded {
+    param(
+        [string]$Step
+    )
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Step failed with exit code $LASTEXITCODE"
+    }
+}
+
 Set-Location $repoRoot
 
 if ($ffmpegSource -and (Test-Path -LiteralPath $ffmpegSource)) {
@@ -27,7 +37,9 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 
 & $python -m pip install -e ".[dev]"
+Assert-NativeCommandSucceeded "pip install"
 & $python -m PyInstaller --clean --noconfirm $specPath
+Assert-NativeCommandSucceeded "PyInstaller"
 
 if ($SkipInstaller) {
     Write-Host "Application build is ready: dist\BK Scribe"
@@ -55,4 +67,5 @@ if (-not $InnoSetupPath -or -not (Test-Path -LiteralPath $InnoSetupPath)) {
 
 $innoScript = Join-Path $repoRoot "packaging\inno\bk_scribe.iss"
 & $InnoSetupPath $innoScript
+Assert-NativeCommandSucceeded "Inno Setup"
 Write-Host "Installer is ready: packaging\output\BK-Scribe-Setup.exe"

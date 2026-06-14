@@ -35,10 +35,11 @@ def test_windows_package_script_uses_pyinstaller_and_inno_setup() -> None:
     script = ROOT / "scripts" / "build_windows_package.ps1"
     text = script.read_text(encoding="utf-8")
 
-    assert "pyinstaller" in text
+    assert "-m PyInstaller" in text
     assert "bk_scribe.spec" in text
     assert "ISCC.exe" in text
     assert "packaging\\ffmpeg\\bin\\ffmpeg.exe" in text
+    assert "Assert-NativeCommandSucceeded" in text
 
 
 def test_packaging_spec_is_not_globally_ignored() -> None:

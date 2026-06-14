@@ -13,7 +13,7 @@ def _set_windows_app_id() -> None:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
-    except Exception:
+    except (AttributeError, OSError):
         return
 
 
