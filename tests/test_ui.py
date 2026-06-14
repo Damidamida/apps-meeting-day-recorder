@@ -3217,9 +3217,12 @@ def test_archive_search_results_are_compact_and_keep_action_near_text(tmp_path: 
     assert result_cards
     assert snippet_labels
     assert all(label.maximumHeight() <= 48 for label in snippet_labels)
-    assert all(len(label.text()) <= 96 for label in snippet_labels)
+    assert all(len(str(label.property("plain_text"))) <= 96 for label in snippet_labels)
     assert all(button.maximumWidth() <= 96 for button in open_buttons)
     assert window.archive_results_scroll.maximumHeight() >= 190
+    assert any(label.textFormat() == Qt.TextFormat.RichText for label in snippet_labels)
+    assert any("archiveSearchHighlight" in label.text() for label in snippet_labels)
+    assert any(">релиз<" in label.text().casefold() for label in snippet_labels)
 
     window.close()
     app.processEvents()

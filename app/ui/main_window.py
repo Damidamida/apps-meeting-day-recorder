@@ -1,7 +1,9 @@
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import date, datetime
+from html import escape
 from pathlib import Path
+import re
 import tempfile
 
 import yaml
@@ -4713,11 +4715,14 @@ class MainWindow(QMainWindow):
             text_layout = QVBoxLayout()
             text_layout.setContentsMargins(0, 0, 0, 0)
             text_layout.setSpacing(2)
-            title = QLabel(f"{match.kind}: {match.title}")
+            title = QLabel(self._highlight_archive_query(f"{match.kind}: {match.title}"))
             title.setObjectName("archiveSearchTitle")
+            title.setTextFormat(Qt.TextFormat.RichText)
             title.setWordWrap(True)
-            snippet = QLabel(match.snippet)
+            snippet = QLabel(self._highlight_archive_query(match.snippet))
             snippet.setObjectName("archiveSearchSnippet")
+            snippet.setTextFormat(Qt.TextFormat.RichText)
+            snippet.setProperty("plain_text", match.snippet)
             snippet.setWordWrap(True)
             snippet.setMaximumHeight(44)
             text_layout.addWidget(title)
@@ -4733,6 +4738,27 @@ class MainWindow(QMainWindow):
             result.setLayout(row)
             self.archive_results_layout.addWidget(result)
         self.archive_results_layout.addStretch(1)
+
+    def _highlight_archive_query(self, text: str) -> str:
+        query = self.archive_query.strip()
+        if not query:
+            return escape(text)
+        pattern = re.compile(re.escape(query), re.IGNORECASE)
+        matches = list(pattern.finditer(text))
+        if not matches:
+            return escape(text)
+        parts: list[str] = []
+        cursor = 0
+        for match in matches:
+            parts.append(escape(text[cursor : match.start()]))
+            parts.append(
+                '<span class="archiveSearchHighlight" '
+                'style="background-color: #fb923c; color: #111827; '
+                f'font-weight: 800; padding: 0 2px;">{escape(match.group(0))}</span>'
+            )
+            cursor = match.end()
+        parts.append(escape(text[cursor:]))
+        return "".join(parts)
 
     def open_archive_search_match(self, match: ArchiveSearchMatch) -> None:
         self.selected_archive_day_folder = match.day_folder
