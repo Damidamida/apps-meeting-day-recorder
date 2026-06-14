@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -851,6 +851,80 @@ def test_active_meeting_is_restored_after_restart(tmp_path) -> None:
     assert restored_storage.active_meeting_folder == meeting_folder
     assert restored_storage.workday_active
     assert restored_storage.meeting_active
+
+
+def test_past_active_workday_is_found_without_restoring_as_today(tmp_path) -> None:
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    storage = StorageService(tmp_path)
+    past_day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
+
+    restored_storage = StorageService(tmp_path)
+    restored_storage.load_today_state(now)
+
+    assert not restored_storage.workday_active
+    assert restored_storage.find_past_active_workday(now) == past_day_folder
+
+
+def test_end_workday_folder_finishes_past_day_without_touching_today(tmp_path) -> None:
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    past_storage = StorageService(tmp_path)
+    past_day_folder = past_storage.start_workday(yesterday.replace(hour=8, minute=30))
+
+    storage = StorageService(tmp_path)
+    today_day_folder = storage.start_workday(now.replace(hour=9, minute=0))
+
+    ended_at = now.replace(hour=18, minute=0)
+    finished_folder = storage.end_workday_folder(past_day_folder, ended_at)
+
+    past_metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    today_metadata = json.loads((today_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert finished_folder == past_day_folder
+    assert past_metadata["status"] == "ended"
+    assert past_metadata["ended_at"] == ended_at.isoformat()
+    assert past_metadata["events"][-1] == {"type": "ended", "at": ended_at.isoformat()}
+    assert today_metadata["status"] == "active"
+    assert storage.active_day_folder == today_day_folder
+    assert storage.workday_active
+
+
+def test_end_workday_folder_rejects_active_meetings(tmp_path) -> None:
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    storage = StorageService(tmp_path)
+    past_day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
+    storage.start_meeting("Active", yesterday.replace(hour=9, minute=0))
+
+    with pytest.raises(ValueError, match="активную встречу"):
+        storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+
+    metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["status"] == "active"
+    assert "ended_at" not in metadata
+    assert not any(event.get("type") == "ended" for event in metadata.get("events", []))
+
+
+def test_pending_processing_folders_include_recovered_running_meetings(tmp_path) -> None:
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    storage = StorageService(tmp_path)
+    day_folder = storage.start_workday(yesterday.replace(hour=8, minute=30))
+    pending_meeting = storage.start_meeting("Pending", yesterday.replace(hour=9, minute=0))
+    storage.finish_active_meeting_recording(yesterday.replace(hour=9, minute=30))
+    running_meeting = storage.start_meeting("Running", yesterday.replace(hour=10, minute=0))
+    storage.finish_active_meeting_recording(yesterday.replace(hour=10, minute=30))
+    running_metadata = storage.read_meeting_metadata(running_meeting)
+    running_metadata["processing_status"] = "running"
+    storage.write_metadata(running_meeting, running_metadata)
+    storage._sync_day_meeting_metadata(running_meeting, running_metadata)
+
+    recovered = storage.recover_interrupted_meeting_processing(day_folder)
+    pending_folders = storage.list_pending_meeting_processing_folders(day_folder)
+
+    assert recovered == [running_meeting]
+    assert pending_folders == [pending_meeting, running_meeting]
+    assert storage.read_meeting_metadata(running_meeting)["processing_status"] == "pending"
 
 
 def test_full_happy_path_still_works(tmp_path) -> None:

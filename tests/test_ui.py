@@ -1,6 +1,7 @@
+import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -380,6 +381,7 @@ def test_floating_control_start_meeting_requires_readiness_check(
     assert not storage.meeting_active
     assert "Сначала дождитесь проверки готовности системы" in window.status_label.text()
 
+    assert _wait_for_qt(app, lambda: not window.readiness_check_running)
     window.close()
     app.processEvents()
 
@@ -1377,6 +1379,226 @@ def test_running_today_meetings_are_recovered_to_processing_queue_on_startup(
     if window.pipeline_thread is not None:
         window.pipeline_thread.quit()
         window.pipeline_thread.wait(1000)
+    window.close()
+    app.processEvents()
+
+
+def test_past_active_workday_card_is_shown_on_startup(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = StorageService(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    setup_storage.start_meeting("Прошлая встреча", yesterday.replace(hour=9, minute=0))
+    setup_storage.finish_active_meeting_recording(yesterday.replace(hour=9, minute=30))
+
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    card_text = " ".join(
+        label.text() for label in window.past_workday_recovery_card.findChildren(QLabel)
+    )
+    assert window.past_workday_folder == past_day_folder
+    assert not window.past_workday_recovery_card.isHidden()
+    assert "Найден незавершенный рабочий день" in card_text
+    assert "Встреч: 1" in card_text
+    assert not storage.workday_active
+
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_card_treats_up_to_date_summary_as_ready(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = StorageService(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    setup_storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+    metadata = setup_storage.ensure_day_summary_metadata(past_day_folder)
+    metadata["day_summary_status"] = "up_to_date"
+    setup_storage._write_json(setup_storage.day_summary_metadata_path(past_day_folder), metadata)
+
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.past_workday_folder = past_day_folder
+    window._refresh_past_workday_recovery_card()
+
+    assert window._past_workday_recovery_badge() == ("Итоги готовы", "ok")
+    assert "итоги дня готовы" in window._past_workday_recovery_detail_text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_card_handles_corrupted_meeting_metadata(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+
+    class BrokenMeetingMetadataStorage(StorageService):
+        def has_unfinished_meeting_processing(self, day_folder):
+            raise MetadataReadError(
+                Path(day_folder) / "meeting_metadata.json",
+                Path(day_folder) / "meeting_metadata.corrupt-test.json",
+            )
+
+    setup_storage = BrokenMeetingMetadataStorage(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    setup_storage.end_workday_folder(past_day_folder, now.replace(hour=18, minute=0))
+
+    storage = BrokenMeetingMetadataStorage(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.past_workday_folder = past_day_folder
+
+    assert window._past_workday_recovery_badge() == ("Требует внимания", "error")
+    assert "Metadata встречи поврежден" in window._past_workday_recovery_detail_text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_card_does_not_mix_past_meetings_into_today(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = StorageService(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    past_meeting = setup_storage.start_meeting("Прошлая встреча", yesterday.replace(hour=9, minute=0))
+    setup_storage.finish_active_meeting_recording(yesterday.replace(hour=9, minute=30))
+
+    storage = StorageService(tmp_path, recorder)
+    today_day_folder = storage.start_workday(now.replace(hour=9, minute=0))
+    window = MainWindow(storage, recorder)
+
+    assert window.past_workday_folder == past_day_folder
+    assert storage.active_day_folder == today_day_folder
+    assert past_meeting not in window.workday_meeting_cards
+    assert list(window.workday_meeting_cards) == []
+
+    window.close()
+    app.processEvents()
+
+
+def test_today_workday_can_start_when_past_workday_card_exists(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = StorageService(tmp_path, recorder)
+    setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    today_date = datetime.now().date()
+    window.start_workday()
+
+    assert storage.workday_active
+    assert storage.active_day_folder == tmp_path / today_date.isoformat()
+    assert window.past_workday_folder == tmp_path / yesterday.date().isoformat()
+    assert not window.past_workday_recovery_card.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_recovery_button_ends_day_and_waits_for_meetings(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    entered = Event()
+    release = Event()
+    processed: list[Path] = []
+    day_summary_calls: list[Path] = []
+
+    class BlockingStorage(StorageService):
+        def process_meeting_pipeline(self, meeting_folder, progress_callback=None):
+            del progress_callback
+            processed.append(meeting_folder)
+            entered.set()
+            release.wait(5)
+            metadata = self.read_meeting_metadata(meeting_folder)
+            metadata["processing_status"] = "completed"
+            self.write_metadata(meeting_folder, metadata)
+            self._sync_day_meeting_metadata(meeting_folder, metadata)
+            return meeting_folder
+
+        def process_day_summary_pipeline(self, day_folder, force=False, progress_callback=None):
+            day_summary_calls.append(day_folder)
+            return super().process_day_summary_pipeline(day_folder, force, progress_callback)
+
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = BlockingStorage(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+    pending_meeting = setup_storage.start_meeting("Нужно обработать", yesterday.replace(hour=9, minute=0))
+    setup_storage.finish_active_meeting_recording(yesterday.replace(hour=9, minute=30))
+
+    storage = BlockingStorage(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.recover_past_workday_button.click()
+
+    assert _wait_for_qt(app, entered.is_set)
+    assert processed == [pending_meeting]
+    metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    day_summary_metadata = storage.read_day_summary_metadata(past_day_folder)
+    assert metadata["status"] == "ended"
+    assert day_summary_metadata["day_summary_status"] == "waiting_for_meetings"
+    assert window.day_summary_pending
+    assert window.day_summary_day_folder == past_day_folder
+
+    release.set()
+    assert _wait_for_qt(app, lambda: day_summary_calls == [past_day_folder])
+
+    if window.pipeline_thread is not None:
+        window.pipeline_thread.quit()
+        window.pipeline_thread.wait(1000)
+    if window.day_summary_thread is not None:
+        window.day_summary_thread.quit()
+        window.day_summary_thread.wait(1000)
+    window.close()
+    app.processEvents()
+
+
+def test_past_workday_recovery_starts_day_summary_immediately_without_pending_meetings(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    day_summary_calls: list[Path] = []
+
+    class SummaryStorage(StorageService):
+        def process_day_summary_pipeline(self, day_folder, force=False, progress_callback=None):
+            day_summary_calls.append(day_folder)
+            return super().process_day_summary_pipeline(day_folder, force, progress_callback)
+
+    now = datetime.now()
+    yesterday = now - timedelta(days=1)
+    setup_storage = SummaryStorage(tmp_path, recorder)
+    past_day_folder = setup_storage.start_workday(yesterday.replace(hour=8, minute=30))
+
+    storage = SummaryStorage(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+
+    window.recover_past_workday_button.click()
+
+    assert _wait_for_qt(app, lambda: day_summary_calls == [past_day_folder])
+    metadata = json.loads((past_day_folder / "day_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["status"] == "ended"
+    assert not window.day_summary_pending
+    assert window.past_workday_folder is None
+    assert window.past_workday_recovery_card.isHidden()
+
+    if window.day_summary_thread is not None:
+        window.day_summary_thread.quit()
+        window.day_summary_thread.wait(1000)
     window.close()
     app.processEvents()
 
