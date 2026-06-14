@@ -370,9 +370,9 @@ class StorageService:
                 self.last_transcription_message or "",
             )
 
-            self._emit_pipeline(progress_callback, "summary_running", "Готовим черновик итогов.")
+            self._emit_pipeline(progress_callback, "summary_running", "Готовим итоги.")
             if self._summary_is_ready(metadata, meeting_folder) and not force_reprocess:
-                self.last_summary_message = "Черновик итогов уже готов."
+                self.last_summary_message = "Итоги уже готовы."
             else:
                 metadata.update(self._summarize_meeting(metadata, meeting_folder))
             self.write_metadata(meeting_folder, metadata)
@@ -629,19 +629,27 @@ class StorageService:
         
         Parameters:
             metadata (dict[str, Any]): Meeting metadata; may contain `summary_status` and optional `summary_path`.
-            meeting_folder (Path): Folder used as the default location for `summary_draft.md` when `summary_path` is not provided.
+            meeting_folder (Path): Folder used as the default location for `summary.md` when `summary_path` is not provided.
         
         Returns:
             bool: `true` if `metadata["summary_status"]` equals `"draft_created"` and the resolved summary path points to an existing file, `false` otherwise.
         """
-        summary_path = Path(str(metadata.get("summary_path") or meeting_folder / "summary_draft.md"))
-        if metadata.get("summary_status") != "draft_created" or not summary_path.is_file():
+        summary_path = Path(str(metadata.get("summary_path") or StorageService.meeting_summary_path(meeting_folder)))
+        summary_paths = [summary_path]
+        if not metadata.get("summary_path"):
+            summary_paths.extend([meeting_folder / "summary_draft.md", meeting_folder / "summary_final.md"])
+        if metadata.get("summary_status") != "draft_created":
             return False
-        try:
-            summary_text = summary_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return False
-        return bool(summary_text) and not StorageService._is_meeting_summary_placeholder(summary_text)
+        for path in summary_paths:
+            if not path.is_file():
+                continue
+            try:
+                summary_text = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if summary_text and not StorageService._is_meeting_summary_placeholder(summary_text):
+                return True
+        return False
 
     def meeting_summary_is_ready(
         self,
@@ -697,7 +705,7 @@ class StorageService:
         )
         self._write_json(metadata_path, metadata)
         self._read_or_create_text(
-            day_folder / "00_day_summary_draft.md",
+            self.day_summary_path(day_folder),
             self._day_summary_placeholder(),
         )
         self.ensure_day_summary_metadata(day_folder, created_at=ended_at)
@@ -743,7 +751,7 @@ class StorageService:
             events.append(ended_event)
         self._write_json(metadata_path, metadata)
         self._read_or_create_text(
-            day_folder / "00_day_summary_draft.md",
+            day_folder / "00_day_summary.md",
             self._day_summary_placeholder(),
         )
         self.ensure_day_summary_metadata(day_folder, created_at=ended_at)
@@ -858,7 +866,7 @@ class StorageService:
             "day_summary_generating",
             "Готовим итоги дня через внешний AI endpoint.",
         )
-        current_summary = self.read_day_summary_draft(day_folder)
+        current_summary = self.read_day_summary(day_folder)
         summary_metadata = self.summarizer.summarize_day(
             day_folder,
             current_summary,
@@ -931,7 +939,9 @@ class StorageService:
             day_folder
             and (
                 self.day_summary_metadata_path(day_folder).is_file()
+                or self.day_summary_path(day_folder).is_file()
                 or (day_folder / "00_day_summary_draft.md").is_file()
+                or (day_folder / "00_day_summary_final.md").is_file()
             )
         )
 
@@ -988,7 +998,7 @@ class StorageService:
         return path
 
     def write_placeholder_summary(self, meeting_folder: Path) -> Path:
-        path = meeting_folder / "summary_draft.md"
+        path = self.meeting_summary_path(meeting_folder)
         self._read_or_create_text(path, self._meeting_summary_placeholder())
         return path
 
@@ -1025,6 +1035,34 @@ class StorageService:
             self._meeting_summary_placeholder(),
         )
 
+    @staticmethod
+    def meeting_summary_path(meeting_folder: Path) -> Path:
+        return Path(meeting_folder) / "summary.md"
+
+    @staticmethod
+    def day_summary_path(day_folder: Path) -> Path:
+        return Path(day_folder) / "00_day_summary.md"
+
+    def read_meeting_summary(self, meeting_folder: Path) -> str:
+        folder = Path(meeting_folder)
+        primary = self.meeting_summary_path(folder)
+        if primary.is_file():
+            text = self._read_or_create_text(primary, self._meeting_summary_placeholder())
+            if text.strip() and not self._is_meeting_summary_placeholder(text):
+                return text
+        legacy_draft = folder / "summary_draft.md"
+        if legacy_draft.is_file():
+            text = self._read_or_create_text(legacy_draft, self._meeting_summary_placeholder())
+            if text.strip() and not self._is_meeting_summary_placeholder(text):
+                return text
+        legacy_final = folder / "summary_final.md"
+        if legacy_final.is_file():
+            return self._read_or_create_text(legacy_final, self._meeting_summary_placeholder())
+        return self._read_or_create_text(primary, self._meeting_summary_placeholder())
+
+    def save_meeting_summary(self, meeting_folder: Path, content: str) -> Path:
+        return self._write_text(self.meeting_summary_path(meeting_folder), content)
+
     def save_meeting_summary_draft(self, meeting_folder: Path, content: str) -> Path:
         return self._write_text(meeting_folder / "summary_draft.md", content)
 
@@ -1036,6 +1074,26 @@ class StorageService:
             day_folder / "00_day_summary_draft.md",
             self._day_summary_placeholder(),
         )
+
+    def read_day_summary(self, day_folder: Path) -> str:
+        folder = Path(day_folder)
+        primary = self.day_summary_path(folder)
+        if primary.is_file():
+            text = self._read_or_create_text(primary, self._day_summary_placeholder())
+            if text.strip() and not self._is_day_summary_placeholder(text):
+                return text
+        legacy_draft = folder / "00_day_summary_draft.md"
+        if legacy_draft.is_file():
+            text = self._read_or_create_text(legacy_draft, self._day_summary_placeholder())
+            if text.strip() and not self._is_day_summary_placeholder(text):
+                return text
+        legacy_final = folder / "00_day_summary_final.md"
+        if legacy_final.is_file():
+            return self._read_or_create_text(legacy_final, self._day_summary_placeholder())
+        return self._read_or_create_text(primary, self._day_summary_placeholder())
+
+    def save_day_summary(self, day_folder: Path, content: str) -> Path:
+        return self._write_text(self.day_summary_path(day_folder), content)
 
     def save_day_summary_draft(self, day_folder: Path, content: str) -> Path:
         return self._write_text(day_folder / "00_day_summary_draft.md", content)
@@ -1077,6 +1135,12 @@ class StorageService:
         return meeting_folder
 
     def _meeting_summary_source_and_text(self, meeting_folder: Path) -> tuple[str, str]:
+        primary_path = self.meeting_summary_path(meeting_folder)
+        if primary_path.is_file():
+            text = primary_path.read_text(encoding="utf-8").strip()
+            if text and not self._is_meeting_summary_placeholder(text):
+                return "summary", text
+
         final_path = meeting_folder / "summary_final.md"
         if final_path.is_file():
             text = final_path.read_text(encoding="utf-8").strip()
@@ -1154,12 +1218,12 @@ class StorageService:
     @staticmethod
     def _meeting_summary_placeholder() -> str:
         """
-        Return the default placeholder text used for a meeting summary draft.
+        Return the default placeholder text used for a meeting summary.
         
         Returns:
             placeholder (str): Markdown-formatted placeholder indicating the meeting summary has not been filled.
         """
-        return "# Черновик итогов встречи\n\n_Итоги встречи пока не заполнены._\n"
+        return "# Итоги встречи\n\n_Итоги встречи пока не заполнены._\n"
 
     @staticmethod
     def _is_meeting_summary_placeholder(text: str) -> bool:
@@ -1167,7 +1231,11 @@ class StorageService:
 
     @staticmethod
     def _day_summary_placeholder() -> str:
-        return "# Черновик итогов дня\n\n_Итоги дня пока не заполнены._\n"
+        return "# Итоги дня\n\n_Итоги дня пока не заполнены._\n"
+
+    @staticmethod
+    def _is_day_summary_placeholder(text: str) -> bool:
+        return "Итоги дня пока не заполнены" in text or "Черновик итогов дня" in text
 
     @staticmethod
     def _tasks_placeholder() -> str:

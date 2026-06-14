@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -19,11 +19,13 @@ from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
 from app.ui import main_window as main_window_module
 from app.ui.main_window import (
+    ClickableFrame,
     FloatingMeetingControl,
     MainWindow,
     RiskyActionConfirmationOverlay,
     StartMeetingOverlay,
 )
+from app.ui.summary_viewer import SummaryMaterialView
 
 
 class CloseEventStub:
@@ -37,6 +39,73 @@ class CloseEventStub:
 class EnabledRecorder(NoopRecorder):
     enabled = True
     status_text = "OBS: подключен"
+
+
+def test_summary_material_view_starts_in_preview_mode() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итоги встречи")
+    view.set_markdown("# Итоги встречи\n\n## Кратко\n- Обсудили релиз")
+    view.show()
+    app.processEvents()
+
+    assert view.mode == "preview"
+    assert view.editor.isHidden()
+    assert view.preview.isVisible()
+    assert view.edit_button.isVisible()
+    assert view.save_button.isHidden()
+    assert view.cancel_button.isHidden()
+    assert "Обсудили релиз" in view.preview.toPlainText()
+
+    view.close()
+    app.processEvents()
+
+
+def test_summary_material_view_edit_save_and_cancel_signals() -> None:
+    app = QApplication.instance() or QApplication([])
+    saved: list[str] = []
+    view = SummaryMaterialView("Итоги встречи")
+    view.save_requested.connect(saved.append)
+    view.set_markdown("# Старый итог\n")
+
+    view.enter_edit_mode()
+    view.editor.setPlainText("# Новый итог\n")
+    view.save_button.click()
+
+    assert saved == ["# Новый итог\n"]
+    assert view.mode == "preview"
+
+    view.enter_edit_mode()
+    view.editor.setPlainText("# Несохраненный итог\n")
+    view.cancel_button.click()
+
+    assert view.markdown == "# Новый итог\n"
+    assert view.mode == "preview"
+
+    view.close()
+    app.processEvents()
+
+
+def test_summary_material_view_uses_primary_save_and_block_preview() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+
+    view.set_markdown(
+        "# Итоги встречи\n\n"
+        "## Кратко\n\nОбсудили релиз.\n\n"
+        "## Решения\n\n- Запускаем в пятницу\n"
+    )
+    view.enter_edit_mode()
+
+    assert view.save_button.objectName() == "headerPrimaryButton"
+
+    view.save_button.click()
+    html = view.preview.toHtml()
+    assert view.preview.property("summary_block_view") is True
+    assert "Кратко" in html
+    assert "Решения" in html
+
+    view.close()
+    app.processEvents()
 
 
 def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
@@ -2175,7 +2244,91 @@ def test_review_screen_uses_meeting_summary_transcript_and_day_summary_card(
     assert window.meeting_summary_editor.toPlainText() == "# Итоги дня\n"
     assert "Ревью" in window.meeting_transcript_editor.toPlainText()
     assert "Открыть транскрипт внутри приложения" in window.meeting_transcript_editor.toPlainText()
-    assert window.save_final_files_button.isEnabled()
+    assert not hasattr(window, "save_final_files_button")
+    assert window.review_summary_view.mode == "preview"
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    meeting_folder = storage.create_meeting_folder(
+        "План релиза",
+        datetime(2026, 6, 14, 15, 30),
+        {
+            "status": "ended",
+            "summary_status": "draft_created",
+            "duration_seconds": 125,
+        },
+    )
+    storage.save_meeting_summary(meeting_folder, "# Итоги встречи\n")
+    storage.save_day_summary(day_folder, "# Итоги дня\n")
+    storage.ensure_day_summary_metadata(day_folder)
+    window = MainWindow(storage, recorder)
+
+    window.open_review()
+    window.load_selected_meeting(meeting_folder)
+
+    assert window.review_summary_view.title_label.text() == "Итог встречи"
+    assert "15:30" in window.review_summary_view.meta_label.text()
+    assert "План релиза" in window.review_summary_view.meta_label.text()
+    assert "2 мин." in window.review_summary_view.meta_label.text()
+
+    window.review_day_summary_selected = True
+    window.load_day_summary_review()
+
+    assert window.review_summary_view.title_label.text() == "Итог дня"
+    assert day_folder.name in window.review_summary_view.meta_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_legacy_final_save_method_writes_single_summary_file(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Ревью",
+        metadata={"status": "ended", "summary_status": "draft_created"},
+    )
+    window = MainWindow(storage, recorder)
+
+    window.open_review()
+    window.review_summary_view.set_markdown("# Новый итог встречи\n")
+    window.save_final_files()
+
+    assert (meeting_folder / "summary.md").read_text(encoding="utf-8") == "# Новый итог встречи\n"
+    assert not (meeting_folder / "summary_final.md").exists()
+
+    window.close()
+    app.processEvents()
+
+
+def test_review_legacy_final_save_method_uses_live_editor_buffer(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Ревью",
+        metadata={"status": "ended", "summary_status": "draft_created"},
+    )
+    window = MainWindow(storage, recorder)
+
+    window.open_review()
+    window.review_summary_view.set_markdown("# Старый итог\n")
+    window.review_summary_view.enter_edit_mode()
+    window.review_summary_view.editor.setPlainText("# Несохраненный итог\n")
+    window.save_final_files()
+
+    assert (meeting_folder / "summary.md").read_text(encoding="utf-8") == "# Несохраненный итог\n"
+    assert not (meeting_folder / "summary_final.md").exists()
 
     window.close()
     app.processEvents()
@@ -2967,7 +3120,7 @@ def test_archive_editor_survives_multiple_detail_rebuilds(tmp_path: Path) -> Non
     app.processEvents()
 
 
-def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path) -> None:
+def test_archive_saves_meeting_and_day_summary_single_files(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
@@ -2981,20 +3134,20 @@ def test_archive_saves_meeting_and_day_summary_drafts_and_finals(tmp_path: Path)
     window = MainWindow(storage, recorder)
     window.open_archive()
     window.edit_archive_meeting_summary(meeting)
-    window.archive_editor.setPlainText("# Новый черновик встречи\n")
+    window.archive_summary_view.enter_edit_mode()
+    window.archive_editor.setPlainText("# Новый итог встречи\n")
     window.save_archive_draft()
-    window.save_archive_final()
 
-    assert (meeting / "summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
-    assert (meeting / "summary_final.md").read_text(encoding="utf-8") == "# Новый черновик встречи\n"
+    assert (meeting / "summary.md").read_text(encoding="utf-8") == "# Новый итог встречи\n"
+    assert not (meeting / "summary_final.md").exists()
 
     window.edit_archive_day_summary(day_folder)
-    window.archive_editor.setPlainText("# Новый черновик дня\n")
+    window.archive_summary_view.enter_edit_mode()
+    window.archive_editor.setPlainText("# Новый итог дня\n")
     window.save_archive_draft()
-    window.save_archive_final()
 
-    assert (day_folder / "00_day_summary_draft.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
-    assert (day_folder / "00_day_summary_final.md").read_text(encoding="utf-8") == "# Новый черновик дня\n"
+    assert (day_folder / "00_day_summary.md").read_text(encoding="utf-8") == "# Новый итог дня\n"
+    assert not (day_folder / "00_day_summary_final.md").exists()
 
     window.close()
     app.processEvents()
@@ -3014,7 +3167,7 @@ def test_archive_page_contains_expected_controls(tmp_path: Path) -> None:
 
     assert "Архив" in archive_text
     assert "Прошлые дни" in archive_text
-    assert "Итоги дня" in archive_text
+    assert "Итог дня" in archive_text
     assert "Неделя" in buttons
     assert "Месяц" in buttons
     assert "Все" in buttons  # noqa: RUF001
@@ -3064,19 +3217,20 @@ def test_archive_day_cards_are_compact_clickable_and_selected(tmp_path: Path) ->
     window = MainWindow(storage, recorder)
     window.open_archive()
 
-    day_cards = window.archive_days_list.findChildren(QPushButton, "archiveDayCard")
+    day_cards = window.archive_days_list.findChildren(ClickableFrame, "archiveDayCard")
     assert len(day_cards) == 2
     assert all(card.maximumHeight() <= 76 for card in day_cards)
+    assert not window.archive_days_list.findChildren(QPushButton, "archiveDayCard")
     assert all(button.text() != "Открыть" for button in window.archive_days_list.findChildren(QPushButton))
     assert any(card.property("selected") is True for card in day_cards)
     assert any(card.property("selected") is False for card in day_cards)
 
     unselected = next(card for card in day_cards if card.property("selected") is False)
-    unselected.click()
+    unselected.clicked.emit()
     app.processEvents()
 
     assert window.selected_archive_day_folder == unselected.property("day_folder")
-    refreshed_cards = window.archive_days_list.findChildren(QPushButton, "archiveDayCard")
+    refreshed_cards = window.archive_days_list.findChildren(ClickableFrame, "archiveDayCard")
     assert sum(1 for card in refreshed_cards if card.property("selected") is True) == 1
 
     window.close()
@@ -3094,6 +3248,8 @@ def test_archive_search_no_matches_stays_at_top_with_dark_empty_result(tmp_path:
     window.config["ui"]["theme"] = "dark"
     window._apply_app_style()
     window.open_archive()
+    assert window.archive_search_card.maximumHeight() <= 180
+
     window.archive_search_input.setText("ничего-не-найдено")
     window.apply_archive_filters()
 
@@ -3144,12 +3300,139 @@ def test_archive_visible_text_is_russian_and_actions_are_specific(tmp_path: Path
 
     assert "транскрипт" in visible_text.casefold()
     assert "transcript" not in visible_text.casefold()
-    assert "Редактировать итог дня" in visible_text
+    assert "Редактировать" in visible_text
     assert "Обновить итоги дня" in visible_text
-    assert "Редактировать итог встречи" in visible_text
-    assert "Просмотреть транскрипт" in visible_text
+    assert "Редактировать итог дня" not in visible_text
+    assert "Редактировать итог встречи" not in visible_text
     assert "Редактировать итоги" not in visible_text
     assert "Сформировать итоги дня" not in visible_text
+
+    window.open_archive_meeting_summary(meeting)
+    visible_text = "\n".join(
+        [label.text() for label in page.findChildren(QLabel)]
+        + [button.text() for button in page.findChildren(QPushButton)]
+    )
+    assert "Просмотреть транскрипт" in visible_text
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_detail_cards_are_clickable_accordion_with_header_actions(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_meeting_summary(meeting, "# Итог встречи\n")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+    day_card = next(card for card in detail_cards if card.property("material_kind") == "day_summary")
+    meeting_card = next(card for card in detail_cards if card.property("material_kind") == "meeting_summary")
+
+    assert day_card.property("open") is True
+    assert meeting_card.property("open") is False
+    assert not meeting_card.findChildren(QPushButton)
+
+    meeting_card.clicked.emit()
+    app.processEvents()
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(ClickableFrame, "archiveDetailCard")
+    day_card = next(card for card in detail_cards if card.property("material_kind") == "day_summary")
+    meeting_card = next(card for card in detail_cards if card.property("material_kind") == "meeting_summary")
+    meeting_buttons = [button.text() for button in meeting_card.findChildren(QPushButton)]
+
+    assert day_card.property("open") is False
+    assert meeting_card.property("open") is True
+    assert "Редактировать" in meeting_buttons
+    assert "Просмотреть транскрипт" in meeting_buttons
+    assert "Редактировать итог встречи" not in meeting_buttons
+    assert not day_card.findChildren(QPushButton)
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_transcript_action_toggles_back_to_summary(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+        {"status": "ended", "summary_status": "draft_created"},
+    )
+    storage.save_meeting_summary(meeting, "# Итог встречи\n")
+    (meeting / "transcript.md").write_text("Текст транскрипта", encoding="utf-8")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.open_archive_meeting_summary(meeting)
+    page = window.pages.widget(2)
+
+    transcript_button = next(button for button in page.findChildren(QPushButton) if button.text() == "Просмотреть транскрипт")
+    transcript_button.click()
+    app.processEvents()
+
+    assert window.archive_open_material == ("meeting_transcript", meeting)
+    assert window.archive_transcript_view.isReadOnly()
+    assert window.archive_transcript_view.toPlainText() == "Текст транскрипта"
+    assert any(button.text() == "Показать итог" for button in page.findChildren(QPushButton))
+    assert not any(button.text() == "Просмотреть транскрипт" for button in page.findChildren(QPushButton))
+
+    summary_button = next(button for button in page.findChildren(QPushButton) if button.text() == "Показать итог")
+    summary_button.click()
+    app.processEvents()
+
+    assert window.archive_open_material == ("meeting_summary", meeting)
+    assert not window.archive_summary_view.preview.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_summary_review_and_archive_ui_no_longer_shows_draft_or_final_words(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date.today())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder("Проверка", datetime.fromisoformat(f"{day_folder.name}T10:00:00"))
+    storage.save_meeting_summary(meeting, "# Итог\n")
+    storage.save_day_summary(day_folder, "# Итог дня\n")
+
+    archive_day = storage.create_day_folder(date.today() - timedelta(days=1))
+    storage._write_json(archive_day / "day_metadata.json", {"date": archive_day.name, "status": "ended"})
+    storage.save_day_summary(archive_day, "# Архивный итог дня\n")
+
+    window = MainWindow(storage, recorder)
+    window.open_review()
+    window.open_archive()
+
+    pages = [window.pages.widget(1), window.pages.widget(2)]
+    visible_text = "\n".join(
+        text
+        for page in pages
+        for text in (
+            [label.text() for label in page.findChildren(QLabel)]
+            + [button.text() for button in page.findChildren(QPushButton)]
+        )
+    ).casefold()
+
+    assert "чернов" not in visible_text
+    assert "финал" not in visible_text
+    assert "draft" not in visible_text
+    assert "final" not in visible_text
 
     window.close()
     app.processEvents()
@@ -3480,12 +3763,38 @@ def test_archive_lifecycle_refresh_keeps_active_editor(tmp_path: Path) -> None:
 
     window.open_archive()
     window.edit_archive_meeting_summary(meeting)
+    window.archive_summary_view.enter_edit_mode()
     window.archive_editor.setPlainText("# Несохраненные правки\n")
     window.refresh_archive = lambda: calls.append("archive")
     window._refresh_after_lifecycle_change()
 
     assert calls == []
     assert window.archive_editor.toPlainText() == "# Несохраненные правки\n"
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_lifecycle_refresh_runs_in_summary_preview_mode(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary(meeting, "# Итоги\n")
+    window = MainWindow(storage, recorder)
+    calls: list[str] = []
+
+    window.open_archive()
+    window.open_archive_meeting_summary(meeting)
+    window.refresh_archive = lambda: calls.append("archive")
+    window._refresh_after_lifecycle_change()
+
+    assert calls == ["archive"]
 
     window.close()
     app.processEvents()

@@ -63,6 +63,7 @@ from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import build_summary_system_prompt, create_summarizer
 from app.services.transcription import create_transcriber
+from app.ui.summary_viewer import SummaryMaterialView
 
 
 WHISPER_CLI_MODEL_OPTIONS = [
@@ -1853,7 +1854,8 @@ class MainWindow(QMainWindow):
             }
             QWidget#card,
             QWidget#archiveSearchCard,
-            QWidget#archiveDetailCard {
+            QWidget#archiveDetailCard,
+            QFrame#archiveDetailCard {
                 background: %(surface)s;
                 border: 1px solid %(border)s;
                 border-radius: 8px;
@@ -2123,19 +2125,17 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
                 border-color: %(accent)s;
             }
-            QPushButton#archiveDayCard {
+            QFrame#archiveDayCard {
                 background: %(surface)s;
                 color: %(text)s;
                 border: 1px solid %(border)s;
                 border-radius: 8px;
-                padding: 0;
-                text-align: left;
             }
-            QPushButton#archiveDayCard:hover {
+            QFrame#archiveDayCard:hover {
                 border-color: %(accent)s;
                 color: %(text)s;
             }
-            QPushButton#archiveDayCard[selected="true"] {
+            QFrame#archiveDayCard[selected="true"] {
                 background: %(surface_soft)s;
                 border-color: %(accent)s;
             }
@@ -3041,7 +3041,7 @@ class MainWindow(QMainWindow):
             if metadata.get("day_summary_error"):
                 return str(metadata["day_summary_error"])
             if state == "ok":
-                return "00_day_summary_draft.md готов."
+                return "00_day_summary.md готов."
             if state == "active":
                 return "OpenAI готовит выжимку итогов встреч."
             if state == "skip":
@@ -3087,6 +3087,20 @@ class MainWindow(QMainWindow):
         if metadata.get("status") == "active":
             return "идет сейчас"
         return "без длительности"
+
+    def _meeting_material_meta(self, metadata: dict[str, object], meeting_folder: Path | None = None) -> str:
+        started_at = self._short_time(metadata.get("started_at"))
+        title = str(metadata.get("title") or (meeting_folder.name if meeting_folder else "Встреча"))
+        duration = self._duration_text(metadata)
+        return f"{started_at} · {title} · {duration}"
+
+    def _day_material_meta(self, day_folder: Path) -> str:
+        try:
+            metadata = self.storage.read_day_metadata(day_folder)
+        except MetadataReadError:
+            metadata = {}
+        status = "день активен" if metadata.get("status") == "active" else "день завершен"
+        return f"{day_folder.name} · {status}"
 
     def closeEvent(self, event) -> None:
         if self.storage.meeting_active:
@@ -3354,7 +3368,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(
             self._create_page_header(
                 "Ревью",
-                "Проверьте итоги выбранной встречи и итог дня перед сохранением финальных файлов.",
+                "Проверьте итоги выбранной встречи и итог дня перед сохранением.",
             )
         )
 
@@ -3377,31 +3391,21 @@ class MainWindow(QMainWindow):
         review_content_layout = QVBoxLayout()
         review_content_layout.setSpacing(12)
         self.review_tabs = QTabWidget()
-        self.meeting_summary_editor = QPlainTextEdit()
+        self.review_summary_view = SummaryMaterialView("Итоги встречи")
+        self.review_summary_view.save_requested.connect(self.save_review_summary)
+        self.meeting_summary_editor = self.review_summary_view.editor
         self.meeting_transcript_editor = QTextBrowser()
         self.meeting_transcript_editor.setReadOnly(True)
         self.meeting_transcript_editor.setOpenLinks(False)
         self.meeting_transcript_editor.anchorClicked.connect(self._open_review_transcript_link)
         self.day_summary_editor = self.meeting_summary_editor
-        self.review_tabs.addTab(self.meeting_summary_editor, "Итоги встречи")
+        self.review_tabs.addTab(self.review_summary_view, "Итоги встречи")
         self.review_tabs.addTab(self.meeting_transcript_editor, "Транскрипт")
         review_content_layout.addWidget(self.review_tabs, 1)
         content_layout.addLayout(review_content_layout, 1)
         layout.addLayout(content_layout, 1)
 
-        actions_layout = QHBoxLayout()
-        self.save_drafts_button = self._add_button(
-            actions_layout, "Сохранить черновики", self.save_drafts
-        )
-        self.save_final_files_button = self._add_button(
-            actions_layout, "Сохранить финальные файлы", self.save_final_files
-        )
-        self.review_open_folder_button = self._add_button(
-            actions_layout, "Открыть папку дня", self.open_day_folder
-        )
-        layout.addLayout(actions_layout)
-
-        self.review_status_label = QLabel("Откройте ревью, чтобы загрузить локальные файлы.")
+        self.review_status_label = QLabel("Откройте ревью, чтобы загрузить локальные итоги.")
         self.review_status_label.setWordWrap(True)
         self.review_status_label.setObjectName("inlineStatus")
         layout.addWidget(self.review_status_label)
@@ -4619,9 +4623,14 @@ class MainWindow(QMainWindow):
         self.archive_no_matches_spacer.setVisible(False)
         layout.addWidget(self.archive_no_matches_spacer, 1)
 
-        self.archive_editor = QPlainTextEdit()
-        self.archive_editor.setObjectName("archiveEditor")
-        self.archive_editor.setPlaceholderText("Выберите материал Архива.")
+        self.archive_summary_view = SummaryMaterialView("Итоги")
+        self.archive_summary_view.save_requested.connect(self.save_archive_summary)
+        self.archive_editor = self.archive_summary_view.editor
+        self.archive_transcript_view = QTextBrowser()
+        self.archive_transcript_view.setObjectName("archiveTranscript")
+        self.archive_transcript_view.setReadOnly(True)
+        self.archive_open_material: tuple[str, Path] | None = None
+        self.archive_material_mode = "summary"
         page.setLayout(layout)
         return page
 
@@ -4663,6 +4672,11 @@ class MainWindow(QMainWindow):
             self.archive_days = all_days
         if self.selected_archive_day_folder not in {day.folder for day in self.archive_days}:
             self.selected_archive_day_folder = self.archive_days[0].folder if self.archive_days else None
+            self.archive_open_material = (
+                ("day_summary", self.selected_archive_day_folder)
+                if self.selected_archive_day_folder is not None
+                else None
+            )
 
         self.archive_empty_state.setVisible(not self.archive_days and not self.archive_query)
         self.archive_splitter.setVisible(bool(self.archive_days))
@@ -4696,7 +4710,9 @@ class MainWindow(QMainWindow):
             return None
 
     def _render_archive_search_results(self) -> None:
-        self.archive_results_scroll.setVisible(bool(self.archive_query))
+        has_query = bool(self.archive_query)
+        self.archive_results_scroll.setVisible(has_query)
+        self.archive_search_card.setMaximumHeight(340 if has_query else 156)
         self._clear_layout(self.archive_results_layout)
         if self.archive_query and not self.archive_matches:
             empty_label = QLabel("Совпадений не найдено")
@@ -4764,26 +4780,24 @@ class MainWindow(QMainWindow):
         self.selected_archive_day_folder = match.day_folder
         if match.meeting_folder is not None:
             if match.kind == "Транскрипт":
-                self.show_archive_transcript(match.meeting_folder)
+                self.open_archive_meeting_transcript(match.meeting_folder)
             else:
-                self.edit_archive_meeting_summary(match.meeting_folder)
+                self.open_archive_meeting_summary(match.meeting_folder)
             return
         if match.kind == "Итоги дня":
-            self.edit_archive_day_summary(match.day_folder)
+            self.open_archive_day_summary(match.day_folder)
             return
         self._render_archive_detail()
 
     def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
         selected = day.folder == self.selected_archive_day_folder
-        card = QPushButton()
+        card = ClickableFrame()
         card.setObjectName("archiveDayCard")
         card.setProperty("selected", selected)
         card.setProperty("day_folder", day.folder)
-        card.setCheckable(True)
-        card.setChecked(selected)
         card.setMaximumHeight(72)
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.clicked.connect(lambda checked=False, folder=day.folder: self.select_archive_day(folder))
+        card.clicked.connect(lambda folder=day.folder: self.select_archive_day(folder))
         body_layout = QVBoxLayout()
         body_layout.setContentsMargins(12, 8, 12, 8)
         body_layout.setSpacing(3)
@@ -4799,6 +4813,9 @@ class MainWindow(QMainWindow):
 
     def select_archive_day(self, day_folder: Path) -> None:
         self.selected_archive_day_folder = day_folder
+        self.selected_archive_meeting_folder = None
+        self.archive_open_material = ("day_summary", day_folder)
+        self.archive_material_mode = "summary"
         self._render_archive_days()
         self._render_archive_detail()
 
@@ -4815,7 +4832,10 @@ class MainWindow(QMainWindow):
         return None
 
     def _render_archive_detail(self) -> None:
-        self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
+        self._clear_layout(
+            self.archive_detail_layout,
+            preserve={self.archive_summary_view, self.archive_transcript_view},
+        )
         day = self._selected_archive_day()
         if day is None:
             return
@@ -4826,69 +4846,114 @@ class MainWindow(QMainWindow):
         self.archive_detail_layout.addStretch(1)
 
     def _create_archive_day_summary_card(self, day: ArchiveDay) -> QWidget:
-        body_layout = QVBoxLayout()
-        body_layout.setSpacing(6)
-        status = "Сформированы" if day.has_day_summary else "Не сформированы"
-        label = QLabel(f"Дата: {day.workday.isoformat()}\nСтатус: {status}")
-        label.setObjectName("sectionHint")
-        label.setWordWrap(True)
-        body_layout.addWidget(label)
-        actions = QHBoxLayout()
-        self._add_button(
-            actions,
-            "Редактировать итог дня",
-            lambda checked=False, folder=day.folder: self.edit_archive_day_summary(folder),
-        )
-        self._add_button(
-            actions,
-            "Обновить итоги дня",
-            lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
-            "primaryButton",
-        )
-        if day.metadata.get("status") == "active":
-            self._add_button(
-                actions,
-                "Завершить день",
-                lambda checked=False, folder=day.folder: self.finish_archive_workday(folder),
-                "primaryButton",
-            )
-        actions.addStretch(1)
-        body_layout.addLayout(actions)
-        card = self._create_card("Итоги дня", body_layout)
+        is_open = self.archive_open_material == ("day_summary", day.folder)
+        card = ClickableFrame()
         card.setObjectName("archiveDetailCard")
+        card.setProperty("material_kind", "day_summary")
+        card.setProperty("open", is_open)
+        card.clicked.connect(lambda folder=day.folder: self.open_archive_day_summary(folder))
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(18, 14, 18, 16)
+        body_layout.setSpacing(10)
+        status = "Сформированы" if day.has_day_summary else "Не сформированы"
+        if is_open:
+            self.archive_summary_view.set_title("Итог дня")
+            self.archive_summary_view.set_meta(f"{day.workday.isoformat()} · {status}")
+            self.archive_summary_view.clear_extra_actions()
+            self.archive_summary_view.add_extra_action(
+                self._header_button(
+                    "Обновить итоги дня",
+                    lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
+                    "headerPrimaryButton",
+                )
+            )
+            if day.metadata.get("status") == "active":
+                self.archive_summary_view.add_extra_action(
+                    self._header_button(
+                        "Завершить день",
+                        lambda checked=False, folder=day.folder: self.finish_archive_workday(folder),
+                        "headerPrimaryButton",
+                    )
+                )
+            self.archive_summary_view.set_markdown(self.storage.read_day_summary(day.folder))
+            body_layout.addWidget(self.archive_summary_view, 1)
+        else:
+            title = QLabel("Итог дня")
+            title.setObjectName("cardTitle")
+            meta = QLabel(f"{day.workday.isoformat()} · {status}")
+            meta.setObjectName("sectionHint")
+            meta.setWordWrap(True)
+            body_layout.addWidget(title)
+            body_layout.addWidget(meta)
+        card.setLayout(body_layout)
         return card
 
     def _create_archive_meeting_card(self, meeting) -> QWidget:
-        body_layout = QVBoxLayout()
-        body_layout.setSpacing(6)
-        started_at = self._short_time(meeting.started_at)
-        title = QLabel(f"{started_at}   {meeting.title}".strip())
-        title.setObjectName("meetingHeaderLabel")
-        body_layout.addWidget(title)
-        status = QLabel(meeting.status_label)
-        status.setObjectName("sectionHint")
-        body_layout.addWidget(status)
-        actions = QHBoxLayout()
-        self._add_button(
-            actions,
-            "Редактировать итог встречи",
-            lambda checked=False, folder=meeting.folder: self.edit_archive_meeting_summary(folder),
-        )
-        self._add_button(
-            actions,
-            "Просмотреть транскрипт",
-            lambda checked=False, folder=meeting.folder: self.show_archive_transcript(folder),
-        )
-        reprocess_button = self._add_button(
-            actions,
-            "Повторить обработку",
-            lambda checked=False, folder=meeting.folder: self.archive_reprocess_meeting(folder),
-        )
-        reprocess_button.setEnabled(self._can_reprocess_meeting(meeting.folder, meeting.metadata))
-        actions.addStretch(1)
-        body_layout.addLayout(actions)
-        card = self._create_card("Встреча", body_layout)
+        is_open = self.archive_open_material in {
+            ("meeting_summary", meeting.folder),
+            ("meeting_transcript", meeting.folder),
+        }
+        card = ClickableFrame()
         card.setObjectName("archiveDetailCard")
+        card.setProperty("material_kind", "meeting_summary")
+        card.setProperty("meeting_folder", meeting.folder)
+        card.setProperty("open", is_open)
+        card.clicked.connect(lambda folder=meeting.folder: self.open_archive_meeting_summary(folder))
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(18, 14, 18, 16)
+        body_layout.setSpacing(10)
+        started_at = self._short_time(meeting.started_at)
+        meta_text = f"{started_at} · {meeting.title} · {self._duration_text(meeting.metadata)} · {meeting.status_label}"
+        if self.archive_open_material == ("meeting_summary", meeting.folder):
+            self.archive_summary_view.set_title("Итог встречи")
+            self.archive_summary_view.set_meta(meta_text)
+            self.archive_summary_view.clear_extra_actions()
+            self.archive_summary_view.add_extra_action(
+                self._header_button(
+                    "Просмотреть транскрипт",
+                    lambda checked=False, folder=meeting.folder: self.open_archive_meeting_transcript(folder),
+                )
+            )
+            reprocess_button = self._header_button(
+                "Повторить обработку",
+                lambda checked=False, folder=meeting.folder: self.archive_reprocess_meeting(folder),
+            )
+            reprocess_button.setEnabled(self._can_reprocess_meeting(meeting.folder, meeting.metadata))
+            self.archive_summary_view.add_extra_action(reprocess_button)
+            self.archive_summary_view.set_markdown(self.storage.read_meeting_summary(meeting.folder))
+            body_layout.addWidget(self.archive_summary_view, 1)
+        elif self.archive_open_material == ("meeting_transcript", meeting.folder):
+            header_layout = QHBoxLayout()
+            title_block = QVBoxLayout()
+            title_block.setContentsMargins(0, 0, 0, 0)
+            title_block.setSpacing(2)
+            title = QLabel("Транскрипт")
+            title.setObjectName("cardTitle")
+            meta = QLabel(meta_text)
+            meta.setObjectName("sectionHint")
+            meta.setWordWrap(True)
+            title_block.addWidget(title)
+            title_block.addWidget(meta)
+            header_layout.addLayout(title_block, 1)
+            header_layout.addStretch(1)
+            header_layout.addWidget(
+                self._header_button(
+                    "Показать итог",
+                    lambda checked=False, folder=meeting.folder: self.open_archive_meeting_summary(folder),
+                )
+            )
+            body_layout.addLayout(header_layout)
+            self.archive_transcript_view.setPlainText(self._read_meeting_transcript(meeting.folder))
+            body_layout.addWidget(self.archive_transcript_view, 1)
+        else:
+            title = QLabel(meeting.title)
+            title.setObjectName("cardTitle")
+            meta = QLabel(meta_text)
+            meta.setObjectName("sectionHint")
+            meta.setWordWrap(True)
+            body_layout.addWidget(title)
+            body_layout.addWidget(meta)
+        card.setLayout(body_layout)
         return card
 
     def _archive_visible_meetings(self, day: ArchiveDay):
@@ -4912,37 +4977,43 @@ class MainWindow(QMainWindow):
         )
 
     def select_archive_meeting(self, meeting_folder: Path) -> None:
-        self.edit_archive_meeting_summary(meeting_folder)
+        self.open_archive_meeting_summary(meeting_folder)
 
     def edit_archive_meeting_summary(self, meeting_folder: Path) -> None:
-        self.selected_archive_meeting_folder = meeting_folder
-        self.archive_selected_material = "meeting_summary"
-        self.archive_editor.setReadOnly(False)
-        self.archive_editor.setPlainText(self.storage.read_meeting_summary_draft(meeting_folder))
-        self._show_archive_editor("Итоги встречи")
+        self.open_archive_meeting_summary(meeting_folder)
 
-    def edit_archive_day_summary(self, day_folder: Path) -> None:
+    def open_archive_day_summary(self, day_folder: Path) -> None:
         self.selected_archive_day_folder = day_folder
         self.selected_archive_meeting_folder = None
-        self.archive_selected_material = "day_summary"
-        self.archive_editor.setReadOnly(False)
-        self.archive_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
-        self._show_archive_editor("Итоги дня")
+        self.archive_open_material = ("day_summary", day_folder)
+        self.archive_material_mode = "summary"
+        self.archive_editor = self.archive_summary_view.editor
+        self._render_archive_days()
+        self._render_archive_detail()
+
+    def open_archive_meeting_summary(self, meeting_folder: Path) -> None:
+        self.selected_archive_meeting_folder = meeting_folder
+        self.selected_archive_day_folder = meeting_folder.parent
+        self.archive_open_material = ("meeting_summary", meeting_folder)
+        self.archive_material_mode = "summary"
+        self.archive_editor = self.archive_summary_view.editor
+        self._render_archive_days()
+        self._render_archive_detail()
+
+    def edit_archive_day_summary(self, day_folder: Path) -> None:
+        self.open_archive_day_summary(day_folder)
 
     def show_archive_transcript(self, meeting_folder: Path) -> None:
+        self.open_archive_meeting_transcript(meeting_folder)
+
+    def open_archive_meeting_transcript(self, meeting_folder: Path) -> None:
         self.selected_archive_meeting_folder = meeting_folder
-        self.archive_selected_material = "transcript"
-        transcript_path = Path(meeting_folder) / "transcript.md"
-        if transcript_path.is_file():
-            try:
-                text = transcript_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                text = "Транскрипт пока не удалось прочитать."
-        else:
-            text = "Транскрипт пока не найден."
-        self.archive_editor.setReadOnly(True)
-        self.archive_editor.setPlainText(text)
-        self._show_archive_editor("Транскрипт")
+        self.selected_archive_day_folder = meeting_folder.parent
+        self.archive_open_material = ("meeting_transcript", meeting_folder)
+        self.archive_material_mode = "transcript"
+        self.archive_editor = self.archive_transcript_view
+        self._render_archive_days()
+        self._render_archive_detail()
 
     def _show_archive_editor(self, title: str) -> None:
         self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
@@ -4952,40 +5023,27 @@ class MainWindow(QMainWindow):
         self.archive_detail_layout.addWidget(self.archive_editor, 1)
         if not self.archive_editor.isReadOnly():
             actions = QHBoxLayout()
-            self._add_button(actions, "Сохранить черновик", self.save_archive_draft)
-            self._add_button(actions, "Сохранить финал", self.save_archive_final)
+            self._add_button(actions, "Сохранить", self.save_archive_draft)
             self._add_button(actions, "Отмена", self.refresh_archive)
             actions.addStretch(1)
             self.archive_detail_layout.addLayout(actions)
 
     def save_archive_draft(self) -> None:
-        if self.archive_editor.isReadOnly():
-            return
-        text = self.archive_editor.toPlainText()
-        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
-            self.storage.save_day_summary_draft(self.selected_archive_day_folder, text)
-            self.status_label.setText("Черновик итогов дня сохранен локально.")
-        elif (
-            self.archive_selected_material == "meeting_summary"
-            and self.selected_archive_meeting_folder is not None
-        ):
-            self.storage.save_meeting_summary_draft(self.selected_archive_meeting_folder, text)
-            self.status_label.setText("Черновик итогов встречи сохранен локально.")
-        self.refresh_archive()
+        self.save_archive_summary(self.archive_summary_view.editor.toPlainText())
 
     def save_archive_final(self) -> None:
-        if self.archive_editor.isReadOnly():
+        self.save_archive_summary(self.archive_summary_view.editor.toPlainText())
+
+    def save_archive_summary(self, content: str) -> None:
+        if self.archive_open_material is None:
             return
-        text = self.archive_editor.toPlainText()
-        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
-            self.storage.save_day_summary_final(self.selected_archive_day_folder, text)
-            self.status_label.setText("Финальные итоги дня сохранены локально. Черновик не удален.")
-        elif (
-            self.archive_selected_material == "meeting_summary"
-            and self.selected_archive_meeting_folder is not None
-        ):
-            self.storage.save_meeting_summary_final(self.selected_archive_meeting_folder, text)
-            self.status_label.setText("Финальные итоги встречи сохранены локально. Черновик не удален.")
+        kind, folder = self.archive_open_material
+        if kind == "day_summary":
+            self.storage.save_day_summary(folder, content)
+            self.status_label.setText("Итог дня сохранен локально.")
+        elif kind == "meeting_summary":
+            self.storage.save_meeting_summary(folder, content)
+            self.status_label.setText("Итог встречи сохранен локально.")
         self.refresh_archive()
 
     def request_archive_day_summary_update(self, day_folder: Path) -> None:
@@ -5041,7 +5099,7 @@ class MainWindow(QMainWindow):
             "3. Завершите встречу: запись остановится, а обработка пойдет в фоне.\n"
             "4. При необходимости сразу начните следующую встречу.\n"
             "5. Завершите рабочий день.\n"
-            "6. Откройте `Ревью`, проверьте итоги и сохраните финальные файлы."
+            "6. Откройте `Ревью`, проверьте итоги и сохраните изменения."
         )
         flow_text.setObjectName("sectionHint")
         flow_text.setWordWrap(True)
@@ -5062,7 +5120,7 @@ class MainWindow(QMainWindow):
         services_layout = QVBoxLayout()
         services_text = QLabel(
             "OBS управляет записью, FFmpeg локально извлекает audio.wav, Whisper/faster-whisper "
-            "локально готовит transcript, а Summary generation создает черновик итогов встречи "
+            "локально готовит transcript, а Summary generation создает итоги встречи "
             "из готового текста transcript."
         )
         services_text.setObjectName("sectionHint")
@@ -5086,6 +5144,18 @@ class MainWindow(QMainWindow):
             button.setObjectName(object_name)
         button.clicked.connect(callback)
         layout.addWidget(button)
+        return button
+
+    @staticmethod
+    def _header_button(
+        label: str,
+        callback: Callable[[], None],
+        object_name: str = "headerButton",
+    ) -> QPushButton:
+        button = QPushButton(label)
+        button.setObjectName(object_name)
+        button.setFixedHeight(34)
+        button.clicked.connect(callback)
         return button
 
     def start_workday(self) -> None:
@@ -5782,7 +5852,7 @@ class MainWindow(QMainWindow):
             if event == "day_summary_done":
                 self._set_day_summary_pipeline_step("collect", "Готово", "Итоги встреч собраны.", "ok")
                 self._set_day_summary_pipeline_step("check", "Готово", "Итоги встреч проверены.", "ok")
-                self._set_day_summary_pipeline_step("generate", "Готово", "00_day_summary_draft.md готов.", "ok")
+                self._set_day_summary_pipeline_step("generate", "Готово", "00_day_summary.md готов.", "ok")
         self.status_label.setText(message)
 
     def _on_day_summary_finished(self, day_folder_text: str) -> None:
@@ -5943,7 +6013,7 @@ class MainWindow(QMainWindow):
             if metadata.get("summary_error"):
                 return str(metadata["summary_error"])
             if metadata.get("summary_status") == "draft_created":
-                return "summary_draft.md готов к ревью."
+                return "summary.md готов к ревью."
             if metadata.get("summary_status") == "disabled":
                 return "Генерация итогов выключена в настройках."
             if metadata.get("summary_status") == "skipped":
@@ -6138,7 +6208,7 @@ class MainWindow(QMainWindow):
         if self.review_day_summary_selected and has_day_summary:
             self.load_day_summary_review()
             self.review_meetings_hint.setText(
-                "Выберите «Итоги дня» или встречу, чтобы проверить локальные черновики."
+                "Выберите «Итоги дня» или встречу, чтобы проверить локальные итоги."
             )
             self.review_status_label.setText("Итоги дня загружены.")
         elif meeting_folders:
@@ -6146,7 +6216,7 @@ class MainWindow(QMainWindow):
             self.review_meetings_hint.setText(
                 "Выберите встречу, чтобы проверить итоги и transcript."
             )
-            self.review_status_label.setText("Локальные файлы ревью загружены.")
+            self.review_status_label.setText("Локальные итоги загружены.")
         else:
             self.meeting_summary_editor.clear()
             self.meeting_transcript_editor.clear()
@@ -6231,16 +6301,18 @@ class MainWindow(QMainWindow):
 
     def load_selected_meeting(self, meeting_folder: Path | None = None) -> None:
         if meeting_folder is None:
-            self.meeting_summary_editor.clear()
+            self.review_summary_view.set_markdown("")
+            self.review_summary_view.set_title("Итог встречи")
+            self.review_summary_view.set_meta("")
             self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
             return
         self.review_tabs.setTabText(0, "Итоги встречи")
         self.review_tabs.setTabText(1, "Транскрипт")
-        self.meeting_summary_editor.setReadOnly(False)
-        self.meeting_summary_editor.setPlainText(
-            self.storage.read_meeting_summary_draft(meeting_folder)
-        )
+        metadata = self.storage.read_meeting_metadata(meeting_folder)
+        self.review_summary_view.set_title("Итог встречи")
+        self.review_summary_view.set_meta(self._meeting_material_meta(metadata, meeting_folder))
+        self.review_summary_view.set_markdown(self.storage.read_meeting_summary(meeting_folder))
         self.meeting_transcript_editor.setPlainText(self._read_meeting_transcript(meeting_folder))
         self._refresh_review_buttons()
 
@@ -6249,12 +6321,15 @@ class MainWindow(QMainWindow):
         self.review_tabs.setTabText(0, "Итоги встреч")
         self.review_tabs.setTabText(1, "Транскрипт")
         if day_folder is None:
-            self.meeting_summary_editor.clear()
+            self.review_summary_view.set_markdown("")
+            self.review_summary_view.set_title("Итог дня")
+            self.review_summary_view.set_meta("")
             self.meeting_transcript_editor.clear()
             self._refresh_review_buttons()
             return
-        self.meeting_summary_editor.setReadOnly(False)
-        self.meeting_summary_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
+        self.review_summary_view.set_title("Итог дня")
+        self.review_summary_view.set_meta(self._day_material_meta(day_folder))
+        self.review_summary_view.set_markdown(self.storage.read_day_summary(day_folder))
         self.meeting_transcript_editor.setHtml(self._day_transcript_links_html(day_folder))
         self._refresh_review_buttons()
 
@@ -6311,48 +6386,40 @@ class MainWindow(QMainWindow):
         return transcript_path.read_text(encoding="utf-8")
 
     def save_drafts(self) -> None:
+        self.save_review_summary(self.review_summary_view.markdown)
+
+    def save_review_summary(self, content: str) -> None:
         selected_meeting = self._selected_meeting_folder()
         day_folder = self.storage.get_today_day_folder()
         if day_folder is None:
             self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
             return
         if self.review_day_summary_selected:
-            self.storage.save_day_summary_draft(day_folder, self.meeting_summary_editor.toPlainText())
-            self.review_status_label.setText("Черновик итогов дня сохранен локально.")
+            self.storage.save_day_summary(day_folder, content)
+            self.review_status_label.setText("Итог дня сохранен локально.")
             return
         if selected_meeting is None:
-            self.review_status_label.setText("Выберите встречу для сохранения черновиков.")
+            self.review_status_label.setText("Выберите встречу для сохранения итогов.")
             return
-        self.storage.save_meeting_summary_draft(
-            selected_meeting, self.meeting_summary_editor.toPlainText()
-        )
-        if self.day_summary_editor.isEnabled():
-            self.storage.save_day_summary_draft(day_folder, self.day_summary_editor.toPlainText())
-        self.review_status_label.setText("Черновики сохранены локально.")
+        self.storage.save_meeting_summary(selected_meeting, content)
+        self.review_status_label.setText("Итог встречи сохранен локально.")
 
     def save_final_files(self) -> None:
+        content = self.review_summary_view.editor.toPlainText()
         selected_meeting = self._selected_meeting_folder()
         day_folder = self.storage.get_today_day_folder()
         if self.review_day_summary_selected:
             if day_folder is None:
                 self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
                 return
-            self.storage.save_day_summary_final(day_folder, self.meeting_summary_editor.toPlainText())
-            self.review_status_label.setText("Финальные итоги дня сохранены локально. Черновик не удален.")
+            self.storage.save_day_summary(day_folder, content)
+            self.review_status_label.setText("Итог дня сохранен локально.")
             return
         if selected_meeting is None:
-            self.review_status_label.setText("Выберите встречу для сохранения финальных файлов.")
+            self.review_status_label.setText("Выберите встречу для сохранения итогов.")
             return
-        day_folder = selected_meeting.parent
-        tasks_path = day_folder / "00_tasks_draft.md"
-        tasks_text = tasks_path.read_text(encoding="utf-8") if tasks_path.is_file() else ""
-        self.storage.save_final_files(
-            selected_meeting,
-            self.meeting_summary_editor.toPlainText(),
-            self.day_summary_editor.toPlainText(),
-            tasks_text,
-        )
-        self.review_status_label.setText("Финальные файлы сохранены локально. Черновики не удалены.")
+        self.storage.save_meeting_summary(selected_meeting, content)
+        self.review_status_label.setText("Итог встречи сохранен локально.")
 
     def save_final_summaries(self) -> None:
         self.save_final_files()
@@ -6674,7 +6741,12 @@ class MainWindow(QMainWindow):
             self.refresh_archive()
 
     def _archive_editor_is_editing(self) -> bool:
-        return self.archive_editor.parent() is not None and not self.archive_editor.isReadOnly()
+        return (
+            getattr(self, "archive_summary_view", None) is not None
+            and self.archive_open_material is not None
+            and self.archive_open_material[0] in {"day_summary", "meeting_summary"}
+            and self.archive_summary_view.mode == "edit"
+        )
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
@@ -6898,24 +6970,6 @@ class MainWindow(QMainWindow):
         self._refresh_workday_meetings()
 
     def _refresh_review_buttons(self) -> None:
-        day_folder = self.storage.get_today_day_folder()
-        has_day_folder = day_folder is not None
-        has_selected_meeting = self._selected_meeting_folder() is not None
-        has_day_summary = (
-            day_folder is not None
-            and (day_folder / "00_day_summary_draft.md").is_file()
-        )
-        has_review_content = has_selected_meeting or (self.review_day_summary_selected and has_day_summary)
-        self.review_open_folder_button.setEnabled(has_day_folder)
-        self.save_drafts_button.setEnabled(
-            has_day_folder and has_review_content and not self._has_processing_work()
-        )
-        self.save_final_files_button.setEnabled(
-            has_day_folder
-            and has_review_content
-            and has_day_summary
-            and not self._has_processing_work()
-        )
         self._refresh_floating_control()
 
     def _has_processing_work(self) -> bool:
@@ -6934,6 +6988,5 @@ class MainWindow(QMainWindow):
         )
 
     def _clear_review_editors(self) -> None:
-        self.meeting_summary_editor.clear()
-        self.day_summary_editor.clear()
+        self.review_summary_view.set_markdown("")
         self.meeting_transcript_editor.clear()

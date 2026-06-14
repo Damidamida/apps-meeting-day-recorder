@@ -121,22 +121,17 @@ def search_archive(days: list[ArchiveDay], query: str) -> list[ArchiveSearchMatc
         if normalized in day_text.casefold():
             matches.append(ArchiveSearchMatch("Дата", archive_day.folder, None, day_text, day_text))
 
-        _append_file_match(
+        _append_first_file_match(
             matches,
             "Итоги дня",
             archive_day.folder,
             None,
             "Итоги дня",
-            archive_day.folder / "00_day_summary_draft.md",
-            normalized,
-        )
-        _append_file_match(
-            matches,
-            "Итоги дня",
-            archive_day.folder,
-            None,
-            "Итоги дня",
-            archive_day.folder / "00_day_summary_final.md",
+            [
+                archive_day.folder / "00_day_summary.md",
+                archive_day.folder / "00_day_summary_draft.md",
+                archive_day.folder / "00_day_summary_final.md",
+            ],
             normalized,
         )
 
@@ -151,22 +146,17 @@ def search_archive(days: list[ArchiveDay], query: str) -> list[ArchiveSearchMatc
                         meeting.title,
                     )
                 )
-            _append_file_match(
+            _append_first_file_match(
                 matches,
                 "Итоги встречи",
                 archive_day.folder,
                 meeting.folder,
                 meeting.title,
-                meeting.folder / "summary_draft.md",
-                normalized,
-            )
-            _append_file_match(
-                matches,
-                "Итоги встречи",
-                archive_day.folder,
-                meeting.folder,
-                meeting.title,
-                meeting.folder / "summary_final.md",
+                [
+                    meeting.folder / "summary.md",
+                    meeting.folder / "summary_draft.md",
+                    meeting.folder / "summary_final.md",
+                ],
                 normalized,
             )
             _append_file_match(
@@ -289,6 +279,22 @@ def _append_file_match(
             snippet=_snippet(text, index, len(normalized_query)),
         )
     )
+
+
+def _append_first_file_match(
+    matches: list[ArchiveSearchMatch],
+    kind: ArchiveMatchKind,
+    day_folder: Path,
+    meeting_folder: Path | None,
+    title: str,
+    paths: list[Path],
+    normalized_query: str,
+) -> None:
+    before = len(matches)
+    for path in paths:
+        _append_file_match(matches, kind, day_folder, meeting_folder, title, path, normalized_query)
+        if len(matches) > before:
+            return
 
 
 def _snippet(text: str, index: int, query_length: int) -> str:

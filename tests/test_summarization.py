@@ -182,12 +182,12 @@ def test_suspect_transcript_is_skipped_without_calling_openai(
         "Транскрипция требует проверки. Итоги не будут отправлены во внешний сервис."
     )
     assert "Транскрипция требует проверки" in (
-        tmp_path / "summary_draft.md"
+        tmp_path / "summary.md"
     ).read_text(encoding="utf-8")
     assert read_transcript_text(tmp_path) is None
 
 
-def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path, monkeypatch) -> None:
+def test_successful_summary_generation_writes_single_file_and_metadata(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
     _write_completed_transcript(tmp_path)
     response = SimpleNamespace(
@@ -213,11 +213,11 @@ def test_successful_summary_generation_writes_draft_and_metadata(tmp_path: Path,
 
     metadata = summarizer.summarize_meeting(tmp_path, {"transcription_status": "completed"})
 
-    summary_text = (tmp_path / "summary_draft.md").read_text(encoding="utf-8")
+    summary_text = (tmp_path / "summary.md").read_text(encoding="utf-8")
     assert metadata["summary_status"] == "draft_created"
     assert metadata["summary_provider"] == "openai"
     assert metadata["summary_model"] == "gpt-5.4-mini"
-    assert metadata["summary_path"] == str(tmp_path / "summary_draft.md")
+    assert metadata["summary_path"] == str(tmp_path / "summary.md")
     assert metadata["summary_generated_at"] == "2026-06-03T12:00:00"
     assert metadata["summary_usage"] == {"input_tokens": 100, "output_tokens": 50}
     assert client_kwargs["base_url"] == "https://api.aitunnel.ru/v1/"
@@ -273,10 +273,10 @@ def test_successful_day_summary_uses_meeting_summaries_only(tmp_path: Path, monk
     assert "transcript" not in request_text.lower()
     assert metadata["day_summary_status"] == "draft_created"
     assert metadata["day_summary_provider"] == "openai"
-    assert metadata["day_summary_path"] == str(tmp_path / "00_day_summary_draft.md")
+    assert metadata["day_summary_path"] == str(tmp_path / "00_day_summary.md")
     assert metadata["day_summary_generated_at"] == "2026-06-03T18:00:00"
     assert metadata["day_summary_usage"] == {"input_tokens": 40, "output_tokens": 20}
-    assert "Сводка дня" in (tmp_path / "00_day_summary_draft.md").read_text(encoding="utf-8")
+    assert "Сводка дня" in (tmp_path / "00_day_summary.md").read_text(encoding="utf-8")
 
 
 def test_api_failure_returns_failed_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -406,7 +406,7 @@ def test_summary_retries_temporary_aitunnel_error(tmp_path: Path, monkeypatch) -
 
     assert calls == 2
     assert metadata["summary_status"] == "draft_created"
-    assert "# Итоги встречи" in (tmp_path / "summary_draft.md").read_text(encoding="utf-8")
+    assert "# Итоги встречи" in (tmp_path / "summary.md").read_text(encoding="utf-8")
 
 
 def test_env_file_parser_reads_plain_and_quoted_values(tmp_path: Path, monkeypatch) -> None:
@@ -453,7 +453,7 @@ def test_chunking_splits_long_transcript_and_combines_final_summary(tmp_path: Pa
     assert metadata["summary_status"] == "draft_created"
     assert metadata["summary_usage"] == {"input_tokens": 60, "output_tokens": 30}
     assert len(calls) == 3
-    assert "Сводный итог" in (tmp_path / "summary_draft.md").read_text(encoding="utf-8")
+    assert "Сводный итог" in (tmp_path / "summary.md").read_text(encoding="utf-8")
 
 
 def test_read_transcript_prefers_completed_json_segments(tmp_path: Path) -> None:
