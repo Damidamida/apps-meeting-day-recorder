@@ -1135,6 +1135,20 @@ def test_read_and_save_meeting_summary_single_file_with_legacy_fallback(tmp_path
     assert (meeting_folder / "summary.md").read_text(encoding="utf-8") == "# Новый итог\n"
 
 
+def test_read_meeting_summary_skips_legacy_placeholder_draft(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    meeting_folder = storage.create_meeting_folder("Fallback", datetime(2026, 6, 14, 10, 0))
+
+    (meeting_folder / "summary.md").unlink()
+    (meeting_folder / "summary_draft.md").write_text(
+        "# Черновик итогов встречи\n\n_Итоги встречи пока не заполнены._\n",
+        encoding="utf-8",
+    )
+    (meeting_folder / "summary_final.md").write_text("# Старый финальный итог\n", encoding="utf-8")
+
+    assert storage.read_meeting_summary(meeting_folder) == "# Старый финальный итог\n"
+
+
 def test_save_meeting_summary_final_writes_final_without_touching_draft(tmp_path) -> None:
     storage = StorageService(tmp_path)
     meeting_folder = storage.create_meeting_folder("Архив", datetime(2026, 6, 12, 9, 0))
@@ -1174,6 +1188,28 @@ def test_read_and_save_day_summary_single_file_with_legacy_fallback(tmp_path) ->
     assert saved_path == day_folder / "00_day_summary.md"
     assert storage.read_day_summary(day_folder) == "# Новый итог дня\n"
     assert (day_folder / "00_day_summary.md").read_text(encoding="utf-8") == "# Новый итог дня\n"
+
+
+def test_read_day_summary_skips_legacy_placeholder_draft(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+
+    (day_folder / "00_day_summary_draft.md").write_text(
+        "# Черновик итогов дня\n\n_Итоги дня пока не заполнены._\n",
+        encoding="utf-8",
+    )
+    (day_folder / "00_day_summary_final.md").write_text("# Старый финальный итог дня\n", encoding="utf-8")
+
+    assert storage.read_day_summary(day_folder) == "# Старый финальный итог дня\n"
+
+
+def test_day_summary_exists_detects_legacy_final_file(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+
+    (day_folder / "00_day_summary_final.md").write_text("# Старый финальный итог дня\n", encoding="utf-8")
+
+    assert storage.day_summary_exists(day_folder)
 
 
 def test_day_summary_pipeline_includes_missing_summaries_and_skips_without_new_meetings(

@@ -941,6 +941,7 @@ class StorageService:
                 self.day_summary_metadata_path(day_folder).is_file()
                 or self.day_summary_path(day_folder).is_file()
                 or (day_folder / "00_day_summary_draft.md").is_file()
+                or (day_folder / "00_day_summary_final.md").is_file()
             )
         )
 
@@ -1051,7 +1052,9 @@ class StorageService:
                 return text
         legacy_draft = folder / "summary_draft.md"
         if legacy_draft.is_file():
-            return self._read_or_create_text(legacy_draft, self._meeting_summary_placeholder())
+            text = self._read_or_create_text(legacy_draft, self._meeting_summary_placeholder())
+            if text.strip() and not self._is_meeting_summary_placeholder(text):
+                return text
         legacy_final = folder / "summary_final.md"
         if legacy_final.is_file():
             return self._read_or_create_text(legacy_final, self._meeting_summary_placeholder())
@@ -1081,7 +1084,9 @@ class StorageService:
                 return text
         legacy_draft = folder / "00_day_summary_draft.md"
         if legacy_draft.is_file():
-            return self._read_or_create_text(legacy_draft, self._day_summary_placeholder())
+            text = self._read_or_create_text(legacy_draft, self._day_summary_placeholder())
+            if text.strip() and not self._is_day_summary_placeholder(text):
+                return text
         legacy_final = folder / "00_day_summary_final.md"
         if legacy_final.is_file():
             return self._read_or_create_text(legacy_final, self._day_summary_placeholder())
