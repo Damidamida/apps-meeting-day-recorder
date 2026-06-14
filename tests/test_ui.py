@@ -10,7 +10,7 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy, QWidget
 
 from app.services.recorder import NoopRecorder
@@ -2878,7 +2878,7 @@ def test_archive_search_filters_days_and_shows_fixed_results(tmp_path: Path) -> 
     assert release_day.name in day_texts
     assert other_day.name not in day_texts
     assert any("Планирование релиза" in text or "Транскрипт" in text for text in result_texts)
-    assert window.archive_results_scroll.maximumHeight() == 150
+    assert window.archive_results_scroll.maximumHeight() >= 190
 
     window.close()
     app.processEvents()
@@ -3041,8 +3041,69 @@ def test_archive_layout_keeps_readable_day_column_and_dark_scroll_areas(tmp_path
     assert window.archive_splitter.sizes()[0] >= 280
     assert window.archive_days_scroll.objectName() == "archiveDaysScroll"
     assert window.archive_days_scroll.viewport().objectName() == "archiveScrollViewport"
+    assert window.archive_days_list.objectName() == "archiveDaysList"
     assert window.archive_results_scroll.viewport().objectName() == "archiveScrollViewport"
+    assert window.archive_results_list.objectName() == "archiveResultsList"
+    assert window.archive_days_list.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    assert window.archive_results_list.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     assert "#111827" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_day_cards_are_compact_clickable_and_selected(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    first_day = storage.create_day_folder((datetime.now() - timedelta(days=2)).date())
+    second_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(first_day / "day_metadata.json", {"date": first_day.name, "status": "ended"})
+    storage._write_json(second_day / "day_metadata.json", {"date": second_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    day_cards = window.archive_days_list.findChildren(QPushButton, "archiveDayCard")
+    assert len(day_cards) == 2
+    assert all(card.maximumHeight() <= 76 for card in day_cards)
+    assert all(button.text() != "Открыть" for button in window.archive_days_list.findChildren(QPushButton))
+    assert any(card.property("selected") is True for card in day_cards)
+    assert any(card.property("selected") is False for card in day_cards)
+
+    unselected = next(card for card in day_cards if card.property("selected") is False)
+    unselected.click()
+    app.processEvents()
+
+    assert window.selected_archive_day_folder == unselected.property("day_folder")
+    refreshed_cards = window.archive_days_list.findChildren(QPushButton, "archiveDayCard")
+    assert sum(1 for card in refreshed_cards if card.property("selected") is True) == 1
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_search_no_matches_stays_at_top_with_dark_empty_result(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.config["ui"]["theme"] = "dark"
+    window._apply_app_style()
+    window.open_archive()
+    window.archive_search_input.setText("ничего-не-найдено")
+    window.apply_archive_filters()
+
+    result_text = "\n".join(label.text() for label in window.archive_results_list.findChildren(QLabel))
+    assert not window.archive_results_scroll.isHidden()
+    assert window.archive_empty_state.isHidden()
+    assert "Совпадений не найдено" in result_text
+    assert window.archive_results_list.objectName() == "archiveResultsList"
+    assert window.archive_results_list.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    assert window.archive_results_scroll.maximumHeight() >= 190
 
     window.close()
     app.processEvents()
@@ -3084,6 +3145,36 @@ def test_archive_visible_text_is_russian_and_actions_are_specific(tmp_path: Path
     app.processEvents()
 
 
+def test_archive_filters_have_active_state_and_date_masks(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    period_buttons = [window.archive_week_button, window.archive_month_button, window.archive_all_button]
+    assert all(button.isCheckable() for button in period_buttons)
+    assert window.archive_all_button.isChecked()
+    assert len({button.minimumWidth() for button in period_buttons}) == 1
+    assert window.archive_from_input.inputMask().startswith("0000-00-00")
+    assert window.archive_to_input.inputMask().startswith("0000-00-00")
+
+    window.set_archive_period("week")
+    assert window.archive_week_button.isChecked()
+    assert not window.archive_month_button.isChecked()
+    assert not window.archive_all_button.isChecked()
+
+    window.archive_from_input.setText("9999-99-99")
+    window.apply_archive_filters()
+    assert window.archive_days
+
+    window.close()
+    app.processEvents()
+
+
 def test_archive_search_results_are_compact_and_keep_action_near_text(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -3118,6 +3209,33 @@ def test_archive_search_results_are_compact_and_keep_action_near_text(tmp_path: 
     assert all(label.maximumHeight() <= 48 for label in snippet_labels)
     assert all(len(label.text()) <= 96 for label in snippet_labels)
     assert all(button.maximumWidth() <= 96 for button in open_buttons)
+    assert window.archive_results_scroll.maximumHeight() >= 190
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_detail_cards_have_inner_padding(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    storage.save_day_summary_draft(day_folder, "# Итог дня\n")
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary_draft(meeting, "# Итог встречи\n")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    detail_cards = window.archive_detail_layout.parentWidget().findChildren(QWidget, "archiveDetailCard")
+    assert detail_cards
+    assert window.archive_detail_layout.contentsMargins().top() >= 24
+    assert all(card.layout().contentsMargins().left() >= 18 for card in detail_cards)
+    assert all(card.layout().spacing() >= 10 for card in detail_cards)
 
     window.close()
     app.processEvents()
