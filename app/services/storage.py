@@ -181,6 +181,27 @@ class StorageService:
             return None
         return max(candidates, key=lambda item: item[0])[1]
 
+    def list_past_workday_folders(self, now: datetime | None = None) -> list[Path]:
+        now = now or datetime.now()
+        today = now.date()
+        candidates: list[tuple[date, Path]] = []
+        if not self.root.is_dir():
+            return []
+        for day_folder in self.root.iterdir():
+            if not day_folder.is_dir():
+                continue
+            metadata_path = day_folder / "day_metadata.json"
+            if not metadata_path.is_file():
+                continue
+            try:
+                metadata = self._read_json(metadata_path)
+                workday = date.fromisoformat(str(metadata.get("date") or day_folder.name))
+            except (MetadataReadError, ValueError):
+                continue
+            if workday < today:
+                candidates.append((workday, day_folder))
+        return [day_folder for _, day_folder in sorted(candidates, reverse=True)]
+
     def start_workday(self, started_at: datetime | None = None) -> Path:
         if self.workday_active:
             raise ValueError("Рабочий день уже активен.")
@@ -1006,6 +1027,9 @@ class StorageService:
 
     def save_meeting_summary_draft(self, meeting_folder: Path, content: str) -> Path:
         return self._write_text(meeting_folder / "summary_draft.md", content)
+
+    def save_meeting_summary_final(self, meeting_folder: Path, content: str) -> Path:
+        return self._write_text(Path(meeting_folder) / "summary_final.md", content)
 
     def read_day_summary_draft(self, day_folder: Path) -> str:
         return self._read_or_create_text(

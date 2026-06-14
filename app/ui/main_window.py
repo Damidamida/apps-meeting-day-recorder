@@ -49,6 +49,13 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import DEFAULT_CONFIG, load_config
+from app.services.archive import (
+    ArchiveDateFilter,
+    ArchiveDay,
+    ArchiveSearchMatch,
+    build_archive_days,
+    search_archive,
+)
 from app.services.readiness import READINESS_CARDS, check_readiness
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
@@ -1375,6 +1382,13 @@ class MainWindow(QMainWindow):
         self.workday_day_summary_expanded = False
         self.selected_review_meeting_folder: Path | None = None
         self.review_day_summary_selected = False
+        self.archive_days: list[ArchiveDay] = []
+        self.archive_matches: list[ArchiveSearchMatch] = []
+        self.archive_period = "all"
+        self.archive_query = ""
+        self.selected_archive_day_folder: Path | None = None
+        self.selected_archive_meeting_folder: Path | None = None
+        self.archive_selected_material: str | None = None
         self.workday_action_mode: str | None = None
         self.allow_close_with_processing = False
         self.workday_meeting_cards: dict[Path, ClickableFrame] = {}
@@ -1566,7 +1580,7 @@ class MainWindow(QMainWindow):
 
         self._add_nav_button(layout, 0, "Рабочий день", lambda: self.pages.setCurrentIndex(0))
         self._add_nav_button(layout, 1, "Ревью", self.open_review)
-        self._add_nav_button(layout, 2, "Архив", lambda: self.pages.setCurrentIndex(2))
+        self._add_nav_button(layout, 2, "Архив", self.open_archive)
         self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
         self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
         layout.addStretch()
@@ -2795,15 +2809,18 @@ class MainWindow(QMainWindow):
         return started_at, meeting_folder.name
 
     @staticmethod
-    def _clear_layout(layout) -> None:
+    def _clear_layout(layout, preserve: set[QWidget] | None = None) -> None:
+        preserve = preserve or set()
         while layout.count():
             item = layout.takeAt(0)
             child_layout = item.layout()
             if child_layout is not None:
-                MainWindow._clear_layout(child_layout)
+                MainWindow._clear_layout(child_layout, preserve)
             widget = item.widget()
             if widget is not None:
-                widget.deleteLater()
+                widget.setParent(None)
+                if widget not in preserve:
+                    widget.deleteLater()
 
     def _meeting_header_text(self, meeting_folder: Path, metadata: dict[str, object]) -> str:
         title = str(metadata.get("title") or meeting_folder.name)
@@ -4416,36 +4433,417 @@ class MainWindow(QMainWindow):
         layout.addWidget(
             self._create_page_header(
                 "Архив",
-                "Будущий read-only просмотр прошлых рабочих дней и встреч.",
+                "Прошлые рабочие дни, итоги и transcript остаются в локальной папке данных.",
             )
         )
-        status_layout = QVBoxLayout()
-        status_layout.setSpacing(8)
-        archive_status = QLabel(
-            "Архив пока не реализован. Текущие локальные файлы уже сохраняются в папке данных, "
-            "но экран поиска и просмотра прошлых дней будет отдельным будущим PR."
-        )
-        archive_status.setObjectName("emptyState")
-        archive_status.setWordWrap(True)
-        status_layout.addWidget(archive_status)
-        layout.addWidget(self._create_card("Статус архива", status_layout))
 
-        planned_layout = QVBoxLayout()
-        planned_layout.setSpacing(8)
-        planned_text = QLabel(
-            "Планируемое поведение:\n"
-            "- список прошлых рабочих дней;\n"
-            "- read-only карточки встреч;\n"
-            "- открытие локальных папок и файлов;\n"
-            "- без отправки аудио, видео или transcript во внешние сервисы."
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(8)
+        self.archive_search_input = QLineEdit()
+        self.archive_search_input.setPlaceholderText("Поиск по дате, названию, итогам или transcript")
+        self.archive_search_input.textChanged.connect(self._schedule_archive_search)
+        controls_layout.addWidget(self.archive_search_input)
+
+        filter_row = QHBoxLayout()
+        self.archive_week_button = self._add_button(
+            filter_row, "Неделя", lambda checked=False: self.set_archive_period("week")
         )
-        planned_text.setObjectName("sectionHint")
-        planned_text.setWordWrap(True)
-        planned_layout.addWidget(planned_text)
-        layout.addWidget(self._create_card("Что будет позже", planned_layout))
-        layout.addStretch(1)
+        self.archive_month_button = self._add_button(
+            filter_row, "Месяц", lambda checked=False: self.set_archive_period("month")
+        )
+        self.archive_all_button = self._add_button(
+            filter_row, "Все", lambda checked=False: self.set_archive_period("all")
+        )
+        filter_row.addWidget(QLabel("с"))
+        self.archive_from_input = QLineEdit()
+        self.archive_from_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_from_input.textChanged.connect(self._schedule_archive_search)
+        filter_row.addWidget(self.archive_from_input)
+        filter_row.addWidget(QLabel("по"))
+        self.archive_to_input = QLineEdit()
+        self.archive_to_input.setPlaceholderText("YYYY-MM-DD")
+        self.archive_to_input.textChanged.connect(self._schedule_archive_search)
+        filter_row.addWidget(self.archive_to_input)
+        filter_row.addStretch(1)
+        controls_layout.addLayout(filter_row)
+
+        self.archive_results_list = QWidget()
+        self.archive_results_layout = QVBoxLayout()
+        self.archive_results_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_results_layout.setSpacing(6)
+        self.archive_results_list.setLayout(self.archive_results_layout)
+        self.archive_results_scroll = QScrollArea()
+        self.archive_results_scroll.setWidgetResizable(True)
+        self.archive_results_scroll.setMaximumHeight(150)
+        self.archive_results_scroll.setWidget(self.archive_results_list)
+        controls_layout.addWidget(self.archive_results_scroll)
+        layout.addWidget(self._create_card("Поиск", controls_layout))
+
+        self.archive_search_timer = QTimer(self)
+        self.archive_search_timer.setInterval(250)
+        self.archive_search_timer.setSingleShot(True)
+        self.archive_search_timer.timeout.connect(self.apply_archive_filters)
+
+        self.archive_empty_state = QLabel(
+            "Прошлых рабочих дней пока нет.\n"
+            "Сегодняшний день находится во вкладке `Рабочий день`."
+        )
+        self.archive_empty_state.setObjectName("emptyState")
+        self.archive_empty_state.setWordWrap(True)
+        layout.addWidget(self.archive_empty_state)
+
+        self.archive_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.archive_splitter.setObjectName("archiveSplitter")
+
+        days_panel = QWidget()
+        days_layout = QVBoxLayout()
+        days_layout.setContentsMargins(0, 0, 0, 0)
+        days_layout.setSpacing(10)
+        days_layout.addWidget(QLabel("Прошлые дни"))
+        self.archive_days_list = QWidget()
+        self.archive_days_layout = QVBoxLayout()
+        self.archive_days_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_days_layout.setSpacing(8)
+        self.archive_days_list.setLayout(self.archive_days_layout)
+        days_scroll = QScrollArea()
+        days_scroll.setWidgetResizable(True)
+        days_scroll.setWidget(self.archive_days_list)
+        days_layout.addWidget(days_scroll, 1)
+        days_panel.setLayout(days_layout)
+
+        details_panel = QWidget()
+        self.archive_detail_layout = QVBoxLayout()
+        self.archive_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.archive_detail_layout.setSpacing(10)
+        details_panel.setLayout(self.archive_detail_layout)
+
+        self.archive_splitter.addWidget(days_panel)
+        self.archive_splitter.addWidget(details_panel)
+        self.archive_splitter.setStretchFactor(0, 0)
+        self.archive_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.archive_splitter, 1)
+
+        self.archive_editor = QPlainTextEdit()
+        self.archive_editor.setObjectName("archiveEditor")
+        self.archive_editor.setPlaceholderText("Выберите материал Архива.")
         page.setLayout(layout)
         return page
+
+    def open_archive(self) -> None:
+        self.pages.setCurrentIndex(2)
+        self.refresh_archive()
+
+    def refresh_archive(self) -> None:
+        self.apply_archive_filters()
+
+    def set_archive_period(self, period: str) -> None:
+        self.archive_period = period
+        if period in {"week", "month", "all"}:
+            self.archive_from_input.clear()
+            self.archive_to_input.clear()
+        self.apply_archive_filters()
+
+    def _schedule_archive_search(self) -> None:
+        if hasattr(self, "archive_search_timer"):
+            self.archive_search_timer.start()
+
+    def apply_archive_filters(self) -> None:
+        self.archive_query = self.archive_search_input.text().strip()
+        date_filter = self._archive_date_filter()
+        all_days = build_archive_days(self.storage, date_filter=date_filter)
+        self.archive_matches = search_archive(all_days, self.archive_query)
+        if self.archive_query:
+            matched_day_folders = {match.day_folder for match in self.archive_matches}
+            self.archive_days = [day for day in all_days if day.folder in matched_day_folders]
+        else:
+            self.archive_days = all_days
+        if self.selected_archive_day_folder not in {day.folder for day in self.archive_days}:
+            self.selected_archive_day_folder = self.archive_days[0].folder if self.archive_days else None
+
+        self.archive_empty_state.setVisible(not self.archive_days)
+        self.archive_splitter.setVisible(bool(self.archive_days))
+        self._render_archive_search_results()
+        self._clear_layout(self.archive_days_layout)
+        for day in self.archive_days:
+            self.archive_days_layout.addWidget(self._create_archive_day_card(day))
+        self.archive_days_layout.addStretch(1)
+        self._render_archive_detail()
+
+    def _archive_date_filter(self) -> ArchiveDateFilter | None:
+        manual_start = self._parse_archive_date(self.archive_from_input.text())
+        manual_end = self._parse_archive_date(self.archive_to_input.text())
+        if manual_start is not None or manual_end is not None:
+            return ArchiveDateFilter(start=manual_start, end=manual_end)
+        now = datetime.now()
+        if self.archive_period == "week":
+            return ArchiveDateFilter.week(now)
+        if self.archive_period == "month":
+            return ArchiveDateFilter.month(now)
+        return None
+
+    @staticmethod
+    def _parse_archive_date(value: str) -> date | None:
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _render_archive_search_results(self) -> None:
+        self.archive_results_scroll.setVisible(bool(self.archive_query))
+        self._clear_layout(self.archive_results_layout)
+        for match in self.archive_matches:
+            row = QHBoxLayout()
+            label = QLabel(f"{match.kind}: {match.title}\n{match.snippet}")
+            label.setObjectName("sectionHint")
+            label.setWordWrap(True)
+            row.addWidget(label, 1)
+            self._add_button(
+                row,
+                "Открыть",
+                lambda checked=False, selected=match: self.open_archive_search_match(selected),
+                "secondaryButton",
+            )
+            self.archive_results_layout.addLayout(row)
+        self.archive_results_layout.addStretch(1)
+
+    def open_archive_search_match(self, match: ArchiveSearchMatch) -> None:
+        self.selected_archive_day_folder = match.day_folder
+        if match.meeting_folder is not None:
+            if match.kind == "Транскрипт":
+                self.show_archive_transcript(match.meeting_folder)
+            else:
+                self.edit_archive_meeting_summary(match.meeting_folder)
+            return
+        if match.kind == "Итоги дня":
+            self.edit_archive_day_summary(match.day_folder)
+            return
+        self._render_archive_detail()
+
+    def _create_archive_day_card(self, day: ArchiveDay) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        date_label = QLabel(day.workday.isoformat())
+        date_label.setObjectName("meetingHeaderLabel")
+        body_layout.addWidget(date_label)
+        details = QLabel(f"{day.detail_text} · {day.status_label}")
+        details.setObjectName("sectionHint")
+        details.setWordWrap(True)
+        body_layout.addWidget(details)
+        button_row = QHBoxLayout()
+        self._add_button(
+            button_row,
+            "Открыть",
+            lambda checked=False, folder=day.folder: self.select_archive_day(folder),
+            "secondaryButton",
+        )
+        button_row.addStretch(1)
+        body_layout.addLayout(button_row)
+        return self._create_card("", body_layout)
+
+    def select_archive_day(self, day_folder: Path) -> None:
+        self.selected_archive_day_folder = day_folder
+        self._render_archive_detail()
+
+    def _selected_archive_day(self) -> ArchiveDay | None:
+        for day in self.archive_days:
+            if day.folder == self.selected_archive_day_folder:
+                return day
+        return None
+
+    def _render_archive_detail(self) -> None:
+        self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
+        day = self._selected_archive_day()
+        if day is None:
+            return
+        self.archive_detail_layout.addWidget(self._create_archive_day_summary_card(day))
+        for meeting in self._archive_visible_meetings(day):
+            self.archive_detail_layout.addWidget(self._create_archive_meeting_card(meeting))
+        self.archive_detail_layout.addStretch(1)
+
+    def _create_archive_day_summary_card(self, day: ArchiveDay) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        status = "Сформированы" if day.has_day_summary else "Не сформированы"
+        label = QLabel(f"Дата: {day.workday.isoformat()}\nСтатус: {status}")
+        label.setObjectName("sectionHint")
+        label.setWordWrap(True)
+        body_layout.addWidget(label)
+        actions = QHBoxLayout()
+        self._add_button(
+            actions,
+            "Редактировать",
+            lambda checked=False, folder=day.folder: self.edit_archive_day_summary(folder),
+        )
+        self._add_button(
+            actions,
+            "Сформировать итоги дня",
+            lambda checked=False, folder=day.folder: self.request_archive_day_summary_update(folder),
+            "primaryButton",
+        )
+        if day.metadata.get("status") == "active":
+            self._add_button(
+                actions,
+                "Завершить день",
+                lambda checked=False, folder=day.folder: self.finish_archive_workday(folder),
+                "primaryButton",
+            )
+        actions.addStretch(1)
+        body_layout.addLayout(actions)
+        return self._create_card("Итоги дня", body_layout)
+
+    def _create_archive_meeting_card(self, meeting) -> QWidget:
+        body_layout = QVBoxLayout()
+        body_layout.setSpacing(6)
+        started_at = self._short_time(meeting.started_at)
+        title = QLabel(f"{started_at}   {meeting.title}".strip())
+        title.setObjectName("meetingHeaderLabel")
+        body_layout.addWidget(title)
+        status = QLabel(meeting.status_label)
+        status.setObjectName("sectionHint")
+        body_layout.addWidget(status)
+        actions = QHBoxLayout()
+        self._add_button(
+            actions,
+            "Редактировать итоги",
+            lambda checked=False, folder=meeting.folder: self.edit_archive_meeting_summary(folder),
+        )
+        self._add_button(
+            actions,
+            "Просмотреть transcript",
+            lambda checked=False, folder=meeting.folder: self.show_archive_transcript(folder),
+        )
+        reprocess_button = self._add_button(
+            actions,
+            "Повторить обработку",
+            lambda checked=False, folder=meeting.folder: self.archive_reprocess_meeting(folder),
+        )
+        reprocess_button.setEnabled(self._can_reprocess_meeting(meeting.folder, meeting.metadata))
+        actions.addStretch(1)
+        body_layout.addLayout(actions)
+        return self._create_card("Встреча", body_layout)
+
+    def _archive_visible_meetings(self, day: ArchiveDay):
+        if not self.archive_query:
+            return day.meetings
+        matching_folders = {
+            match.meeting_folder
+            for match in self.archive_matches
+            if match.day_folder == day.folder and match.meeting_folder is not None
+        }
+        return [meeting for meeting in day.meetings if meeting.folder in matching_folders]
+
+    def select_archive_meeting(self, meeting_folder: Path) -> None:
+        self.edit_archive_meeting_summary(meeting_folder)
+
+    def edit_archive_meeting_summary(self, meeting_folder: Path) -> None:
+        self.selected_archive_meeting_folder = meeting_folder
+        self.archive_selected_material = "meeting_summary"
+        self.archive_editor.setReadOnly(False)
+        self.archive_editor.setPlainText(self.storage.read_meeting_summary_draft(meeting_folder))
+        self._show_archive_editor("Итоги встречи")
+
+    def edit_archive_day_summary(self, day_folder: Path) -> None:
+        self.selected_archive_day_folder = day_folder
+        self.selected_archive_meeting_folder = None
+        self.archive_selected_material = "day_summary"
+        self.archive_editor.setReadOnly(False)
+        self.archive_editor.setPlainText(self.storage.read_day_summary_draft(day_folder))
+        self._show_archive_editor("Итоги дня")
+
+    def show_archive_transcript(self, meeting_folder: Path) -> None:
+        self.selected_archive_meeting_folder = meeting_folder
+        self.archive_selected_material = "transcript"
+        transcript_path = Path(meeting_folder) / "transcript.md"
+        if transcript_path.is_file():
+            try:
+                text = transcript_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                text = "Transcript пока не удалось прочитать."
+        else:
+            text = "Transcript пока не найден."
+        self.archive_editor.setReadOnly(True)
+        self.archive_editor.setPlainText(text)
+        self._show_archive_editor("Транскрипт")
+
+    def _show_archive_editor(self, title: str) -> None:
+        self._clear_layout(self.archive_detail_layout, preserve={self.archive_editor})
+        title_label = QLabel(title)
+        title_label.setObjectName("cardTitle")
+        self.archive_detail_layout.addWidget(title_label)
+        self.archive_detail_layout.addWidget(self.archive_editor, 1)
+        if not self.archive_editor.isReadOnly():
+            actions = QHBoxLayout()
+            self._add_button(actions, "Сохранить черновик", self.save_archive_draft)
+            self._add_button(actions, "Сохранить финал", self.save_archive_final)
+            self._add_button(actions, "Отмена", self.refresh_archive)
+            actions.addStretch(1)
+            self.archive_detail_layout.addLayout(actions)
+
+    def save_archive_draft(self) -> None:
+        if self.archive_editor.isReadOnly():
+            return
+        text = self.archive_editor.toPlainText()
+        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
+            self.storage.save_day_summary_draft(self.selected_archive_day_folder, text)
+            self.status_label.setText("Черновик итогов дня сохранен локально.")
+        elif (
+            self.archive_selected_material == "meeting_summary"
+            and self.selected_archive_meeting_folder is not None
+        ):
+            self.storage.save_meeting_summary_draft(self.selected_archive_meeting_folder, text)
+            self.status_label.setText("Черновик итогов встречи сохранен локально.")
+        self.refresh_archive()
+
+    def save_archive_final(self) -> None:
+        if self.archive_editor.isReadOnly():
+            return
+        text = self.archive_editor.toPlainText()
+        if self.archive_selected_material == "day_summary" and self.selected_archive_day_folder is not None:
+            self.storage.save_day_summary_final(self.selected_archive_day_folder, text)
+            self.status_label.setText("Финальные итоги дня сохранены локально. Черновик не удален.")
+        elif (
+            self.archive_selected_material == "meeting_summary"
+            and self.selected_archive_meeting_folder is not None
+        ):
+            self.storage.save_meeting_summary_final(self.selected_archive_meeting_folder, text)
+            self.status_label.setText("Финальные итоги встречи сохранены локально. Черновик не удален.")
+        self.refresh_archive()
+
+    def request_archive_day_summary_update(self, day_folder: Path) -> None:
+        if not self._confirm_risky_action(
+            "Обновить итоги дня?",
+            "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+            "Обновить итоги дня",
+        ):
+            self.status_label.setText("Обновление итогов дня отменено.")
+            return
+        self._request_day_summary_update(day_folder, force=True)
+        self.refresh_archive()
+
+    def finish_archive_workday(self, day_folder: Path) -> None:
+        try:
+            self.storage.end_workday_folder(day_folder)
+            recovered = self.storage.recover_interrupted_meeting_processing(day_folder)
+            pending = self.storage.list_pending_meeting_processing_folders(day_folder)
+        except (ValueError, MetadataReadError) as error:
+            self.status_label.setText(f"Прошлый рабочий день требует внимания: {error}")
+            self.refresh_archive()
+            return
+        for meeting_folder in pending:
+            self._enqueue_meeting_processing(meeting_folder)
+        if pending or recovered:
+            self.storage.mark_day_summary_waiting(day_folder)
+        self._request_day_summary_update(day_folder, force=False)
+        self.past_workday_folder = self.storage.find_past_active_workday()
+        self._refresh_past_workday_recovery_card()
+        self.refresh_archive()
+
+    def archive_reprocess_meeting(self, meeting_folder: Path) -> None:
+        self.reprocess_meeting(meeting_folder)
+        self.refresh_archive()
 
     def _create_help_page(self) -> QWidget:
         page = QWidget()
@@ -6096,6 +6494,11 @@ class MainWindow(QMainWindow):
         self.refresh_buttons()
         if self.pages.currentIndex() == 1:
             self.refresh_review()
+        elif self.pages.currentIndex() == 2 and not self._archive_editor_is_editing():
+            self.refresh_archive()
+
+    def _archive_editor_is_editing(self) -> bool:
+        return self.archive_editor.parent() is not None and not self.archive_editor.isReadOnly()
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
