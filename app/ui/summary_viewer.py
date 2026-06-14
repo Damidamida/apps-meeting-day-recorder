@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -25,11 +26,14 @@ class SummaryMaterialView(QWidget):
         self.markdown = ""
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(10)
 
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("summaryMaterialHeader")
+        self.header_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
+        header.setContentsMargins(14, 10, 14, 10)
         header.setSpacing(8)
         title_block = QVBoxLayout()
         title_block.setContentsMargins(0, 0, 0, 0)
@@ -58,7 +62,8 @@ class SummaryMaterialView(QWidget):
         for button in (self.edit_button, self.save_button, self.cancel_button):
             button.setFixedHeight(34)
             header.addWidget(button)
-        layout.addLayout(header)
+        self.header_frame.setLayout(header)
+        layout.addWidget(self.header_frame)
 
         self.preview = QTextBrowser()
         self.preview.setObjectName("summaryPreview")
@@ -140,35 +145,36 @@ class SummaryMaterialView(QWidget):
     @staticmethod
     def _markdown_to_html(markdown: str) -> str:
         lines = markdown.splitlines()
-        first_content_seen = False
         sections: list[tuple[str, list[str]]] = []
         current_title = ""
         current_lines: list[str] = []
+
+        def add_current_section() -> None:
+            nonlocal current_title, current_lines
+            if any(line.strip() for line in current_lines):
+                sections.append((current_title, current_lines))
+            current_title = ""
+            current_lines = []
+
         for line in lines:
             stripped = line.strip()
-            if not first_content_seen and not stripped:
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                add_current_section()
                 continue
-            if not first_content_seen:
-                first_content_seen = True
-                if stripped.startswith("# "):
-                    continue
             if stripped.startswith("## "):
-                if current_title or current_lines:
-                    sections.append((current_title, current_lines))
+                add_current_section()
                 current_title = stripped[3:].strip()
                 current_lines = []
                 continue
             if stripped.startswith("### "):
-                if current_title or current_lines:
-                    sections.append((current_title, current_lines))
+                add_current_section()
                 current_title = stripped[4:].strip()
                 current_lines = []
                 continue
             current_lines.append(line)
-        if current_title or current_lines:
-            sections.append((current_title, current_lines))
+        add_current_section()
         if not sections:
-            sections = [("", ["_Итоги пока не заполнены._"])]
+            sections = [("", ["Итог пока не заполнен."])]
 
         rendered_sections = []
         for title, section_lines in sections:
@@ -229,5 +235,5 @@ class SummaryMaterialView(QWidget):
         flush_paragraph()
         close_list()
         if not html_parts:
-            return '<p class="summary-empty">Нет данных.</p>'
+            return '<p class="summary-empty">Итог пока не заполнен.</p>'
         return "".join(html_parts)

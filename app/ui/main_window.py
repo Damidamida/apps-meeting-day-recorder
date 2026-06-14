@@ -1889,6 +1889,11 @@ class MainWindow(QMainWindow):
                 font-size: 14px;
                 font-weight: 800;
             }
+            QFrame#summaryMaterialHeader {
+                background: %(surface)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
             QLabel#sectionHint {
                 color: %(hint)s;
             }

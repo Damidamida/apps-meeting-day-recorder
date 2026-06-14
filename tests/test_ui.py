@@ -128,6 +128,64 @@ def test_summary_material_view_uses_primary_save_and_block_preview() -> None:
     app.processEvents()
 
 
+def test_summary_material_view_skips_top_h1_and_never_renders_no_data_block() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+
+    view.set_markdown(
+        "# Итоги встречи\n\n"
+        "## Кратко\n\nОбсудили релиз.\n\n"
+        "## Решения\n\n- Запускаем в пятницу\n"
+    )
+
+    plain_text = view.preview.toPlainText()
+    html = view.preview.toHtml()
+    assert "Нет данных" not in plain_text
+    assert "Итог пока не заполнен" not in plain_text
+    assert plain_text.count("Итоги встречи") == 0
+    assert "Кратко" in plain_text
+    assert "Решения" in plain_text
+    assert "summary-empty" not in html
+
+    view.set_markdown("# Итоги встречи\n\n")
+    assert "Итог пока не заполнен." in view.preview.toPlainText()
+    assert "Нет данных" not in view.preview.toPlainText()
+
+    view.close()
+    app.processEvents()
+
+
+def test_summary_material_view_header_is_separate_padded_row_with_action_on_right() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог встречи")
+    view.set_meta("17:19 · Ntcn · 1 мин.")
+    view.set_markdown("# Итоги встречи\n\n## Кратко\n\nОбсудили релиз.")
+    view.resize(900, 520)
+    view.show()
+    app.processEvents()
+
+    header_rect = view.header_frame.geometry()
+    title_rect = view.title_label.geometry()
+    meta_rect = view.meta_label.geometry()
+    edit_rect = view.edit_button.geometry()
+    preview_rect = view.preview.geometry()
+
+    assert view.title_label.text() == "Итог встречи"
+    assert view.meta_label.text() == "17:19 · Ntcn · 1 мин."
+    assert "Итог встречи" not in view.preview.toPlainText()
+    assert view.header_frame.objectName() == "summaryMaterialHeader"
+    assert header_rect.top() > 0
+    assert title_rect.left() >= 14
+    assert title_rect.top() >= 10
+    assert meta_rect.left() == title_rect.left()
+    assert edit_rect.left() > title_rect.right()
+    assert edit_rect.right() <= header_rect.width() - 12
+    assert preview_rect.top() > header_rect.bottom()
+
+    view.close()
+    app.processEvents()
+
+
 def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
