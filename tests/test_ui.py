@@ -3101,6 +3101,9 @@ def test_archive_search_no_matches_stays_at_top_with_dark_empty_result(tmp_path:
     assert not window.archive_results_scroll.isHidden()
     assert window.archive_empty_state.isHidden()
     assert "Совпадений не найдено" in result_text
+    assert window.archive_search_card.objectName() == "archiveSearchCard"
+    assert window.archive_search_card.maximumHeight() <= 360
+    assert window.archive_search_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Maximum
     assert window.archive_results_list.objectName() == "archiveResultsList"
     assert window.archive_results_list.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     assert window.archive_results_scroll.maximumHeight() >= 190

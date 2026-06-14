@@ -1848,6 +1848,7 @@ class MainWindow(QMainWindow):
                 padding: 18px;
             }
             QWidget#card,
+            QWidget#archiveSearchCard,
             QWidget#archiveDetailCard {
                 background: %(surface)s;
                 border: 1px solid %(border)s;
@@ -4538,7 +4539,14 @@ class MainWindow(QMainWindow):
         self.archive_results_scroll.setMaximumHeight(196)
         self.archive_results_scroll.setWidget(self.archive_results_list)
         controls_layout.addWidget(self.archive_results_scroll)
-        layout.addWidget(self._create_card("Поиск", controls_layout))
+        self.archive_search_card = self._create_card("Поиск", controls_layout)
+        self.archive_search_card.setObjectName("archiveSearchCard")
+        self.archive_search_card.setMaximumHeight(340)
+        self.archive_search_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        layout.addWidget(self.archive_search_card)
 
         self.archive_search_timer = QTimer(self)
         self.archive_search_timer.setInterval(250)
