@@ -3396,7 +3396,7 @@ class MainWindow(QMainWindow):
         review_content_layout = QVBoxLayout()
         review_content_layout.setSpacing(12)
         self.review_tabs = QTabWidget()
-        self.review_summary_view = SummaryMaterialView("Итоги встречи")
+        self.review_summary_view = SummaryMaterialView("Итоги встречи", show_height_toggle=False)
         self.review_summary_view.save_requested.connect(self.save_review_summary)
         self.meeting_summary_editor = self.review_summary_view.editor
         self.meeting_transcript_editor = QTextBrowser()
@@ -6197,6 +6197,8 @@ class MainWindow(QMainWindow):
         self.review_status_label.setText(f"Открыты итоги встречи: {meeting_folder.name}")
 
     def refresh_review(self) -> None:
+        if not self._guard_review_summary_reload():
+            return
         self._clear_layout(self.review_meeting_cards_layout)
         self.review_meeting_cards = {}
         day_folder = self.storage.get_today_day_folder()

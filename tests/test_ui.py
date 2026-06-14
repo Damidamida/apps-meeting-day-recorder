@@ -2386,12 +2386,19 @@ def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
     assert "15:30" in window.review_summary_view.meta_label.text()
     assert "План релиза" in window.review_summary_view.meta_label.text()
     assert "2 мин." in window.review_summary_view.meta_label.text()
+    assert window.review_summary_view.height_toggle_button.isHidden()
+    assert not any(
+        button.text() in {"Развернуть", "Свернуть"}
+        for button in window.review_summary_view.findChildren(QPushButton)
+        if not button.isHidden()
+    )
 
     window.review_day_summary_selected = True
     window.load_day_summary_review()
 
     assert window.review_summary_view.title_label.text() == "Итог дня"
     assert day_folder.name in window.review_summary_view.meta_label.text()
+    assert window.review_summary_view.height_toggle_button.isHidden()
 
     window.close()
     app.processEvents()
@@ -2430,6 +2437,22 @@ def test_review_blocks_material_reload_with_unsaved_summary_edits(tmp_path: Path
     assert "Сохраните" in window.review_status_label.text()
 
     window._refresh_after_lifecycle_change()
+    assert window.review_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
+    assert window.review_summary_view.mode == "edit"
+
+    clear_calls: list[str] = []
+    original_clear_layout = window._clear_layout
+
+    def recording_clear_layout(layout, *args, **kwargs):
+        if layout is window.review_meeting_cards_layout:
+            clear_calls.append("review_cards")
+        return original_clear_layout(layout, *args, **kwargs)
+
+    window._clear_layout = recording_clear_layout
+    window.refresh_review()
+
+    assert clear_calls == []
+    assert window.selected_review_meeting_folder == first
     assert window.review_summary_view.editor.toPlainText() == "# Несохраненный итог\n"
     assert window.review_summary_view.mode == "edit"
 

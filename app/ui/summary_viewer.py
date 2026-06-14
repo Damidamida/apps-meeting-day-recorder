@@ -25,10 +25,17 @@ class SummaryMaterialView(QWidget):
     EXPANDED_CONTENT_MIN_HEIGHT = 560
     EXPANDED_CONTENT_MAX_HEIGHT = 720
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        parent: QWidget | None = None,
+        *,
+        show_height_toggle: bool = True,
+    ) -> None:
         super().__init__(parent)
         self.mode = "preview"
         self.height_mode = "base"
+        self.show_height_toggle = show_height_toggle
         self.markdown = ""
 
         layout = QVBoxLayout()
@@ -158,6 +165,7 @@ class SummaryMaterialView(QWidget):
         self.edit_button.setVisible(not editing)
         self.save_button.setVisible(editing)
         self.cancel_button.setVisible(editing)
+        self.height_toggle_button.setVisible(self.show_height_toggle)
         for widget in self.extra_action_widgets:
             widget.setVisible(not editing)
 
