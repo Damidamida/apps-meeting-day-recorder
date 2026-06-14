@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -45,6 +46,7 @@ class SummaryMaterialView(QWidget):
         self.header_frame = QFrame()
         self.header_frame.setObjectName("summaryMaterialHeader")
         self.header_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.header_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         header = QHBoxLayout()
         header.setContentsMargins(14, 10, 14, 10)
         header.setSpacing(8)
@@ -170,6 +172,13 @@ class SummaryMaterialView(QWidget):
             widget.setVisible(not editing)
 
     def _sync_height_mode(self) -> None:
+        if not self.show_height_toggle:
+            self.setProperty("height_mode", "natural")
+            for widget in (self.preview, self.editor):
+                widget.setMinimumHeight(0)
+                widget.setMaximumHeight(16777215)
+                widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            return
         expanded = self.height_mode == "expanded"
         minimum = (
             self.EXPANDED_CONTENT_MIN_HEIGHT if expanded else self.BASE_CONTENT_MIN_HEIGHT

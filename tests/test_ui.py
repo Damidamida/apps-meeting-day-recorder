@@ -218,6 +218,44 @@ def test_summary_material_view_height_toggle_controls_preview_and_editor_constra
     app.processEvents()
 
 
+def test_summary_material_view_without_height_toggle_keeps_review_layout_compact() -> None:
+    app = QApplication.instance() or QApplication([])
+    view = SummaryMaterialView("Итог дня", show_height_toggle=False)
+    view.set_meta("2026-06-14 · день активен")
+    view.set_markdown(
+        "# Итоги дня\n\n"
+        "## Главное за день\n\nИтоги дня пока не заполнены.\n\n"
+        "## По встречам\n\n- Встреч пока нет.\n"
+    )
+    view.resize(900, 700)
+    view.show()
+    app.processEvents()
+
+    header_rect = view.header_frame.geometry()
+    preview_rect = view.preview.geometry()
+
+    assert view.height_toggle_button.isHidden()
+    assert view.preview.maximumHeight() >= 100000
+    assert view.editor.maximumHeight() >= 100000
+    assert header_rect.height() <= 90
+    assert preview_rect.top() <= header_rect.bottom() + 16
+    assert preview_rect.height() > 500
+
+    view.enter_edit_mode()
+    app.processEvents()
+
+    editor_rect = view.editor.geometry()
+    assert view.save_button.isVisible()
+    assert view.cancel_button.isVisible()
+    assert view.editor.maximumHeight() >= 100000
+    assert view.header_frame.geometry().height() <= 90
+    assert editor_rect.top() <= view.header_frame.geometry().bottom() + 16
+    assert editor_rect.height() > 500
+
+    view.close()
+    app.processEvents()
+
+
 def _wait_for_qt(app: QApplication, condition, timeout_seconds: float = 2.0) -> bool:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -2381,13 +2419,19 @@ def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
     window = MainWindow(storage, recorder)
 
     window.open_review()
-    window.load_selected_meeting(meeting_folder)
+    window.resize(1400, 900)
+    window.show()
+    app.processEvents()
+    window.select_review_meeting(meeting_folder)
+    app.processEvents()
 
     assert window.review_summary_view.title_label.text() == "Итог встречи"
     assert "15:30" in window.review_summary_view.meta_label.text()
     assert "План релиза" in window.review_summary_view.meta_label.text()
     assert "2 мин." in window.review_summary_view.meta_label.text()
     assert window.review_summary_view.height_toggle_button.isHidden()
+    assert window.review_summary_view.preview.maximumHeight() >= 100000
+    assert window.review_summary_view.header_frame.geometry().height() <= 90
     assert not any(
         button.text() in {"Развернуть", "Свернуть"}
         for button in window.review_summary_view.findChildren(QPushButton)
@@ -2396,10 +2440,19 @@ def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
 
     window.review_day_summary_selected = True
     window.load_day_summary_review()
+    app.processEvents()
 
     assert window.review_summary_view.title_label.text() == "Итог дня"
     assert day_folder.name in window.review_summary_view.meta_label.text()
     assert window.review_summary_view.height_toggle_button.isHidden()
+    assert window.review_summary_view.preview.maximumHeight() >= 100000
+    assert window.review_summary_view.header_frame.geometry().height() <= 90
+
+    window.review_summary_view.enter_edit_mode()
+    app.processEvents()
+
+    assert window.review_summary_view.editor.maximumHeight() >= 100000
+    assert window.review_summary_view.header_frame.geometry().height() <= 90
 
     window.close()
     app.processEvents()
