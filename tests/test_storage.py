@@ -1085,6 +1085,28 @@ def test_list_today_meeting_folders_without_day_returns_empty_list(tmp_path) -> 
     assert storage.list_today_meeting_folders(datetime(2026, 6, 1, 12, 0)) == []
 
 
+def test_list_past_workday_folders_excludes_today_and_sorts_newest_first(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    today = datetime(2026, 6, 14, 12, 0)
+    old_day = storage.create_day_folder(date(2026, 6, 10))
+    recent_day = storage.create_day_folder(date(2026, 6, 13))
+    today_day = storage.create_day_folder(date(2026, 6, 14))
+    storage._write_json(old_day / "day_metadata.json", {"date": "2026-06-10", "status": "ended"})
+    storage._write_json(recent_day / "day_metadata.json", {"date": "2026-06-13", "status": "ended"})
+    storage._write_json(today_day / "day_metadata.json", {"date": "2026-06-14", "status": "active"})
+
+    assert storage.list_past_workday_folders(today) == [recent_day, old_day]
+
+
+def test_list_past_workday_folders_skips_non_workday_folders(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    (tmp_path / "notes").mkdir()
+    day_folder = storage.create_day_folder(date(2026, 6, 12))
+    storage._write_json(day_folder / "day_metadata.json", {"date": "2026-06-12", "status": "ended"})
+
+    assert storage.list_past_workday_folders(datetime(2026, 6, 14, 12, 0)) == [day_folder]
+
+
 def test_read_and_save_meeting_summary_draft(tmp_path) -> None:
     storage = StorageService(tmp_path)
     meeting_folder = tmp_path / "meeting"
@@ -1096,6 +1118,18 @@ def test_read_and_save_meeting_summary_draft(tmp_path) -> None:
     assert "Черновик итогов встречи" in placeholder
     assert saved_path == meeting_folder / "summary_draft.md"
     assert storage.read_meeting_summary_draft(meeting_folder) == "# Обновленные итоги\n"
+
+
+def test_save_meeting_summary_final_writes_final_without_touching_draft(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    meeting_folder = storage.create_meeting_folder("Архив", datetime(2026, 6, 12, 9, 0))
+    storage.save_meeting_summary_draft(meeting_folder, "# Черновик\n")
+
+    final_path = storage.save_meeting_summary_final(meeting_folder, "# Финал\n")
+
+    assert final_path == meeting_folder / "summary_final.md"
+    assert (meeting_folder / "summary_draft.md").read_text(encoding="utf-8") == "# Черновик\n"
+    assert final_path.read_text(encoding="utf-8") == "# Финал\n"
 
 
 def test_read_and_save_day_summary_and_tasks_drafts(tmp_path) -> None:
