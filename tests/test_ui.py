@@ -3116,7 +3116,7 @@ def test_archive_search_results_are_compact_and_keep_action_near_text(tmp_path: 
     assert result_cards
     assert snippet_labels
     assert all(label.maximumHeight() <= 48 for label in snippet_labels)
-    assert all(len(label.text()) <= 120 for label in snippet_labels)
+    assert all(len(label.text()) <= 96 for label in snippet_labels)
     assert all(button.maximumWidth() <= 96 for button in open_buttons)
 
     window.close()
