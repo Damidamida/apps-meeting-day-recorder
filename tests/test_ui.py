@@ -2310,6 +2310,30 @@ def test_review_legacy_final_save_method_writes_single_summary_file(tmp_path: Pa
     app.processEvents()
 
 
+def test_review_legacy_final_save_method_uses_live_editor_buffer(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    storage.create_day_folder()
+    meeting_folder = storage.create_meeting_folder(
+        "Ревью",
+        metadata={"status": "ended", "summary_status": "draft_created"},
+    )
+    window = MainWindow(storage, recorder)
+
+    window.open_review()
+    window.review_summary_view.set_markdown("# Старый итог\n")
+    window.review_summary_view.enter_edit_mode()
+    window.review_summary_view.editor.setPlainText("# Несохраненный итог\n")
+    window.save_final_files()
+
+    assert (meeting_folder / "summary.md").read_text(encoding="utf-8") == "# Несохраненный итог\n"
+    assert not (meeting_folder / "summary_final.md").exists()
+
+    window.close()
+    app.processEvents()
+
+
 def test_review_meeting_card_click_selects_whole_card(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

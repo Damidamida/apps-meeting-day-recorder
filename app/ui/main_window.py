@@ -6405,19 +6405,20 @@ class MainWindow(QMainWindow):
         self.review_status_label.setText("Итог встречи сохранен локально.")
 
     def save_final_files(self) -> None:
+        content = self.review_summary_view.editor.toPlainText()
         selected_meeting = self._selected_meeting_folder()
         day_folder = self.storage.get_today_day_folder()
         if self.review_day_summary_selected:
             if day_folder is None:
                 self.review_status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
                 return
-            self.storage.save_day_summary(day_folder, self.review_summary_view.markdown)
+            self.storage.save_day_summary(day_folder, content)
             self.review_status_label.setText("Итог дня сохранен локально.")
             return
         if selected_meeting is None:
             self.review_status_label.setText("Выберите встречу для сохранения итогов.")
             return
-        self.storage.save_meeting_summary(selected_meeting, self.review_summary_view.markdown)
+        self.storage.save_meeting_summary(selected_meeting, content)
         self.review_status_label.setText("Итог встречи сохранен локально.")
 
     def save_final_summaries(self) -> None:
