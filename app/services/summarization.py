@@ -19,6 +19,7 @@ TRANSCRIPT_SUSPECT_ERROR = (
 SUMMARY_API_KEY_ENV_DEFAULT = "AITUNNEL_KEY"
 OPENAI_KEY_MISSING_ERROR = "API key для генерации итогов не найден."
 OPENAI_FAILED_ERROR = "Не удалось подготовить черновик итогов через внешний AI endpoint."
+SUMMARY_SMOKE_TEXT = "Проверочный текст настройки BK Scribe: встреча создана только для проверки подключения."
 
 SUMMARY_TEMPLATE = """# Итоги встречи
 
@@ -363,12 +364,55 @@ class OpenAISummarizer:
         return OpenAI(**kwargs)
 
 
+class SummarySmokeResult:
+    def __init__(self, ok: bool, message: str) -> None:
+        self.ok = ok
+        self.message = message
+
+
 def create_summarizer(config: dict[str, Any]) -> Summarizer:
     if not config.get("enabled", False):
         return NoopSummarizer()
     if config.get("provider") != SUMMARY_PROVIDER:
         return NoopSummarizer()
     return OpenAISummarizer(config)
+
+
+def smoke_test_summary_connection(
+    config: dict[str, Any],
+    client_factory: Callable[..., Any] | None = None,
+) -> SummarySmokeResult:
+    api_key = load_api_key(
+        str(config.get("api_key_env") or SUMMARY_API_KEY_ENV_DEFAULT),
+        config.get("env_file") or "",
+    )
+    if not api_key:
+        return SummarySmokeResult(False, "Сначала проверьте ключ AI Tunnel.")
+    try:
+        summarizer = OpenAISummarizer(
+            {**config, "enabled": True, "retry_attempts": 0},
+            client_factory=client_factory,
+        )
+        client_kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": int(config.get("timeout_seconds") or 120),
+        }
+        base_url = str(config.get("base_url") or "").strip()
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = summarizer.client_factory(**client_kwargs)
+        response = summarizer._create_response(
+            client,
+            (
+                "Ответь одним словом «Готово», если подключение работает.\n\n"
+                f"{SUMMARY_SMOKE_TEXT}"
+            ),
+            "Ты проверяешь подключение BK Scribe. Ответь кратко на русском языке.",
+        )
+        extract_response_text(response)
+    except Exception:
+        return SummarySmokeResult(False, "Сервис временно недоступен.")
+    return SummarySmokeResult(True, "AI-итоги готовы.")
 
 
 def build_summary_system_prompt(config: dict[str, Any], kind: str) -> str:

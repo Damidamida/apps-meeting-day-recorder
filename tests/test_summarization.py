@@ -9,6 +9,7 @@ from app.services.summarization import (
     build_summary_system_prompt,
     load_api_key,
     read_transcript_text,
+    smoke_test_summary_connection,
     split_text,
     transcript_readiness,
 )
@@ -500,3 +501,28 @@ def test_transcript_readiness_reports_missing_placeholder_empty_and_ready(tmp_pa
 
 def test_split_text_handles_long_line() -> None:
     assert split_text("abcdef", 2) == ["ab", "cd", "ef"]
+
+
+def test_smoke_test_summary_connection_uses_short_synthetic_text(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AITUNNEL_KEY", "test-secret")
+    forbidden_files = [tmp_path / "transcript.md", tmp_path / "summary.md"]
+    calls = []
+
+    def create_response(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text="Готово.", usage={})
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create_response))
+
+    result = smoke_test_summary_connection(
+        _summary_config(),
+        client_factory=lambda **kwargs: client,
+    )
+
+    assert result.ok is True
+    assert result.message == "AI-итоги готовы."
+    assert len(calls) == 1
+    request_text = str(calls[0]["input"])
+    assert "Проверочный текст настройки BK Scribe" in request_text
+    assert "transcript" not in request_text.lower()
+    assert all(not path.exists() for path in forbidden_files)
