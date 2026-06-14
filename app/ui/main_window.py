@@ -2,6 +2,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
+import tempfile
 
 import yaml
 
@@ -1444,20 +1445,17 @@ class MainWindow(QMainWindow):
     def toggle_theme_from_sidebar(self) -> None:
         previous_theme = self._configured_theme()
         next_theme = "dark" if previous_theme == "light" else "light"
-        ui_config = self.config.setdefault("ui", {})
-        ui_config["theme"] = next_theme
         try:
-            self._write_local_config(self.config)
-        except OSError as error:
-            ui_config["theme"] = previous_theme
+            config_to_save = self._config_with_sidebar_theme(next_theme)
+            self._write_local_config(config_to_save)
+        except (OSError, ValueError) as error:
             if hasattr(self, "theme_toggle_button"):
                 self.theme_toggle_button.set_theme(previous_theme)
             if hasattr(self, "status_label"):
-                self.status_label.setText(
-                    f"Тема не изменена: не удалось записать config.yaml. {error}"
-                )
+                self.status_label.setText(f"Тема не изменена: {error}")
             return
 
+        self.config.setdefault("ui", {})["theme"] = next_theme
         if hasattr(self, "settings_theme_select"):
             self._set_combo_value(self.settings_theme_select, next_theme)
         self._apply_theme_settings(update_theme_toggle=False)
@@ -5466,14 +5464,59 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _write_local_config(config_to_save: dict[str, object]) -> None:
-        Path("config.yaml").write_text(
-            yaml.safe_dump(
-                config_to_save,
-                allow_unicode=True,
-                sort_keys=False,
-            ),
-            encoding="utf-8",
+        config_path = Path("config.yaml")
+        payload = yaml.safe_dump(
+            config_to_save,
+            allow_unicode=True,
+            sort_keys=False,
         )
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=config_path.parent,
+                prefix=f".{config_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temp_file:
+                temp_file.write(payload)
+                temp_path = Path(temp_file.name)
+            temp_path.replace(config_path)
+        except OSError:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+            raise
+
+    def _config_with_sidebar_theme(self, theme: str) -> dict[str, object]:
+        if self.config.get("_warnings"):
+            raise ValueError(
+                "сначала исправьте config.yaml или пересохраните настройки."
+            )
+        config_path = Path("config.yaml")
+        if config_path.exists():
+            try:
+                loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError as error:
+                raise ValueError(
+                    "config.yaml содержит ошибку YAML. Исправьте файл или пересохраните настройки."
+                ) from error
+            if not isinstance(loaded, dict):
+                raise ValueError(
+                    "config.yaml должен быть YAML-словарем. Исправьте файл или пересохраните настройки."
+                )
+            config_to_save = deepcopy(loaded)
+        else:
+            config_to_save = {}
+        config_to_save.pop("_warnings", None)
+        ui_config = config_to_save.get("ui")
+        if not isinstance(ui_config, dict):
+            ui_config = {}
+        else:
+            ui_config = dict(ui_config)
+        ui_config["theme"] = theme
+        config_to_save["ui"] = ui_config
+        return config_to_save
 
     def save_settings(self) -> None:
         storage_root = self._validate_storage_root_from_settings()
