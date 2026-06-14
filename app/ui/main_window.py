@@ -2628,6 +2628,13 @@ class MainWindow(QMainWindow):
                 "обработки и наличие файла записи."
             )
             return
+        if not self._confirm_risky_action(
+            "Повторить обработку встречи?",
+            "Если вы вручную меняли Итог встречи, новая обработка заменит ваши изменения.",
+            "Повторить обработку",
+        ):
+            self.status_label.setText("Повторная обработка встречи отменена.")
+            return
         self.storage.mark_meeting_for_reprocessing(meeting_folder)
         self._enqueue_meeting_processing(meeting_folder)
         self.status_label.setText(f"Повторная обработка встречи добавлена в очередь: {meeting_folder.name}")
@@ -4650,18 +4657,25 @@ class MainWindow(QMainWindow):
         self.refresh_archive()
 
     def request_archive_day_summary_update(self, day_folder: Path) -> None:
+        if not self._confirm_risky_action(
+            "Обновить итоги дня?",
+            "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+            "Обновить итоги дня",
+        ):
+            self.status_label.setText("Обновление итогов дня отменено.")
+            return
         self._request_day_summary_update(day_folder, force=True)
         self.refresh_archive()
 
     def finish_archive_workday(self, day_folder: Path) -> None:
         try:
             self.storage.end_workday_folder(day_folder)
-        except ValueError as error:
-            self.status_label.setText(str(error))
+            recovered = self.storage.recover_interrupted_meeting_processing(day_folder)
+            pending = self.storage.list_pending_meeting_processing_folders(day_folder)
+        except (ValueError, MetadataReadError) as error:
+            self.status_label.setText(f"Прошлый рабочий день требует внимания: {error}")
             self.refresh_archive()
             return
-        recovered = self.storage.recover_interrupted_meeting_processing(day_folder)
-        pending = self.storage.list_pending_meeting_processing_folders(day_folder)
         for meeting_folder in pending:
             self._enqueue_meeting_processing(meeting_folder)
         if pending or recovered:
@@ -4847,6 +4861,29 @@ class MainWindow(QMainWindow):
             )
             == QMessageBox.StandardButton.Yes
         )
+
+    def _confirm_risky_action(
+        self,
+        title: str,
+        text: str,
+        confirm_button_text: str,
+    ) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(title)
+        dialog.setText(text)
+        confirm_button = dialog.addButton(
+            confirm_button_text,
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = dialog.addButton(
+            "Отмена",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+        return dialog.clickedButton() == confirm_button
 
     def _readiness_component_state(self, component: str) -> str | None:
         if self.last_readiness_statuses is None or self.readiness_check_stale:
@@ -5348,6 +5385,13 @@ class MainWindow(QMainWindow):
         day_folder = self.storage.get_today_day_folder()
         if day_folder is None:
             self.status_label.setText("Папка сегодняшнего рабочего дня пока не создана.")
+            return
+        if not self._confirm_risky_action(
+            "Обновить итоги дня?",
+            "Если вы вручную меняли Итог дня, обновление заменит ваши изменения.",
+            "Обновить итоги дня",
+        ):
+            self.status_label.setText("Обновление итогов дня отменено.")
             return
         self._request_day_summary_update(day_folder, force=True)
 
@@ -6305,8 +6349,11 @@ class MainWindow(QMainWindow):
         self.refresh_buttons()
         if self.pages.currentIndex() == 1:
             self.refresh_review()
-        elif self.pages.currentIndex() == 2:
+        elif self.pages.currentIndex() == 2 and not self._archive_editor_is_editing():
             self.refresh_archive()
+
+    def _archive_editor_is_editing(self) -> bool:
+        return self.archive_editor.parent() is not None and not self.archive_editor.isReadOnly()
 
     @staticmethod
     def _set_widget_object_name(widget: QWidget, object_name: str) -> None:
