@@ -3563,12 +3563,38 @@ def test_archive_lifecycle_refresh_keeps_active_editor(tmp_path: Path) -> None:
 
     window.open_archive()
     window.edit_archive_meeting_summary(meeting)
+    window.archive_summary_view.enter_edit_mode()
     window.archive_editor.setPlainText("# Несохраненные правки\n")
     window.refresh_archive = lambda: calls.append("archive")
     window._refresh_after_lifecycle_change()
 
     assert calls == []
     assert window.archive_editor.toPlainText() == "# Несохраненные правки\n"
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_lifecycle_refresh_runs_in_summary_preview_mode(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+    meeting = storage.create_meeting_folder(
+        "Архивная встреча",
+        datetime.fromisoformat(f"{day_folder.name}T09:30:00"),
+    )
+    storage.save_meeting_summary(meeting, "# Итоги\n")
+    window = MainWindow(storage, recorder)
+    calls: list[str] = []
+
+    window.open_archive()
+    window.open_archive_meeting_summary(meeting)
+    window.refresh_archive = lambda: calls.append("archive")
+    window._refresh_after_lifecycle_change()
+
+    assert calls == ["archive"]
 
     window.close()
     app.processEvents()

@@ -6686,6 +6686,7 @@ class MainWindow(QMainWindow):
             getattr(self, "archive_summary_view", None) is not None
             and self.archive_open_material is not None
             and self.archive_open_material[0] in {"day_summary", "meeting_summary"}
+            and self.archive_summary_view.mode == "edit"
         )
 
     @staticmethod
