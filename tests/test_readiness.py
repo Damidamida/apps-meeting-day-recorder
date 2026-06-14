@@ -104,6 +104,23 @@ def test_readiness_reports_local_commands_found_and_missing(tmp_path: Path) -> N
     assert _details(transcription)["Проблема"]["value"] == "Команда whisper не найдена"
 
 
+def test_readiness_reports_bundled_ffmpeg_before_path(tmp_path: Path) -> None:
+    ffmpeg = tmp_path / "resources" / "ffmpeg" / "ffmpeg.exe"
+    ffmpeg.parent.mkdir(parents=True)
+    ffmpeg.write_text("fake exe", encoding="utf-8")
+
+    with (
+        patch("app.services.readiness.bundled_tool_path", return_value=ffmpeg),
+        patch("app.services.readiness.shutil.which", return_value="C:/Windows/System32/ffmpeg.exe"),
+    ):
+        statuses = _by_component(check_readiness(_config(), NoopRecorder(), tmp_path))
+
+    ffmpeg_status = statuses["Извлечение аудио (FFmpeg)"]
+    assert ffmpeg_status["state"] == "ok"
+    assert ffmpeg_status["message"] == "FFmpeg найден в сборке BK Scribe."
+    assert _details(ffmpeg_status)["Состояние"]["value"] == "Bundled FFmpeg"
+
+
 def test_readiness_reports_faster_whisper_backend_available(tmp_path: Path) -> None:
     with (
         patch("app.services.readiness.shutil.which", return_value="/bin/ffmpeg"),
