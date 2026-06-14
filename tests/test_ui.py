@@ -556,6 +556,20 @@ def test_main_window_toggles_floating_control_and_closes_it_with_app(tmp_path: P
     assert not window.floating_control.isVisible()
 
 
+def test_main_window_uses_bk_scribe_branding(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+
+    window = MainWindow(storage, recorder)
+
+    assert window.windowTitle() == "BK Scribe"
+    assert any(label.text() == "BK Scribe" for label in window.findChildren(QLabel))
+
+    window.close()
+    app.processEvents()
+
+
 def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()

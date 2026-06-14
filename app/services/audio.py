@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.runtime import bundled_tool_path
+
 
 class AudioExtractor:
     def __init__(self, ffmpeg_command: str = "ffmpeg") -> None:
@@ -16,7 +18,8 @@ class AudioExtractor:
                 "audio_status": "missing_recording",
                 "audio_error": "Файл записи не найден.",
             }
-        if shutil.which(self.ffmpeg_command) is None:
+        ffmpeg_command = self._resolved_ffmpeg_command()
+        if ffmpeg_command is None:
             return {
                 "audio_status": "ffmpeg_unavailable",
                 "audio_error": "FFmpeg недоступен. Установите FFmpeg и добавьте его в PATH.",
@@ -26,7 +29,7 @@ class AudioExtractor:
         try:
             subprocess.run(
                 [
-                    self.ffmpeg_command,
+                    ffmpeg_command,
                     "-y",
                     "-i",
                     str(recording_path),
@@ -53,6 +56,14 @@ class AudioExtractor:
             "audio_path": str(audio_path),
             "audio_extracted_at": datetime.now().isoformat(),
         }
+
+    def _resolved_ffmpeg_command(self) -> str | None:
+        bundled_ffmpeg = bundled_tool_path("ffmpeg.exe")
+        if bundled_ffmpeg.is_file():
+            return str(bundled_ffmpeg)
+        if shutil.which(self.ffmpeg_command) is None:
+            return None
+        return self.ffmpeg_command
 
 
 def skipped_audio_metadata() -> dict[str, str]:

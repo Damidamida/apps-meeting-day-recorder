@@ -41,6 +41,26 @@ def test_extract_audio_runs_ffmpeg_and_returns_metadata(tmp_path: Path) -> None:
     )
 
 
+def test_audio_extractor_prefers_bundled_ffmpeg(tmp_path: Path) -> None:
+    recording_path = tmp_path / "recording.mkv"
+    recording_path.touch()
+    meeting_folder = tmp_path / "meeting"
+    meeting_folder.mkdir()
+    bundled_ffmpeg = tmp_path / "resources" / "ffmpeg" / "ffmpeg.exe"
+    bundled_ffmpeg.parent.mkdir(parents=True)
+    bundled_ffmpeg.write_text("fake exe", encoding="utf-8")
+
+    with (
+        patch("app.services.audio.bundled_tool_path", return_value=bundled_ffmpeg),
+        patch("app.services.audio.shutil.which", return_value=None),
+        patch("app.services.audio.subprocess.run") as run,
+    ):
+        metadata = AudioExtractor().extract_audio(recording_path, meeting_folder)
+
+    assert metadata["audio_status"] == "extracted"
+    assert run.call_args.args[0][0] == str(bundled_ffmpeg)
+
+
 def test_extract_audio_reports_missing_recording(tmp_path: Path) -> None:
     metadata = AudioExtractor().extract_audio(tmp_path / "missing.mkv", tmp_path)
 

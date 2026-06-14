@@ -24,7 +24,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QPainter, QPen
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.branding import APP_DISPLAY_NAME, APP_ICON_RESOURCE
 from app.config import DEFAULT_CONFIG, load_config
 from app.services.archive import (
     ArchiveDateFilter,
@@ -1322,7 +1323,9 @@ class MainWindow(QMainWindow):
         recorder: Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Meeting Day Recorder")
+        self.setWindowTitle(APP_DISPLAY_NAME)
+        if APP_ICON_RESOURCE.is_file():
+            self.setWindowIcon(QIcon(str(APP_ICON_RESOURCE)))
         self.resize(1100, 720)
         self.config = load_config()
         self.current_theme = self._configured_theme()
@@ -1577,7 +1580,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 18, 0, 18)
         layout.setSpacing(0)
 
-        brand = QLabel("●  Meeting Day\n    Recorder")
+        brand = QLabel(APP_DISPLAY_NAME)
         brand.setObjectName("brand")
         layout.addWidget(brand)
 

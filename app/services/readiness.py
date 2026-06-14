@@ -3,6 +3,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.runtime import bundled_tool_path
 from app.services.recorder import Recorder, RecorderError
 from app.services.summarization import load_api_key
 
@@ -79,6 +80,18 @@ def _obs_status(recorder: Recorder) -> dict[str, Any]:
 
 
 def _ffmpeg_status() -> dict[str, Any]:
+    bundled_ffmpeg = bundled_tool_path("ffmpeg.exe")
+    if bundled_ffmpeg.is_file():
+        return _status(
+            "Извлечение аудио (FFmpeg)",
+            "ok",
+            "FFmpeg найден в сборке BK Scribe.",
+            [
+                _detail("Состояние", "Bundled FFmpeg"),
+                _detail("Что делает", "Извлекает audio.wav"),
+                _detail("Итог", "Можно запускать транскрипцию"),
+            ],
+        )
     if shutil.which("ffmpeg"):
         return _status(
             "Извлечение аудио (FFmpeg)",
