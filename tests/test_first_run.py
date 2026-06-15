@@ -14,6 +14,8 @@ from app.services.first_run import (
     check_transcription_settings,
     default_data_root,
     default_setup_config,
+    mark_step_error,
+    mark_step_ok,
     normalize_setup_config,
     reset_from_step,
     should_show_wizard_on_startup,
@@ -27,6 +29,9 @@ def test_setup_config_defaults_to_incomplete(tmp_path: Path) -> None:
 
     assert config["setup"]["completed"] is False
     assert config["setup"]["version"] == CURRENT_SETUP_VERSION
+    assert config["setup"]["values"]["obs_websocket_host"] == "localhost"
+    assert config["setup"]["values"]["obs_websocket_port"] == 4455
+    assert config["setup"]["values"]["obs_password_configured"] is False
     assert tuple(config["setup"]["steps"]) == FIRST_RUN_STEPS
     assert FIRST_RUN_STEPS == (
         "data_root",
@@ -61,6 +66,29 @@ def test_reset_from_aitunnel_resets_dependent_steps() -> None:
     assert reset.steps["transcription"].status == "locked"
     assert reset.steps["summary"].status == "locked"
     assert reset.steps["finish"].status == "locked"
+
+
+def test_mark_step_error_keeps_current_error_and_locks_following_steps() -> None:
+    state = normalize_setup_config(default_setup_config())
+    state = mark_step_ok(state, "data_root", "Готово")
+
+    state = mark_step_error(
+        state,
+        "obs",
+        "OBS не подключен. Запустите OBS и проверьте WebSocket.",
+    )
+
+    assert state.current_step == "obs"
+    assert state.steps["data_root"].status == "ok"
+    assert state.steps["obs"].status == "error"
+    assert state.steps["obs"].message == (
+        "OBS не подключен. Запустите OBS и проверьте WebSocket."
+    )
+    assert state.steps["audio"].status == "locked"
+    assert state.steps["aitunnel"].status == "locked"
+    assert state.steps["transcription"].status == "locked"
+    assert state.steps["summary"].status == "locked"
+    assert state.steps["finish"].status == "locked"
 
 
 def test_setup_completed_requires_all_required_steps_ok() -> None:
@@ -197,3 +225,17 @@ def test_aitunnel_dependent_checks_require_verified_key() -> None:
     assert transcription.message == "Сначала проверьте ключ AI Tunnel."
     assert summary.ok is False
     assert summary.message == "Сначала проверьте ключ AI Tunnel."
+
+
+def test_aitunnel_transcription_rejects_custom_model_id() -> None:
+    state = normalize_setup_config(default_setup_config())
+    state = mark_step_ok(state, "data_root", "Готово")
+    state = mark_step_ok(state, "obs", "Готово")
+    state = mark_step_ok(state, "audio", "Готово")
+    state = mark_step_ok(state, "aitunnel", "Готово")
+    config = {"transcription": {"backend": "aitunnel", "model": "123123"}}
+
+    result = check_transcription_settings(config, state)
+
+    assert result.ok is False
+    assert result.message == "Выберите модель транскрипции из списка."

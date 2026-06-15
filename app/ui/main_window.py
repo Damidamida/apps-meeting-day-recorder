@@ -24,7 +24,15 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QIcon, QPainter, QPen
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QDesktopServices,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -89,6 +97,21 @@ FASTER_WHISPER_MODEL_OPTIONS = [
     ("large-v3", "large-v3"),
     ("turbo", "turbo"),
 ]
+_WINDOWS_UI_FONTS_LOADED = False
+
+
+def _ensure_windows_ui_fonts_loaded() -> None:
+    global _WINDOWS_UI_FONTS_LOADED
+    if _WINDOWS_UI_FONTS_LOADED:
+        return
+    for font_path in (
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/segmdl2.ttf"),
+    ):
+        if font_path.is_file():
+            QFontDatabase.addApplicationFont(str(font_path))
+    _WINDOWS_UI_FONTS_LOADED = True
 AITUNNEL_MODEL_OPTIONS = [
     ("Whisper Large V3 Turbo — 0.13 ₽/мин", "whisper-large-v3-turbo"),
     ("Whisper Large V3 — 0.36 ₽/мин", "whisper-large-v3"),
@@ -1501,12 +1524,12 @@ class MainWindow(QMainWindow):
 
     def _setup_block_message(self) -> str:
         return (
-            "Завершите настройку BK Scribe. Рабочий день, Ревью, Архив "
-            "и плавающая кнопка станут доступны после мастера."
+            "Завершите настройку BK Scribe. Разделы бокового меню и плавающая кнопка "
+            "станут доступны после мастера."
         )
 
     def _open_main_section(self, index: int) -> None:
-        if index in {0, 1, 2} and self._setup_blocks_work():
+        if self._setup_blocks_work():
             if hasattr(self, "status_label"):
                 self.status_label.setText(self._setup_block_message())
             self.pages.setCurrentIndex(self.first_run_page_index)
@@ -1663,8 +1686,8 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, 0, "Рабочий день", lambda: self._open_main_section(0))
         self._add_nav_button(layout, 1, "Ревью", self.open_review)
         self._add_nav_button(layout, 2, "Архив", self.open_archive)
-        self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
-        self._add_nav_button(layout, 4, "Справка", lambda: self.pages.setCurrentIndex(4))
+        self._add_nav_button(layout, 3, "Настройки", lambda: self._open_main_section(3))
+        self._add_nav_button(layout, 4, "Справка", lambda: self._open_main_section(4))
         layout.addStretch()
         self.theme_toggle_button = ThemeToggleButton()
         self.theme_toggle_button.set_theme(self.current_theme)
@@ -1695,10 +1718,7 @@ class MainWindow(QMainWindow):
     def _refresh_navigation_state(self, current_index: int) -> None:
         for index, button in self.nav_buttons.items():
             button.setChecked(index == current_index)
-            if index in {0, 1, 2}:
-                button.setEnabled(not self._setup_blocks_work())
-            else:
-                button.setEnabled(True)
+            button.setEnabled(not self._setup_blocks_work())
         if hasattr(self, "toggle_floating_button"):
             self.toggle_floating_button.setEnabled(not self._setup_blocks_work())
 
@@ -1822,6 +1842,10 @@ class MainWindow(QMainWindow):
                 "accent_hover": "#ea580c",
                 "danger": "#ef4444",
                 "danger_hover": "#dc2626",
+                "ok_bg": "#064e3b",
+                "ok_text": "#bbf7d0",
+                "error_bg": "#7f1d1d",
+                "error_text": "#fecaca",
                 "disabled_bg": "#1f2937",
                 "disabled_text": "#6b7280",
                 "input_bg": "#0b1220",
@@ -1844,6 +1868,10 @@ class MainWindow(QMainWindow):
             "accent_hover": "#f45a00",
             "danger": "#d9280f",
             "danger_hover": "#b91c1c",
+            "ok_bg": "#d7f8df",
+            "ok_text": "#007a32",
+            "error_bg": "#ffe4e0",
+            "error_text": "#b91c1c",
             "disabled_bg": "#f3e8dc",
             "disabled_text": "#b49a89",
             "input_bg": "#fffdf8",
@@ -1853,6 +1881,7 @@ class MainWindow(QMainWindow):
         }
 
     def _apply_app_style(self) -> None:
+        _ensure_windows_ui_fonts_loaded()
         self.current_theme = self._configured_theme()
         colors = self._theme_palette()
         self.setStyleSheet(
@@ -2074,6 +2103,159 @@ class MainWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 8px;
             }
+            QFrame#firstRunWizardShell {
+                background: transparent;
+            }
+            QFrame#firstRunWizardIntro {
+                background: transparent;
+            }
+            QLabel#firstRunIntroNote,
+            QLabel#firstRunPanelHint,
+            QLabel#firstRunStepNote {
+                color: %(hint)s;
+            }
+            QLabel#firstRunProgressPill,
+            QLabel#firstRunStatusBadge {
+                background: %(inline_status_bg)s;
+                color: %(text)s;
+                border-radius: 12px;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 800;
+            }
+            QFrame#firstRunWizardBody {
+                background: transparent;
+            }
+            QFrame#firstRunStepList,
+            QFrame#firstRunStepContent {
+                background: %(surface)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
+            QFrame#firstRunStepCard {
+                background: transparent;
+                color: %(text)s;
+                border: 1px solid transparent;
+                border-radius: 8px;
+            }
+            QFrame#firstRunStepCard:hover {
+                background: %(surface_alt)s;
+                border-color: %(border)s;
+            }
+            QFrame#firstRunStepCard[active="true"] {
+                background: %(surface_alt)s;
+                border-color: %(accent)s;
+            }
+            QFrame#firstRunStepCard[state="done"] {
+                background: transparent;
+                border-color: %(border_soft)s;
+            }
+            QFrame#firstRunStepCard[state="locked"] {
+                background: %(surface)s;
+                border-color: %(border_soft)s;
+            }
+            QFrame#firstRunStepCard[state="locked"]:hover {
+                background: %(surface)s;
+                border-color: %(border_soft)s;
+            }
+            QLabel#firstRunStepNumber {
+                background: %(disabled_bg)s;
+                color: %(muted)s;
+                border: 1px solid %(border)s;
+                border-radius: 14px;
+                font-weight: 900;
+                qproperty-alignment: AlignCenter;
+            }
+            QLabel#firstRunStepNumber[active="true"] {
+                background: %(accent)s;
+                color: #111827;
+                border-color: %(accent)s;
+            }
+            QLabel#firstRunStepNumber[state="done"] {
+                background: %(ok_bg)s;
+                color: %(ok_text)s;
+                border-color: %(ok_bg)s;
+            }
+            QLabel#firstRunStepNumber[state="locked"] {
+                background: %(surface)s;
+                color: %(disabled_text)s;
+                border-color: %(border_soft)s;
+            }
+            QLabel#firstRunStepTitle,
+            QLabel#firstRunPanelTitle {
+                color: %(text)s;
+                font-weight: 900;
+            }
+            QLabel#firstRunStepTitle[state="locked"],
+            QLabel#firstRunStepNote[state="locked"] {
+                color: %(hint)s;
+            }
+            QLabel#firstRunStepTitle:disabled,
+            QLabel#firstRunStepNote:disabled {
+                color: %(hint)s;
+            }
+            QLabel#firstRunPanelTitle {
+                font-size: 16px;
+            }
+            QLabel#firstRunStepStatusIcon {
+                background: %(inline_status_bg)s;
+                color: %(muted)s;
+                border-radius: 10px;
+                padding: 2px 5px;
+                min-width: 18px;
+                max-width: 18px;
+                min-height: 18px;
+                max-height: 18px;
+                font-size: 11px;
+                font-weight: 800;
+            }
+            QLabel#firstRunStepStatusIcon[state="done"],
+            QLabel#firstRunStatusBadge[state="done"] {
+                background: %(ok_bg)s;
+                color: %(ok_text)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="active"],
+            QLabel#firstRunStepStatusIcon[state="todo"],
+            QLabel#firstRunStatusBadge[state="active"],
+            QLabel#firstRunStatusBadge[state="todo"] {
+                background: %(error_bg)s;
+                color: %(error_text)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="locked"],
+            QLabel#firstRunStatusBadge[state="locked"] {
+                background: %(surface_alt)s;
+                color: %(muted)s;
+            }
+            QLabel#firstRunStepStatusIcon:disabled {
+                background: %(surface_alt)s;
+                color: %(muted)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="error"],
+            QLabel#firstRunStatusBadge[state="error"] {
+                background: %(error_bg)s;
+                color: %(error_text)s;
+            }
+            QFrame#firstRunPanelHeader {
+                background: transparent;
+                border-bottom: 1px solid %(border)s;
+            }
+            QFrame#firstRunPanelBody {
+                background: transparent;
+            }
+            QFrame#firstRunFormCard {
+                background: %(surface_alt)s;
+                border: 1px solid %(border)s;
+                border-radius: 8px;
+            }
+            QPushButton#secondaryButton {
+                background: transparent;
+                color: %(text)s;
+                border: 1px solid %(border)s;
+            }
+            QPushButton#secondaryButton:hover {
+                color: %(accent)s;
+                border-color: %(accent)s;
+            }
             QPushButton {
                 background: %(surface)s;
                 color: %(text)s;
@@ -2101,6 +2283,11 @@ class MainWindow(QMainWindow):
                 background: %(accent_hover)s;
                 color: #ffffff;
                 border-color: %(accent_hover)s;
+            }
+            QPushButton#primaryButton:disabled {
+                background: %(disabled_bg)s;
+                color: %(disabled_text)s;
+                border-color: %(border)s;
             }
             QPushButton#dangerButton {
                 background: %(danger)s;
