@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -42,6 +43,17 @@ from app.services.recorder import RecorderError
 logger = logging.getLogger(__name__)
 
 
+STEP_DESCRIPTIONS = {
+    "data_root": "Где будут храниться рабочие дни",
+    "obs": "Подключение к записи разговоров",
+    "audio": "Проверка извлечения аудио",
+    "aitunnel": "Один ключ для транскрипции и итогов",
+    "transcription": "Проверка распознавания речи",
+    "summary": "Проверка итогов встреч и дня",
+    "finish": "Финальная проверка перед стартом",
+}
+
+
 class FirstRunWizard(QWidget):
     config_changed = Signal(dict)
     completed = Signal(dict)
@@ -61,6 +73,7 @@ class FirstRunWizard(QWidget):
         self.recorder = recorder
         self.step_buttons: dict[str, QPushButton] = {}
         self.step_status_labels: dict[str, QLabel] = {}
+        self.step_indexes: dict[str, int] = {}
         self.step_message_label: dict[str, QLabel] = {}
         self.step_pages: dict[str, QWidget] = {}
         self.current_step = self.state.current_step
@@ -71,7 +84,13 @@ class FirstRunWizard(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(12)
+        root.setSpacing(0)
+
+        shell = QFrame()
+        shell.setObjectName("firstRunWizardShell")
+        shell_layout = QVBoxLayout()
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(12)
 
         title = QLabel("Настройка BK Scribe")
         title.setObjectName("pageTitle")
@@ -81,62 +100,125 @@ class FirstRunWizard(QWidget):
         )
         subtitle.setObjectName("sectionHint")
         subtitle.setWordWrap(True)
-        root.addWidget(title)
-        root.addWidget(subtitle)
+
+        heading_layout = QVBoxLayout()
+        heading_layout.setContentsMargins(0, 0, 0, 0)
+        heading_layout.setSpacing(8)
+        heading_layout.addWidget(title)
+        heading_layout.addWidget(subtitle)
+        shell_layout.addLayout(heading_layout)
 
         self.progress_label = QLabel("")
-        self.progress_label.setObjectName("inlineStatus")
-        root.addWidget(self.progress_label)
+        self.progress_label.setObjectName("firstRunProgressPill")
 
+        intro = QFrame()
+        intro.setObjectName("firstRunWizardIntro")
+        intro_layout = QHBoxLayout()
+        intro_layout.setContentsMargins(0, 0, 0, 0)
+        intro_layout.setSpacing(14)
+        intro_note = QLabel(
+            "Рабочий день откроется после успешной проверки OBS, аудио, AI Tunnel, транскрипции и AI-итогов."
+        )
+        intro_note.setObjectName("firstRunIntroNote")
+        intro_note.setWordWrap(True)
+        intro_layout.addWidget(intro_note, 1)
+        intro_layout.addWidget(self.progress_label, 0, Qt.AlignmentFlag.AlignTop)
+        intro.setLayout(intro_layout)
+        shell_layout.addWidget(intro)
+
+        body_frame = QFrame()
+        body_frame.setObjectName("firstRunWizardBody")
+        body_frame.setMinimumHeight(560)
         body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(14)
         self.step_list_panel = QFrame()
         self.step_list_panel.setObjectName("firstRunStepList")
-        self.step_list_panel.setMinimumHeight(520)
+        self.step_list_panel.setMinimumWidth(320)
+        self.step_list_panel.setMaximumWidth(340)
+        self.step_list_panel.setMinimumHeight(560)
         step_list_layout = QVBoxLayout()
-        step_list_layout.setContentsMargins(10, 10, 10, 10)
+        step_list_layout.setContentsMargins(8, 8, 8, 8)
         step_list_layout.setSpacing(6)
         for index, step_key in enumerate(FIRST_RUN_STEPS, start=1):
             button = QPushButton()
             button.setObjectName("firstRunStepButton")
             button.setCheckable(True)
+            button.setMinimumWidth(286)
+            button.setMinimumHeight(88)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.clicked.connect(
                 lambda checked, key=step_key: self.open_step(key)
             )
-            status = QLabel("")
+            status = QLabel("", button)
             status.setObjectName("firstRunStepStatus")
-            row = QVBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            title_row = QLabel(f"{index}. {self.state.steps[step_key].title}")
-            title_row.setObjectName("firstRunStepTitle")
-            button_layout = QVBoxLayout()
-            button_layout.setContentsMargins(8, 6, 8, 6)
-            button_layout.addWidget(title_row)
-            button_layout.addWidget(status)
-            button.setLayout(button_layout)
-            row.addWidget(button)
+            status.setWordWrap(True)
+            status.hide()
+            button.setText(
+                self._step_button_text(index, step_key, self.state.steps[step_key].status)
+            )
             step_list_layout.addWidget(button)
             self.step_buttons[step_key] = button
             self.step_status_labels[step_key] = status
+            self.step_indexes[step_key] = index
         step_list_layout.addStretch(1)
         self.step_list_panel.setLayout(step_list_layout)
         body.addWidget(self.step_list_panel, 0)
 
         self.step_content_panel = QFrame()
         self.step_content_panel.setObjectName("firstRunStepContent")
-        self.step_content_panel.setMinimumHeight(520)
+        self.step_content_panel.setMinimumWidth(620)
+        self.step_content_panel.setMinimumHeight(560)
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(14, 14, 14, 14)
-        content_layout.setSpacing(12)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        panel_header = QFrame()
+        panel_header.setObjectName("firstRunPanelHeader")
+        panel_header_layout = QHBoxLayout()
+        panel_header_layout.setContentsMargins(16, 14, 16, 14)
+        panel_header_layout.setSpacing(16)
+        header_text_layout = QVBoxLayout()
+        header_text_layout.setContentsMargins(0, 0, 0, 0)
+        header_text_layout.setSpacing(5)
+        self.current_step_title = QLabel("")
+        self.current_step_title.setObjectName("firstRunPanelTitle")
+        self.current_step_title.setWordWrap(True)
+        self.current_step_hint = QLabel("")
+        self.current_step_hint.setObjectName("firstRunPanelHint")
+        self.current_step_hint.setWordWrap(True)
+        header_text_layout.addWidget(self.current_step_title)
+        header_text_layout.addWidget(self.current_step_hint)
+        self.current_step_status = QLabel("")
+        self.current_step_status.setObjectName("firstRunStatusBadge")
+        panel_header_layout.addLayout(header_text_layout, 1)
+        panel_header_layout.addWidget(self.current_step_status, 0, Qt.AlignmentFlag.AlignTop)
+        panel_header.setLayout(panel_header_layout)
+        content_layout.addWidget(panel_header)
+
+        panel_body = QFrame()
+        panel_body.setObjectName("firstRunPanelBody")
+        panel_body_layout = QVBoxLayout()
+        panel_body_layout.setContentsMargins(16, 16, 16, 16)
+        panel_body_layout.setSpacing(12)
         self.step_stack = QStackedWidget()
         for step_key in FIRST_RUN_STEPS:
             page = self._create_step_page(step_key)
             self.step_pages[step_key] = page
             self.step_stack.addWidget(page)
-        content_layout.addWidget(self.step_stack, 1)
+        panel_body_layout.addWidget(self.step_stack, 1)
+        panel_body.setLayout(panel_body_layout)
+        content_layout.addWidget(panel_body, 1)
 
+        self.footer_panel = QFrame()
+        self.footer_panel.setObjectName("firstRunPanelFooter")
         footer = QHBoxLayout()
+        footer.setContentsMargins(16, 14, 16, 14)
+        footer.setSpacing(12)
+        footer_hint = QLabel("Рабочий день откроется после успешной настройки всех обязательных пунктов.")
+        footer_hint.setObjectName("firstRunFooterHint")
+        footer_hint.setWordWrap(True)
         self.back_button = QPushButton("Назад")
+        self.back_button.setObjectName("secondaryButton")
         self.back_button.clicked.connect(self.go_back)
         self.next_button = QPushButton("Далее")
         self.next_button.setObjectName("primaryButton")
@@ -144,24 +226,31 @@ class FirstRunWizard(QWidget):
         self.finish_button = QPushButton("Начать работу")
         self.finish_button.setObjectName("primaryButton")
         self.finish_button.clicked.connect(self.finish_setup)
+        footer.addWidget(footer_hint, 1)
         footer.addWidget(self.back_button)
-        footer.addStretch(1)
         footer.addWidget(self.next_button)
         footer.addWidget(self.finish_button)
-        content_layout.addLayout(footer)
+        self.footer_panel.setLayout(footer)
+        content_layout.addWidget(self.footer_panel)
         self.step_content_panel.setLayout(content_layout)
         body.addWidget(self.step_content_panel, 1)
-        root.addLayout(body, 1)
+        body_frame.setLayout(body)
+        shell_layout.addWidget(body_frame, 1)
+        shell.setLayout(shell_layout)
+        root.addWidget(shell, 1)
         self.setLayout(root)
 
     def _create_step_page(self, step_key: str) -> QWidget:
         page = QWidget()
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+        form_card = QFrame()
+        form_card.setObjectName("firstRunFormCard")
+        form_card.setMaximumWidth(920)
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
-        title = QLabel(self.state.steps[step_key].title)
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
         self.step_message_label[step_key] = QLabel("")
         self.step_message_label[step_key].setWordWrap(True)
         self.step_message_label[step_key].setObjectName("inlineStatus")
@@ -172,28 +261,52 @@ class FirstRunWizard(QWidget):
                 str(self.state.values.get("data_root") or "")
             )
             browse = QPushButton("Выбрать папку")
+            browse.setMaximumWidth(180)
             browse.clicked.connect(self.choose_data_root)
             check = QPushButton("Проверить папку данных")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(230)
             check.clicked.connect(self.check_data_root)
-            layout.addWidget(QLabel("Папка для рабочих дней, записей, transcript и итогов."))
+            description = QLabel("Папка для рабочих дней, записей, transcript и итогов.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.setContentsMargins(0, 0, 0, 0)
+            actions.setSpacing(10)
+            actions.addWidget(browse)
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
             layout.addWidget(self.data_root_input)
-            layout.addWidget(browse)
-            layout.addWidget(check)
+            layout.addLayout(actions)
         elif step_key == "obs":
             check = QPushButton("Проверить OBS")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(180)
             check.clicked.connect(self.check_obs)
-            layout.addWidget(
-                QLabel("Запустите OBS и включите WebSocket. Автонастройка OBS не выполняется.")
+            description = QLabel(
+                "Запустите OBS и включите WebSocket. Автонастройка OBS не выполняется."
             )
-            layout.addWidget(check)
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
+            layout.addLayout(actions)
         elif step_key == "audio":
             check = QPushButton("Проверить аудио")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(190)
             check.clicked.connect(self.check_audio)
-            layout.addWidget(QLabel("Проверяем доступность FFmpeg для извлечения audio.wav."))
-            layout.addWidget(check)
+            description = QLabel("Проверяем доступность FFmpeg для извлечения audio.wav.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
+            layout.addLayout(actions)
         elif step_key == "aitunnel":
             self.aitunnel_key_input = QLineEdit()
             self.aitunnel_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -204,11 +317,18 @@ class FirstRunWizard(QWidget):
             self.aitunnel_link.setOpenExternalLinks(True)
             check = QPushButton("Проверить ключ AI Tunnel")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(230)
             check.clicked.connect(self.check_aitunnel)
-            layout.addWidget(QLabel("Один ключ используется для AI Tunnel STT и AI-итогов."))
+            description = QLabel("Один ключ используется для AI Tunnel STT и AI-итогов.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
             layout.addWidget(self.aitunnel_key_input)
             layout.addWidget(self.aitunnel_link)
-            layout.addWidget(check)
+            layout.addLayout(actions)
         elif step_key == "transcription":
             self.transcription_backend_select = QComboBox()
             for value, label in TRANSCRIPTION_OPTIONS:
@@ -218,11 +338,18 @@ class FirstRunWizard(QWidget):
                 self.transcription_model_select.addItem(label, value)
             check = QPushButton("Проверить транскрипцию")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(230)
             check.clicked.connect(self.check_transcription)
-            layout.addWidget(QLabel("Проверка не создает встречу и не загружает реальное аудио."))
+            description = QLabel("Проверка не создает встречу и не загружает реальное аудио.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
             layout.addWidget(self.transcription_backend_select)
             layout.addWidget(self.transcription_model_select)
-            layout.addWidget(check)
+            layout.addLayout(actions)
         elif step_key == "summary":
             self.summary_page = page
             self.summary_model_select = QComboBox()
@@ -230,14 +357,27 @@ class FirstRunWizard(QWidget):
                 self.summary_model_select.addItem(label, value)
             check = QPushButton("Проверить AI-итоги")
             check.setObjectName("primaryButton")
+            check.setMaximumWidth(190)
             check.clicked.connect(self.check_summary)
-            layout.addWidget(QLabel("AI-итоги используют ключ из шага AI Tunnel."))
+            description = QLabel("AI-итоги используют ключ из шага AI Tunnel.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            actions = QHBoxLayout()
+            actions.addWidget(check)
+            actions.addStretch(1)
+            layout.addWidget(description)
             layout.addWidget(self.summary_model_select)
-            layout.addWidget(check)
+            layout.addLayout(actions)
         else:
-            layout.addWidget(QLabel("Все обязательные проверки должны быть готовы."))
+            description = QLabel("Все обязательные проверки должны быть готовы.")
+            description.setObjectName("sectionHint")
+            description.setWordWrap(True)
+            layout.addWidget(description)
         layout.addStretch(1)
-        page.setLayout(layout)
+        form_card.setLayout(layout)
+        page_layout.addWidget(form_card, 0, Qt.AlignmentFlag.AlignTop)
+        page_layout.addStretch(1)
+        page.setLayout(page_layout)
         if step_key != "summary" and not hasattr(self, "summary_page"):
             self.summary_page = QWidget()
         return page
@@ -360,12 +500,19 @@ class FirstRunWizard(QWidget):
     def refresh(self) -> None:
         ready = sum(1 for step in FIRST_RUN_STEPS if self.state.steps[step].status == "ok")
         self.progress_label.setText(f"{ready} из {len(FIRST_RUN_STEPS)} готово")
+        current = self.state.steps[self.current_step]
+        self.current_step_title.setText(current.title)
+        self.current_step_hint.setText(STEP_DESCRIPTIONS[self.current_step])
+        self.current_step_status.setText(self._status_label(current.status))
         for step_key in FIRST_RUN_STEPS:
             step = self.state.steps[step_key]
             enabled = step.status == "ok" or self._can_open(step_key)
             self.step_buttons[step_key].setEnabled(enabled)
             self.step_buttons[step_key].setChecked(step_key == self.current_step)
             self.step_status_labels[step_key].setText(self._status_label(step.status))
+            self.step_buttons[step_key].setText(
+                self._step_button_text(self.step_indexes[step_key], step_key, step.status)
+            )
             self.step_message_label[step_key].setText(step.message or "Требует проверки.")
         self.step_stack.setCurrentWidget(self.step_pages[self.current_step])
         index = FIRST_RUN_STEPS.index(self.current_step)
@@ -390,3 +537,11 @@ class FirstRunWizard(QWidget):
         if status == "error":
             return "Ошибка проверки"
         return "Требует действия"
+
+    def _step_button_text(self, index: int, step_key: str, status: str) -> str:
+        step = self.state.steps[step_key]
+        return (
+            f"{index}. {step.title}\n"
+            f"{STEP_DESCRIPTIONS[step_key]}\n"
+            f"{self._status_label(status)}"
+        )

@@ -5,7 +5,8 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
+from PySide6.QtGui import QFontDatabase
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QWidget
 
 from app.services.first_run import default_setup_config, normalize_setup_config
 from app.services.recorder import NoopRecorder
@@ -61,6 +62,34 @@ def test_first_run_wizard_is_full_screen_page_with_locked_future_steps() -> None
     wizard.close()
 
 
+def test_first_run_wizard_layout_matches_mockup_structure() -> None:
+    app = _app()
+    wizard = FirstRunWizard({}, normalize_setup_config(default_setup_config()))
+    wizard.resize(1280, 760)
+    wizard.show()
+    app.processEvents()
+
+    assert wizard.findChild(QWidget, "firstRunWizardShell") is not None
+    assert wizard.findChild(QWidget, "firstRunWizardIntro") is not None
+    assert wizard.findChild(QWidget, "firstRunWizardBody") is not None
+    assert wizard.findChild(QWidget, "firstRunProgressPill") is wizard.progress_label
+    assert wizard.findChild(QWidget, "firstRunPanelHeader") is not None
+    assert wizard.findChild(QWidget, "firstRunPanelBody") is not None
+    assert wizard.findChild(QWidget, "firstRunPanelFooter") is not None
+
+    assert wizard.step_list_panel.minimumWidth() >= 300
+    assert wizard.step_list_panel.maximumWidth() <= 360
+    assert wizard.step_content_panel.minimumWidth() >= 620
+    assert wizard.step_list_panel.minimumHeight() == wizard.step_content_panel.minimumHeight()
+    assert wizard.step_buttons["data_root"].minimumWidth() >= 280
+    assert wizard.step_buttons["data_root"].minimumHeight() >= 68
+    assert wizard.step_status_labels["obs"].wordWrap()
+    assert wizard.step_message_label["data_root"].wordWrap()
+    assert wizard.footer_panel.parentWidget() is wizard.step_content_panel
+
+    wizard.close()
+
+
 def test_setup_gate_opens_wizard_and_blocks_workday_sections(
     tmp_path: Path,
     monkeypatch,
@@ -77,8 +106,13 @@ def test_setup_gate_opens_wizard_and_blocks_workday_sections(
     assert not window.nav_buttons[0].isEnabled()
     assert not window.nav_buttons[1].isEnabled()
     assert not window.nav_buttons[2].isEnabled()
-    assert window.nav_buttons[3].isEnabled()
-    assert window.nav_buttons[4].isEnabled()
+    assert not window.nav_buttons[3].isEnabled()
+    assert not window.nav_buttons[4].isEnabled()
+
+    window.nav_buttons[3].click()
+    assert window.pages.currentWidget() is window.first_run_wizard
+    window.nav_buttons[4].click()
+    assert window.pages.currentWidget() is window.first_run_wizard
 
     window.open_review()
     assert window.pages.currentWidget() is window.first_run_wizard
@@ -87,6 +121,25 @@ def test_setup_gate_opens_wizard_and_blocks_workday_sections(
     window.start_workday()
     assert "Завершите настройку BK Scribe" in window.status_label.text()
     assert storage.workday_active is False
+
+    window.close()
+
+
+def test_main_window_loads_windows_ui_font_for_cyrillic_offscreen_rendering(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    if not Path("C:/Windows/Fonts/segoeui.ttf").exists():
+        return
+    app = _app()
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path / "config.yaml", setup_completed=False)
+    storage = StorageService(tmp_path / "data", NoopRecorder())
+
+    window = MainWindow(storage, NoopRecorder())
+    app.processEvents()
+
+    assert "Segoe UI" in QFontDatabase.families()
 
     window.close()
 
