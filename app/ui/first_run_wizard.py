@@ -25,20 +25,21 @@ from app.services.first_run import (
     DEFAULT_ENV_FILE,
     FIRST_RUN_STEPS,
     SUMMARY_MODEL_OPTIONS,
-    TRANSCRIPTION_MODEL_OPTIONS,
     TRANSCRIPTION_OPTIONS,
     FirstRunState,
     check_aitunnel_key,
     check_summary_settings,
     check_transcription_settings,
+    default_transcription_model_for_backend,
     mark_setup_completed,
     mark_step_error,
     mark_step_ok,
+    mark_step_checking,
     normalize_setup_config,
     setup_config_from_state,
     setup_completed,
+    transcription_model_options_for_backend,
     validate_data_root,
-    mark_step_checking,
 )
 
 logger = logging.getLogger(__name__)
@@ -500,8 +501,15 @@ class FirstRunWizard(QWidget):
             for value, label in TRANSCRIPTION_OPTIONS:
                 self.transcription_backend_select.addItem(label, value)
             self.transcription_model_select = QComboBox()
-            for value, label in TRANSCRIPTION_MODEL_OPTIONS:
-                self.transcription_model_select.addItem(label, value)
+            self.transcription_model_select.setEditable(False)
+            self._set_combo_value(
+                self.transcription_backend_select,
+                self._stored_transcription_backend(),
+            )
+            self.transcription_backend_select.currentIndexChanged.connect(
+                self._refresh_transcription_model_options
+            )
+            self._refresh_transcription_model_options()
             check = QPushButton("Проверить транскрипцию")
             check.setObjectName("primaryButton")
             check.setMaximumWidth(230)
@@ -704,9 +712,58 @@ class FirstRunWizard(QWidget):
         self.aitunnel_check_thread = None
         self.aitunnel_check_worker = None
 
+    def _set_combo_value(self, combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index < 0:
+            index = combo.findText(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _stored_transcription_backend(self) -> str:
+        transcription = self.config.get("transcription")
+        if isinstance(transcription, dict):
+            backend = str(transcription.get("backend") or "").strip()
+            if backend:
+                return backend
+        return str(self.state.values.get("transcription_backend") or "aitunnel")
+
+    def _stored_transcription_model(self, backend: str) -> str:
+        transcription = self.config.get("transcription")
+        if isinstance(transcription, dict):
+            backends = transcription.get("backends")
+            backend_config = backends.get(backend) if isinstance(backends, dict) else None
+            if isinstance(backend_config, dict):
+                model = str(backend_config.get("model") or "").strip()
+                if model:
+                    return model
+            model = str(transcription.get("model") or "").strip()
+            if model:
+                return model
+        return str(self.state.values.get("transcription_model") or "")
+
+    def _refresh_transcription_model_options(self) -> None:
+        backend = self.transcription_backend_select.currentData() or "aitunnel"
+        current_model = self.transcription_model_select.currentData()
+        options = transcription_model_options_for_backend(str(backend))
+        values = {value for value, _label in options}
+        selected_model = (
+            current_model
+            if isinstance(current_model, str) and current_model in values
+            else self._stored_transcription_model(str(backend))
+        )
+        if selected_model not in values:
+            selected_model = default_transcription_model_for_backend(str(backend))
+
+        self.transcription_model_select.clear()
+        for value, label in options:
+            self.transcription_model_select.addItem(label, value)
+        self._set_combo_value(self.transcription_model_select, str(selected_model))
+
     def check_transcription(self) -> None:
         backend = self.transcription_backend_select.currentData() or "aitunnel"
-        model = self.transcription_model_select.currentData() or "whisper-large-v3-turbo"
+        model = self.transcription_model_select.currentData()
+        if not isinstance(model, str) or not model:
+            model = default_transcription_model_for_backend(str(backend))
         self.config.setdefault("transcription", {})["backend"] = backend
         self.config["transcription"]["model"] = model
         self.config["transcription"].setdefault("backends", {}).setdefault(backend, {})[

@@ -218,6 +218,39 @@ def test_first_run_wizard_layout_matches_mockup_structure() -> None:
     wizard.close()
 
 
+def test_first_run_wizard_transcription_models_are_fixed_per_backend() -> None:
+    app = _app()
+    wizard = FirstRunWizard({}, _state_on_aitunnel_step())
+    wizard.show()
+    app.processEvents()
+
+    assert not wizard.transcription_model_select.isEditable()
+    assert wizard.transcription_model_select.lineEdit() is None
+    assert [
+        wizard.transcription_model_select.itemData(index)
+        for index in range(wizard.transcription_model_select.count())
+    ] == ["whisper-large-v3-turbo", "whisper-large-v3", "whisper-1"]
+    assert wizard.transcription_model_select.currentData() == "whisper-large-v3-turbo"
+
+    wizard.transcription_backend_select.setCurrentText("faster-whisper")
+    app.processEvents()
+    assert not wizard.transcription_model_select.isEditable()
+    assert [
+        wizard.transcription_model_select.itemData(index)
+        for index in range(wizard.transcription_model_select.count())
+    ] == ["tiny", "base", "small", "medium", "large-v3", "turbo"]
+
+    wizard.transcription_backend_select.setCurrentText("Whisper CLI")
+    app.processEvents()
+    assert not wizard.transcription_model_select.isEditable()
+    assert [
+        wizard.transcription_model_select.itemData(index)
+        for index in range(wizard.transcription_model_select.count())
+    ] == ["tiny", "base", "small", "medium", "large", "turbo"]
+
+    wizard.close()
+
+
 def test_first_run_wizard_stepper_cards_have_active_done_and_locked_states() -> None:
     app = _app()
     state = normalize_setup_config(default_setup_config())

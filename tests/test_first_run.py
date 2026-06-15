@@ -222,3 +222,17 @@ def test_aitunnel_dependent_checks_require_verified_key() -> None:
     assert transcription.message == "Сначала проверьте ключ AI Tunnel."
     assert summary.ok is False
     assert summary.message == "Сначала проверьте ключ AI Tunnel."
+
+
+def test_aitunnel_transcription_rejects_custom_model_id() -> None:
+    state = normalize_setup_config(default_setup_config())
+    state = mark_step_ok(state, "data_root", "Готово")
+    state = mark_step_ok(state, "obs", "Готово")
+    state = mark_step_ok(state, "audio", "Готово")
+    state = mark_step_ok(state, "aitunnel", "Готово")
+    config = {"transcription": {"backend": "aitunnel", "model": "123123"}}
+
+    result = check_transcription_settings(config, state)
+
+    assert result.ok is False
+    assert result.message == "Выберите модель транскрипции из списка."
