@@ -82,10 +82,74 @@ def test_first_run_wizard_layout_matches_mockup_structure() -> None:
     assert wizard.step_content_panel.minimumWidth() >= 620
     assert wizard.step_list_panel.minimumHeight() == wizard.step_content_panel.minimumHeight()
     assert wizard.step_buttons["data_root"].minimumWidth() >= 280
-    assert wizard.step_buttons["data_root"].minimumHeight() >= 68
-    assert wizard.step_status_labels["obs"].wordWrap()
+    assert 72 <= wizard.step_buttons["data_root"].minimumHeight() <= 80
+    assert wizard.step_buttons["data_root"].maximumHeight() <= 84
+    assert wizard.step_buttons["data_root"].objectName() == "firstRunStepCard"
+    assert wizard.step_buttons["data_root"].property("active") is True
+    assert wizard.step_buttons["data_root"].property("state") == "active"
+    assert wizard.step_buttons["obs"].property("state") == "locked"
+    assert wizard.step_buttons["obs"].property("locked") is True
+    assert wizard.step_status_labels["obs"].objectName() == "firstRunStepStatusIcon"
+    assert wizard.step_status_labels["obs"].isVisibleTo(wizard.step_list_panel)
+    assert wizard.step_status_labels["obs"].wordWrap() is False
+    assert wizard.step_status_labels["obs"].text() == "\ue72e"
+    assert wizard.step_status_labels["obs"].font().family() == "Segoe MDL2 Assets"
+    assert wizard.findChild(QWidget, "firstRunStepNumber") is not None
+    assert wizard.findChild(QWidget, "firstRunStepTitle") is not None
+    assert wizard.findChild(QWidget, "firstRunStepNote") is not None
     assert wizard.step_message_label["data_root"].wordWrap()
     assert wizard.footer_panel.parentWidget() is wizard.step_content_panel
+
+    wizard.close()
+
+
+def test_first_run_wizard_stepper_cards_have_active_done_and_locked_states() -> None:
+    app = _app()
+    state = normalize_setup_config(default_setup_config())
+    state = state.__class__(
+        completed=state.completed,
+        version=state.version,
+        completed_at=state.completed_at,
+        current_step="obs",
+        steps={
+            **state.steps,
+            "data_root": state.steps["data_root"].__class__(
+                key="data_root",
+                title=state.steps["data_root"].title,
+                status="ok",
+                message="Готово",
+            ),
+            "obs": state.steps["obs"].__class__(
+                key="obs",
+                title=state.steps["obs"].title,
+                status="todo",
+                message="Требует проверки.",
+            ),
+            "audio": state.steps["audio"].__class__(
+                key="audio",
+                title=state.steps["audio"].title,
+                status="locked",
+                message="Заблокировано",
+            ),
+        },
+        values=dict(state.values),
+    )
+    wizard = FirstRunWizard({}, state)
+    wizard.show()
+    app.processEvents()
+
+    assert wizard.step_buttons["data_root"].property("state") == "done"
+    assert wizard.step_status_labels["data_root"].text() == "\ue73e"
+    assert wizard.step_buttons["obs"].property("active") is True
+    assert wizard.step_buttons["obs"].property("state") == "active"
+    assert wizard.step_status_labels["obs"].text() == ""
+    assert wizard.step_buttons["audio"].property("state") == "locked"
+    assert not wizard.step_buttons["audio"].isEnabled()
+    assert wizard.step_status_labels["audio"].text() == "\ue72e"
+    assert wizard.step_status_labels["audio"].font().family() == "Segoe MDL2 Assets"
+
+    wizard.step_buttons["audio"].click()
+    assert wizard.current_step == "obs"
 
     wizard.close()
 

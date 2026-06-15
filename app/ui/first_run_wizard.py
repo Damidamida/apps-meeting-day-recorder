@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -41,6 +42,7 @@ from app.services.recorder import RecorderError
 
 
 logger = logging.getLogger(__name__)
+_STEP_ICON_FONT_LOADED = False
 
 
 STEP_DESCRIPTIONS = {
@@ -52,6 +54,152 @@ STEP_DESCRIPTIONS = {
     "summary": "Проверка итогов встреч и дня",
     "finish": "Финальная проверка перед стартом",
 }
+
+
+def _repolish(widget: QWidget) -> None:
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
+
+
+def _ensure_step_icon_font_loaded() -> None:
+    global _STEP_ICON_FONT_LOADED
+    if _STEP_ICON_FONT_LOADED:
+        return
+    icon_font = Path("C:/Windows/Fonts/segmdl2.ttf")
+    if icon_font.is_file():
+        QFontDatabase.addApplicationFont(str(icon_font))
+    _STEP_ICON_FONT_LOADED = True
+
+
+class StepCard(QFrame):
+    clicked = Signal(str)
+
+    def __init__(self, step_key: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        _ensure_step_icon_font_loaded()
+        self.step_key = step_key
+        self.setObjectName("firstRunStepCard")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumWidth(286)
+        self.setMinimumHeight(76)
+        self.setMaximumHeight(82)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(10)
+
+        self.number_label = QLabel("")
+        self.number_label.setObjectName("firstRunStepNumber")
+        self.number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.number_label.setFixedSize(28, 28)
+        layout.addWidget(self.number_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+        self.title_label = QLabel("")
+        self.title_label.setObjectName("firstRunStepTitle")
+        self.title_label.setWordWrap(True)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.note_label = QLabel("")
+        self.note_label.setObjectName("firstRunStepNote")
+        self.note_label.setWordWrap(True)
+        self.note_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.note_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        text_layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignTop)
+        text_layout.addWidget(self.note_label, 0, Qt.AlignmentFlag.AlignTop)
+        text_layout.addStretch(1)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("firstRunStepStatusIcon")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(False)
+        self.status_label.setMinimumHeight(20)
+        self.status_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        content_layout.addLayout(text_layout, 1)
+        content_layout.addWidget(self.status_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(content_layout, 1)
+        self.setLayout(layout)
+
+    def click(self) -> None:
+        if self.isEnabled():
+            self.clicked.emit(self.step_key)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
+            self.clicked.emit(self.step_key)
+        super().mouseReleaseEvent(event)
+
+    def set_card_state(
+        self,
+        *,
+        index: int,
+        title: str,
+        note: str,
+        status_text: str,
+        state: str,
+        active: bool,
+        enabled: bool,
+    ) -> None:
+        self.number_label.setText(str(index))
+        self.title_label.setText(title)
+        self.note_label.setText(note)
+        self.status_label.setText(status_text)
+        if state in {"locked", "done", "error"}:
+            self.status_label.setFont(QFont("Segoe MDL2 Assets", 10))
+        else:
+            self.status_label.setFont(QFont())
+        self.status_label.setVisible(bool(status_text))
+        self.status_label.setToolTip(self._status_tooltip(state, status_text))
+        locked = state == "locked"
+        for widget in (
+            self,
+            self.number_label,
+            self.title_label,
+            self.note_label,
+            self.status_label,
+        ):
+            widget.setProperty("state", state)
+            widget.setProperty("active", active)
+            widget.setProperty("locked", locked)
+        self.setEnabled(enabled)
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor
+            if enabled
+            else Qt.CursorShape.ForbiddenCursor
+        )
+        for widget in (
+            self,
+            self.number_label,
+            self.title_label,
+            self.note_label,
+            self.status_label,
+        ):
+            _repolish(widget)
+
+    @staticmethod
+    def _status_tooltip(state: str, status_text: str) -> str:
+        if state == "locked":
+            return "Заблокировано"
+        if state == "done":
+            return "Готово"
+        if state == "error":
+            return "Ошибка проверки"
+        return status_text
 
 
 class FirstRunWizard(QWidget):
@@ -71,7 +219,7 @@ class FirstRunWizard(QWidget):
             state if isinstance(state, FirstRunState) else normalize_setup_config(state)
         )
         self.recorder = recorder
-        self.step_buttons: dict[str, QPushButton] = {}
+        self.step_buttons: dict[str, StepCard] = {}
         self.step_status_labels: dict[str, QLabel] = {}
         self.step_indexes: dict[str, int] = {}
         self.step_message_label: dict[str, QLabel] = {}
@@ -141,25 +289,11 @@ class FirstRunWizard(QWidget):
         step_list_layout.setContentsMargins(8, 8, 8, 8)
         step_list_layout.setSpacing(6)
         for index, step_key in enumerate(FIRST_RUN_STEPS, start=1):
-            button = QPushButton()
-            button.setObjectName("firstRunStepButton")
-            button.setCheckable(True)
-            button.setMinimumWidth(286)
-            button.setMinimumHeight(88)
-            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            button.clicked.connect(
-                lambda checked, key=step_key: self.open_step(key)
-            )
-            status = QLabel("", button)
-            status.setObjectName("firstRunStepStatus")
-            status.setWordWrap(True)
-            status.hide()
-            button.setText(
-                self._step_button_text(index, step_key, self.state.steps[step_key].status)
-            )
-            step_list_layout.addWidget(button)
-            self.step_buttons[step_key] = button
-            self.step_status_labels[step_key] = status
+            card = StepCard(step_key)
+            card.clicked.connect(self.open_step)
+            step_list_layout.addWidget(card)
+            self.step_buttons[step_key] = card
+            self.step_status_labels[step_key] = card.status_label
             self.step_indexes[step_key] = index
         step_list_layout.addStretch(1)
         self.step_list_panel.setLayout(step_list_layout)
@@ -504,14 +638,23 @@ class FirstRunWizard(QWidget):
         self.current_step_title.setText(current.title)
         self.current_step_hint.setText(STEP_DESCRIPTIONS[self.current_step])
         self.current_step_status.setText(self._status_label(current.status))
+        self.current_step_status.setProperty(
+            "state", self._visual_state(self.current_step, current.status)
+        )
+        _repolish(self.current_step_status)
         for step_key in FIRST_RUN_STEPS:
             step = self.state.steps[step_key]
             enabled = step.status == "ok" or self._can_open(step_key)
-            self.step_buttons[step_key].setEnabled(enabled)
-            self.step_buttons[step_key].setChecked(step_key == self.current_step)
-            self.step_status_labels[step_key].setText(self._status_label(step.status))
-            self.step_buttons[step_key].setText(
-                self._step_button_text(self.step_indexes[step_key], step_key, step.status)
+            self.step_buttons[step_key].set_card_state(
+                index=self.step_indexes[step_key],
+                title=step.title,
+                note=STEP_DESCRIPTIONS[step_key],
+                status_text=self._step_card_status_text(
+                    self._visual_state(step_key, step.status), step.status
+                ),
+                state=self._visual_state(step_key, step.status),
+                active=step_key == self.current_step,
+                enabled=enabled,
             )
             self.step_message_label[step_key].setText(step.message or "Требует проверки.")
         self.step_stack.setCurrentWidget(self.step_pages[self.current_step])
@@ -538,10 +681,24 @@ class FirstRunWizard(QWidget):
             return "Ошибка проверки"
         return "Требует действия"
 
-    def _step_button_text(self, index: int, step_key: str, status: str) -> str:
-        step = self.state.steps[step_key]
-        return (
-            f"{index}. {step.title}\n"
-            f"{STEP_DESCRIPTIONS[step_key]}\n"
-            f"{self._status_label(status)}"
-        )
+    def _visual_state(self, step_key: str, status: str) -> str:
+        if step_key == self.current_step:
+            return "active"
+        if status == "ok":
+            return "done"
+        if status == "locked" or not self._can_open(step_key):
+            return "locked"
+        if status == "error":
+            return "error"
+        return "todo"
+
+    def _step_card_status_text(self, visual_state: str, status: str) -> str:
+        if visual_state == "locked":
+            return "\ue72e"
+        if visual_state == "done":
+            return "\ue73e"
+        if visual_state == "error":
+            return "\ue783"
+        if visual_state in {"active", "todo"}:
+            return ""
+        return self._status_label(status)

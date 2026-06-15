@@ -107,6 +107,7 @@ def _ensure_windows_ui_fonts_loaded() -> None:
     for font_path in (
         Path("C:/Windows/Fonts/segoeui.ttf"),
         Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/segmdl2.ttf"),
     ):
         if font_path.is_file():
             QFontDatabase.addApplicationFont(str(font_path))
@@ -1841,6 +1842,10 @@ class MainWindow(QMainWindow):
                 "accent_hover": "#ea580c",
                 "danger": "#ef4444",
                 "danger_hover": "#dc2626",
+                "ok_bg": "#064e3b",
+                "ok_text": "#bbf7d0",
+                "error_bg": "#7f1d1d",
+                "error_text": "#fecaca",
                 "disabled_bg": "#1f2937",
                 "disabled_text": "#6b7280",
                 "input_bg": "#0b1220",
@@ -1863,6 +1868,10 @@ class MainWindow(QMainWindow):
             "accent_hover": "#f45a00",
             "danger": "#d9280f",
             "danger_hover": "#b91c1c",
+            "ok_bg": "#d7f8df",
+            "ok_text": "#007a32",
+            "error_bg": "#ffe4e0",
+            "error_text": "#b91c1c",
             "disabled_bg": "#f3e8dc",
             "disabled_text": "#b49a89",
             "input_bg": "#fffdf8",
@@ -2124,26 +2133,31 @@ class MainWindow(QMainWindow):
                 border: 1px solid %(border)s;
                 border-radius: 8px;
             }
-            QPushButton#firstRunStepButton {
+            QFrame#firstRunStepCard {
                 background: transparent;
                 color: %(text)s;
                 border: 1px solid transparent;
                 border-radius: 8px;
-                padding: 0;
-                text-align: left;
             }
-            QPushButton#firstRunStepButton:hover {
+            QFrame#firstRunStepCard:hover {
                 background: %(surface_alt)s;
                 border-color: %(border)s;
             }
-            QPushButton#firstRunStepButton:checked {
+            QFrame#firstRunStepCard[active="true"] {
                 background: %(surface_alt)s;
                 border-color: %(accent)s;
             }
-            QPushButton#firstRunStepButton:disabled {
+            QFrame#firstRunStepCard[state="done"] {
                 background: transparent;
-                color: %(disabled_text)s;
-                border-color: transparent;
+                border-color: %(border_soft)s;
+            }
+            QFrame#firstRunStepCard[state="locked"] {
+                background: %(surface)s;
+                border-color: %(border_soft)s;
+            }
+            QFrame#firstRunStepCard[state="locked"]:hover {
+                background: %(surface)s;
+                border-color: %(border_soft)s;
             }
             QLabel#firstRunStepNumber {
                 background: %(disabled_bg)s;
@@ -2153,18 +2167,74 @@ class MainWindow(QMainWindow):
                 font-weight: 900;
                 qproperty-alignment: AlignCenter;
             }
+            QLabel#firstRunStepNumber[active="true"] {
+                background: %(accent)s;
+                color: #111827;
+                border-color: %(accent)s;
+            }
+            QLabel#firstRunStepNumber[state="done"] {
+                background: %(ok_bg)s;
+                color: %(ok_text)s;
+                border-color: %(ok_bg)s;
+            }
+            QLabel#firstRunStepNumber[state="locked"] {
+                background: %(surface)s;
+                color: %(disabled_text)s;
+                border-color: %(border_soft)s;
+            }
             QLabel#firstRunStepTitle,
             QLabel#firstRunPanelTitle {
                 color: %(text)s;
                 font-weight: 900;
             }
+            QLabel#firstRunStepTitle[state="locked"],
+            QLabel#firstRunStepNote[state="locked"] {
+                color: %(hint)s;
+            }
+            QLabel#firstRunStepTitle:disabled,
+            QLabel#firstRunStepNote:disabled {
+                color: %(hint)s;
+            }
             QLabel#firstRunPanelTitle {
                 font-size: 16px;
             }
-            QLabel#firstRunStepStatus {
+            QLabel#firstRunStepStatusIcon {
+                background: %(inline_status_bg)s;
                 color: %(muted)s;
-                font-size: 12px;
+                border-radius: 10px;
+                padding: 2px 5px;
+                min-width: 18px;
+                max-width: 18px;
+                min-height: 18px;
+                max-height: 18px;
+                font-size: 11px;
                 font-weight: 800;
+            }
+            QLabel#firstRunStepStatusIcon[state="done"],
+            QLabel#firstRunStatusBadge[state="done"] {
+                background: %(ok_bg)s;
+                color: %(ok_text)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="active"],
+            QLabel#firstRunStepStatusIcon[state="todo"],
+            QLabel#firstRunStatusBadge[state="active"],
+            QLabel#firstRunStatusBadge[state="todo"] {
+                background: %(error_bg)s;
+                color: %(error_text)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="locked"],
+            QLabel#firstRunStatusBadge[state="locked"] {
+                background: %(surface_alt)s;
+                color: %(muted)s;
+            }
+            QLabel#firstRunStepStatusIcon:disabled {
+                background: %(surface_alt)s;
+                color: %(muted)s;
+            }
+            QLabel#firstRunStepStatusIcon[state="error"],
+            QLabel#firstRunStatusBadge[state="error"] {
+                background: %(error_bg)s;
+                color: %(error_text)s;
             }
             QFrame#firstRunPanelHeader {
                 background: transparent;
@@ -2218,6 +2288,11 @@ class MainWindow(QMainWindow):
                 background: %(accent_hover)s;
                 color: #ffffff;
                 border-color: %(accent_hover)s;
+            }
+            QPushButton#primaryButton:disabled {
+                background: %(disabled_bg)s;
+                color: %(disabled_text)s;
+                border-color: %(border)s;
             }
             QPushButton#dangerButton {
                 background: %(danger)s;
