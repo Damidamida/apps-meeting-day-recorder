@@ -183,6 +183,15 @@ def _default_config() -> dict[str, Any]:
     }
 
 
+def reset_processing_config(config: dict[str, Any]) -> dict[str, Any]:
+    reset = deepcopy(config)
+    defaults = _default_config()
+    reset.pop("_warnings", None)
+    reset["transcription"] = deepcopy(defaults["transcription"])
+    reset["summary"] = deepcopy(defaults["summary"])
+    return reset
+
+
 def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     config = _default_config()
     if not path.exists():

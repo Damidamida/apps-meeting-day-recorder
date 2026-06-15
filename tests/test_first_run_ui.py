@@ -731,11 +731,9 @@ def test_setup_gate_opens_wizard_and_blocks_workday_sections(
     assert not window.nav_buttons[1].isEnabled()
     assert not window.nav_buttons[2].isEnabled()
     assert not window.nav_buttons[3].isEnabled()
-    assert not window.nav_buttons[4].isEnabled()
+    assert 4 not in window.nav_buttons
 
     window.nav_buttons[3].click()
-    assert window.pages.currentWidget() is window.first_run_wizard
-    window.nav_buttons[4].click()
     assert window.pages.currentWidget() is window.first_run_wizard
 
     window.open_review()
@@ -794,7 +792,8 @@ def test_setup_completed_allows_navigation_and_start_workday(
     app.processEvents()
 
     assert window.pages.currentIndex() == 0
-    assert all(window.nav_buttons[index].isEnabled() for index in (0, 1, 2, 3, 4))
+    assert all(window.nav_buttons[index].isEnabled() for index in (0, 1, 2, 3))
+    assert 4 not in window.nav_buttons
 
     window.start_workday()
 
