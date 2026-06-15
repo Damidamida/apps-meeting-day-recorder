@@ -83,6 +83,9 @@ def test_mark_step_error_keeps_current_error_and_locks_following_steps() -> None
     )
     assert state.steps["audio"].status == "locked"
     assert state.steps["aitunnel"].status == "locked"
+    assert state.steps["transcription"].status == "locked"
+    assert state.steps["summary"].status == "locked"
+    assert state.steps["finish"].status == "locked"
 
 
 def test_setup_completed_requires_all_required_steps_ok() -> None:

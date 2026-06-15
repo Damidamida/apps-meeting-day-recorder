@@ -62,6 +62,10 @@ STEP_DESCRIPTIONS = {
 }
 
 
+def _step_description(step_key: str) -> str:
+    return STEP_DESCRIPTIONS.get(step_key, "Описание шага не задано.")
+
+
 def _repolish(widget: QWidget) -> None:
     widget.style().unpolish(widget)
     widget.style().polish(widget)
@@ -793,7 +797,7 @@ class FirstRunWizard(QWidget):
         self.progress_label.setText(f"{ready} из {len(FIRST_RUN_STEPS)} готово")
         current = self.state.steps[self.current_step]
         self.current_step_title.setText(current.title)
-        self.current_step_hint.setText(STEP_DESCRIPTIONS[self.current_step])
+        self.current_step_hint.setText(_step_description(self.current_step))
         self.current_step_status.setText(self._status_label(current.status))
         self.current_step_status.setProperty(
             "state", self._visual_state(self.current_step, current.status)
@@ -805,7 +809,7 @@ class FirstRunWizard(QWidget):
             self.step_buttons[step_key].set_card_state(
                 index=self.step_indexes[step_key],
                 title=step.title,
-                note=STEP_DESCRIPTIONS[step_key],
+                note=_step_description(step_key),
                 status_text=self._step_card_status_text(
                     self._visual_state(step_key, step.status), step.status
                 ),

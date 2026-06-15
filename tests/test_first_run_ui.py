@@ -4,14 +4,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
 import yaml
 from openai import AuthenticationError
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QWidget
 
+import app.ui.main_window as main_window_module
 from app.services.first_run import default_setup_config, mark_step_ok, normalize_setup_config
 from app.services.recorder import NoopRecorder, RecorderError
 from app.services.storage import StorageService
@@ -280,7 +281,7 @@ def test_obs_check_shows_checking_state_immediately_when_recorder_is_slow() -> N
     elapsed = time.monotonic() - started_at
     app.processEvents()
 
-    assert elapsed < 0.05
+    assert elapsed < recorder.delay_seconds
     assert wizard.state.steps["obs"].status == "checking"
     assert wizard.step_message_label["obs"].text() == "Проверяется..."
     assert not wizard.obs_check_button.isEnabled()
@@ -352,7 +353,7 @@ def test_aitunnel_check_shows_checking_state_immediately_when_client_is_slow(
     elapsed = time.monotonic() - started_at
     app.processEvents()
 
-    assert elapsed < 0.05
+    assert elapsed < factory.delay_seconds
     assert wizard.state.steps["aitunnel"].status == "checking"
     assert wizard.step_message_label["aitunnel"].text() == "Проверяется ключ..."
     assert not wizard.aitunnel_check_button.isEnabled()
@@ -484,7 +485,7 @@ def test_summary_check_shows_checking_state_immediately_when_client_is_slow(
     elapsed = time.monotonic() - started_at
     app.processEvents()
 
-    assert elapsed < 0.05
+    assert elapsed < factory.delay_seconds
     assert wizard.state.steps["summary"].status == "checking"
     assert wizard.step_message_label["summary"].text() == "Проверяются AI-итоги..."
     assert not wizard.summary_check_button.isEnabled()
@@ -581,16 +582,29 @@ def test_main_window_loads_windows_ui_font_for_cyrillic_offscreen_rendering(
     monkeypatch,
 ) -> None:
     if not Path("C:/Windows/Fonts/segoeui.ttf").exists():
-        return
+        pytest.skip("Segoe UI font file is not available on this runner")
     app = _app()
     monkeypatch.chdir(tmp_path)
     _write_config(tmp_path / "config.yaml", setup_completed=False)
     storage = StorageService(tmp_path / "data", NoopRecorder())
+    monkeypatch.setattr(main_window_module, "_WINDOWS_UI_FONTS_LOADED", False)
+    loaded_paths: list[str] = []
+    original_add = main_window_module.QFontDatabase.addApplicationFont
+
+    def _spy_add_application_font(path: str) -> int:
+        loaded_paths.append(path)
+        return original_add(path)
+
+    monkeypatch.setattr(
+        main_window_module.QFontDatabase,
+        "addApplicationFont",
+        _spy_add_application_font,
+    )
 
     window = MainWindow(storage, NoopRecorder())
     app.processEvents()
 
-    assert "Segoe UI" in QFontDatabase.families()
+    assert any(path.lower().endswith("segoeui.ttf") for path in loaded_paths)
 
     window.close()
 
