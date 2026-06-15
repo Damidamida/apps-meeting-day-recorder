@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
 
 from app.branding import APP_DISPLAY_NAME, APP_ICON_RESOURCE
 from app.config import DEFAULT_CONFIG, load_config, reset_processing_config
+from app.runtime import resource_path
 from app.services.archive import (
     ArchiveDateFilter,
     ArchiveDay,
@@ -1500,8 +1501,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle(APP_DISPLAY_NAME)
-        if APP_ICON_RESOURCE.is_file():
-            self.setWindowIcon(QIcon(str(APP_ICON_RESOURCE)))
+        icon_path = resource_path(APP_ICON_RESOURCE)
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1100, 720)
         self._external_storage_provided = storage is not None
         self.config = load_config()

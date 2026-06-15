@@ -783,7 +783,9 @@ class FirstRunWizard(QWidget):
     def _on_aitunnel_check_finished(self, ok: bool, message: str) -> None:
         self.aitunnel_check_running = False
         if ok:
-            self.config.setdefault("secrets", {}).setdefault("env_file", DEFAULT_ENV_FILE)
+            secrets = self.config.setdefault("secrets", {})
+            if not str(secrets.get("env_file") or "").strip():
+                secrets["env_file"] = DEFAULT_ENV_FILE
             self.config.setdefault("summary", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
             self.config.setdefault("transcription", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
             self._mark_ok("aitunnel", message)

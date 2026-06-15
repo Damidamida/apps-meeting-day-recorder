@@ -185,9 +185,11 @@ def normalize_setup_config(value: Any) -> FirstRunState:
                 for item in FIRST_RUN_STEPS
                 if item != "finish"
             )
-        status = str(raw_step.get("status") or "").strip()
-        if not status and checked_flag is True:
+        raw_status = str(raw_step.get("status") or "").strip()
+        if checked_flag is True:
             status = "ok"
+        else:
+            status = raw_status
         if status not in STEP_STATUSES:
             status = "todo" if index == 0 else "locked"
         if not previous_ok and status != "ok":
@@ -195,14 +197,17 @@ def normalize_setup_config(value: Any) -> FirstRunState:
         if previous_ok and status == "locked":
             status = "todo"
         message = str(raw_step.get("message") or "")
+        if checked_flag is True and raw_status != "ok":
+            message = "Готово"
         steps[key] = FirstRunStepState(key, STEP_TITLES[key], status, message)
         previous_ok = status == "ok"
 
     current_step = str(value.get("current_step") or default["current_step"])
+    current_state = FirstRunState(False, CURRENT_SETUP_VERSION, current_step, steps, {}, "")
     if current_step not in FIRST_RUN_STEPS or not can_open_step(
-        FirstRunState(False, CURRENT_SETUP_VERSION, current_step, steps, {}, ""),
+        current_state,
         current_step,
-    ):
+    ) or steps[current_step].status == "ok":
         current_step = _first_available_step(steps)
 
     raw_values = value.get("values")

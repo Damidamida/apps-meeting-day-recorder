@@ -639,6 +639,34 @@ def test_aitunnel_success_writes_env_and_opens_transcription_step(
     wizard.close()
 
 
+def test_aitunnel_success_persists_default_env_file_when_config_path_is_blank(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = _app()
+    factory = DelayedAIClientFactory(outcome="ok")
+    config = {"secrets": {"env_file": ""}}
+    wizard = FirstRunWizard(
+        config,
+        _state_on_aitunnel_step(),
+        aitunnel_client_factory=factory,
+    )
+    wizard.aitunnel_key_input.setText("test-secret-key")
+    wizard.show()
+    app.processEvents()
+
+    wizard.check_aitunnel()
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["aitunnel"].status == "ok")
+    assert wizard.config["secrets"]["env_file"] == ".env"
+    assert 'AITUNNEL_KEY="test-secret-key"' in (tmp_path / ".env").read_text(
+        encoding="utf-8"
+    )
+
+    wizard.close()
+
+
 def test_summary_check_shows_checking_state_immediately_when_client_is_slow(
     tmp_path: Path,
 ) -> None:

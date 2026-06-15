@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QWidget
 
@@ -584,6 +586,40 @@ def test_main_window_uses_bk_scribe_branding(tmp_path: Path) -> None:
 
     assert window.windowTitle() == "BK Scribe"
     assert any(label.text() == "BK Scribe" for label in window.findChildren(QLabel))
+
+    window.close()
+    app.processEvents()
+
+
+def test_main_window_uses_packaged_bk_scribe_icon_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    working_dir = tmp_path / "working"
+    packaged_root = tmp_path / "_internal"
+    relative_icon = working_dir / "app" / "assets" / "bk_scribe.ico"
+    packaged_icon = packaged_root / "app" / "assets" / "bk_scribe.ico"
+    relative_icon.parent.mkdir(parents=True)
+    packaged_icon.parent.mkdir(parents=True)
+    relative_icon.write_bytes(b"legacy")
+    packaged_icon.write_bytes(b"packaged")
+    monkeypatch.chdir(working_dir)
+    monkeypatch.setattr(sys, "_MEIPASS", str(packaged_root), raising=False)
+    recorded_icon_paths: list[str] = []
+
+    class RecordingIcon(QIcon):
+        def __init__(self, path: str = "") -> None:
+            recorded_icon_paths.append(path)
+            super().__init__(path)
+
+    monkeypatch.setattr(main_window_module, "QIcon", RecordingIcon)
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+
+    window = MainWindow(storage, recorder)
+
+    assert recorded_icon_paths[0] == str(packaged_icon)
 
     window.close()
     app.processEvents()
