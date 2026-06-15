@@ -886,6 +886,44 @@ def test_readiness_check_ignores_stale_result_after_settings_save(
     app.processEvents()
 
 
+def test_processing_reset_invalidates_running_readiness_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+    assert _wait_for_qt(app, started.is_set)
+    running_request_id = window.readiness_check_request_id
+
+    window.request_processing_settings_reset()
+    window.processing_reset_overlay.confirm_button.click()
+    app.processEvents()
+
+    assert window.readiness_check_request_id > running_request_id
+    assert window.readiness_check_rerun_requested
+    assert window.readiness_check_rerun_reason == "settings"
+
+    release.set()
+    assert _wait_for_qt(app, lambda: not window.readiness_check_running)
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_blocks_close_while_readiness_check_is_running(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1346,6 +1384,32 @@ def test_close_event_allows_confirmed_close_with_background_processing(
 
     window.pipeline_running = False
     original_close()
+    app.processEvents()
+
+
+def test_confirmed_processing_close_still_prompts_for_unsaved_settings(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.pipeline_running = True
+    window.allow_close_with_processing = True
+    window._open_main_section(3)
+    window.settings_storage_root_input.setText(str(tmp_path / "dirty-before-close"))
+    event = CloseEventStub()
+
+    window.closeEvent(event)
+
+    assert event.ignored
+    assert not window.settings_unsaved_changes_overlay.isHidden()
+    assert window.settings_unsaved_changes_overlay.title_label.text() == "Есть несохраненные настройки"
+
+    window.pipeline_running = False
+    window.settings_unsaved_changes_overlay.discard_button.click()
+    app.processEvents()
+    window.close()
     app.processEvents()
 
 
@@ -3279,9 +3343,11 @@ def test_settings_dirty_navigation_guard_save_discard_and_stay(
     save_window._open_main_section(3)
     save_window.settings_storage_root_input.setText(str(tmp_path / "saved-after-prompt"))
     assert save_window.settings_have_unsaved_changes()
-    save_window.open_archive()
+    save_window.nav_buttons[2].click()
     app.processEvents()
     assert save_window.pages.currentIndex() == 3
+    assert save_window.nav_buttons[3].isChecked()
+    assert not save_window.nav_buttons[2].isChecked()
     assert not save_window.settings_unsaved_changes_overlay.isHidden()
     assert save_window.settings_unsaved_changes_overlay.title_label.text() == "Есть несохраненные настройки"
     save_window.settings_unsaved_changes_overlay.save_button.click()
@@ -3375,9 +3441,19 @@ def test_settings_dirty_close_guard_save_discard_and_stay(
     save_window.settings_storage_root_input.setText(str(tmp_path / "close-save"))
     save_window.closeEvent(CloseEventStub())
     app.processEvents()
+    save_readiness_schedules: list[str] = []
+    save_close_requests: list[bool] = []
+    monkeypatch.setattr(
+        save_window,
+        "_schedule_readiness_autocheck",
+        lambda reason: save_readiness_schedules.append(reason),
+    )
+    monkeypatch.setattr(save_window, "close", lambda: save_close_requests.append(True))
     save_window.settings_unsaved_changes_overlay.save_button.click()
     app.processEvents()
     assert not save_window.settings_have_unsaved_changes()
+    assert save_readiness_schedules == []
+    assert save_close_requests == [True]
     assert yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))["storage"][
         "root"
     ] == str(tmp_path / "close-save")
@@ -3391,11 +3467,40 @@ def test_settings_dirty_close_guard_save_discard_and_stay(
     discard_window.settings_storage_root_input.setText(str(tmp_path / "close-discard"))
     discard_window.closeEvent(CloseEventStub())
     app.processEvents()
+    discard_close_requests: list[bool] = []
+    monkeypatch.setattr(discard_window, "close", lambda: discard_close_requests.append(True))
     discard_window.settings_unsaved_changes_overlay.discard_button.click()
     app.processEvents()
     assert discard_window.settings_storage_root_input.text() == original_root
     assert not discard_window.settings_have_unsaved_changes()
+    assert discard_close_requests == [True]
 
+    app.processEvents()
+
+
+def test_sidebar_theme_toggle_keeps_other_unsaved_settings_dirty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    window._open_main_section(3)
+    changed_root = str(tmp_path / "unsaved-root")
+    window.settings_storage_root_input.setText(changed_root)
+
+    window.toggle_theme_from_sidebar()
+    window.nav_buttons[2].click()
+    app.processEvents()
+
+    assert window.settings_storage_root_input.text() == changed_root
+    assert window.settings_have_unsaved_changes()
+    assert window.pages.currentIndex() == 3
+    assert not window.settings_unsaved_changes_overlay.isHidden()
+
+    window.settings_unsaved_changes_overlay.discard_button.click()
     app.processEvents()
 
 

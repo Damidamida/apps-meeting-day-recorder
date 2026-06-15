@@ -310,8 +310,10 @@ def test_invalid_numeric_summary_fields_use_safe_defaults(tmp_path) -> None:
     assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
 
 
-def test_reset_processing_config_preserves_local_settings_and_resets_processing() -> None:
-    config = load_config(Path("missing-config.yaml"))
+def test_reset_processing_config_preserves_local_settings_and_resets_processing(
+    tmp_path: Path,
+) -> None:
+    config = load_config(tmp_path / "missing-config.yaml")
     config["storage"]["root"] = "D:/Meetings"
     config["obs"]["websocket_host"] = "192.168.1.10"
     config["obs"]["websocket_port"] = 4456
@@ -329,6 +331,9 @@ def test_reset_processing_config_preserves_local_settings_and_resets_processing(
 
     reset = reset_processing_config(config)
 
+    assert reset is not config
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["summary"]["enabled"] is True
     assert reset["storage"]["root"] == "D:/Meetings"
     assert reset["obs"]["websocket_host"] == "192.168.1.10"
     assert reset["obs"]["websocket_port"] == 4456

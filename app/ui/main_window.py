@@ -1913,7 +1913,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "settings_theme_select"):
             self._set_combo_value(self.settings_theme_select, next_theme)
             if hasattr(self, "settings_saved_config_snapshot"):
-                self.settings_saved_config_snapshot = self._capture_settings_state()
+                saved_snapshot = deepcopy(self.settings_saved_config_snapshot)
+                saved_ui = saved_snapshot.get("ui")
+                saved_ui = dict(saved_ui) if isinstance(saved_ui, dict) else {}
+                saved_ui["theme"] = next_theme
+                saved_snapshot["ui"] = saved_ui
+                self.settings_saved_config_snapshot = saved_snapshot
         self._apply_theme_settings(update_theme_toggle=False)
         if hasattr(self, "theme_toggle_button"):
             self.theme_toggle_button.set_theme(next_theme, animated=True)
@@ -3590,6 +3595,10 @@ class MainWindow(QMainWindow):
             return
         if self._has_meeting_processing_work():
             if self.allow_close_with_processing:
+                if self.settings_have_unsaved_changes():
+                    event.ignore()
+                    self._show_unsaved_settings_close_prompt()
+                    return
                 if hasattr(self, "floating_control"):
                     self.floating_control.close_from_app()
                 super().closeEvent(event)
@@ -3599,6 +3608,10 @@ class MainWindow(QMainWindow):
             return
         if self._has_day_summary_processing_work():
             if self.allow_close_with_processing:
+                if self.settings_have_unsaved_changes():
+                    event.ignore()
+                    self._show_unsaved_settings_close_prompt()
+                    return
                 if hasattr(self, "floating_control"):
                     self.floating_control.close_from_app()
                 super().closeEvent(event)
@@ -7178,6 +7191,7 @@ class MainWindow(QMainWindow):
             lambda: self._save_settings_then_continue(continue_action),
             lambda: self._discard_settings_then_continue(continue_action),
         )
+        self._refresh_navigation_state(self.pages.currentIndex())
         return False
 
     def _save_settings_then_continue(self, continue_action: Callable[[], None]) -> None:
@@ -7195,7 +7209,7 @@ class MainWindow(QMainWindow):
         )
 
     def _save_settings_then_close(self) -> None:
-        if self.save_settings():
+        if self.save_settings(schedule_readiness=False):
             self.close()
 
     def _discard_settings_then_close(self) -> None:
@@ -7225,7 +7239,7 @@ class MainWindow(QMainWindow):
         self.setup_state = normalize_setup_config(self.config.get("setup", {}))
         self._load_settings_ui_from_config()
         self.settings_saved_config_snapshot = self._capture_settings_state()
-        self.readiness_check_stale = True
+        self._invalidate_readiness_check_after_settings_change()
         if self._has_processing_work():
             self.pending_runtime_settings = True
         else:
@@ -7290,7 +7304,7 @@ class MainWindow(QMainWindow):
         config_to_save["ui"] = ui_config
         return config_to_save
 
-    def save_settings(self) -> bool:
+    def save_settings(self, *, schedule_readiness: bool = True) -> bool:
         storage_root = self._validate_storage_root_from_settings()
         if storage_root is None:
             return False
@@ -7318,14 +7332,15 @@ class MainWindow(QMainWindow):
         self._refresh_all_summary_template_previews()
         self._apply_theme_settings()
         self._apply_runtime_settings_after_save(storage_root_path)
-        if readiness_invalidated:
+        if schedule_readiness and readiness_invalidated:
             self._append_settings_status(
                 "Проверка готовности выполнялась со старыми настройками. "
                 "После завершения будет запущена повторная проверка."
             )
-        elif self.isVisible():
+        elif schedule_readiness and self.isVisible():
             self._append_settings_status("Проверка готовности запущена автоматически.")
-        self._schedule_readiness_autocheck("settings")
+        if schedule_readiness:
+            self._schedule_readiness_autocheck("settings")
         self.settings_saved_config_snapshot = self._capture_settings_state()
         return True
 
