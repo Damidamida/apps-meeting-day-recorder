@@ -12,6 +12,8 @@ DefaultDirName={localappdata}\BK Scribe
 DefaultGroupName=BK Scribe
 DisableDirPage=no
 DisableProgramGroupPage=no
+UsePreviousAppDir=no
+UsePreviousTasks=no
 OutputDir=..\output
 OutputBaseFilename=BK-Scribe-Setup
 SetupIconFile=..\..\app\assets\bk_scribe.ico
@@ -43,3 +45,47 @@ Name: "{autodesktop}\BK Scribe"; Filename: "{app}\BK Scribe.exe"; WorkingDir: "{
 
 [Run]
 Filename: "{app}\BK Scribe.exe"; Description: "Запустить BK Scribe"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function PathStartsWith(const Value: string; const Prefix: string): Boolean;
+begin
+  Result := CompareText(Copy(Value, 1, Length(Prefix)), Prefix) = 0;
+end;
+
+function IsSamePathOrInside(const Value: string; const Prefix: string): Boolean;
+var
+  NormalizedValue: string;
+  NormalizedPrefix: string;
+begin
+  NormalizedValue := RemoveBackslashUnlessRoot(Value);
+  NormalizedPrefix := RemoveBackslashUnlessRoot(Prefix);
+
+  Result :=
+    (CompareText(NormalizedValue, NormalizedPrefix) = 0) or
+    PathStartsWith(NormalizedValue, AddBackslash(NormalizedPrefix));
+end;
+
+function IsBlockedInstallDir(const Dir: string): Boolean;
+begin
+  Result :=
+    IsSamePathOrInside(Dir, ExpandConstant('{pf}')) or
+    IsSamePathOrInside(Dir, ExpandConstant('{pf32}')) or
+    IsSamePathOrInside(Dir, ExpandConstant('{win}'));
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+
+  if (CurPageID = wpSelectDir) and IsBlockedInstallDir(WizardDirValue) then
+  begin
+    MsgBox(
+      'BK Scribe устанавливается без прав администратора. ' +
+      'Выберите папку внутри профиля пользователя, например ' +
+      ExpandConstant('{localappdata}\BK Scribe') + '.',
+      mbError,
+      MB_OK
+    );
+    Result := False;
+  end;
+end;

@@ -35,6 +35,20 @@ def test_inno_script_is_per_user_bk_scribe_installer() -> None:
     assert ".env" not in text
 
 
+def test_inno_script_blocks_system_install_directories_for_per_user_setup() -> None:
+    script = ROOT / "packaging" / "inno" / "bk_scribe.iss"
+    text = script.read_text(encoding="utf-8")
+
+    assert "UsePreviousAppDir=no" in text
+    assert "UsePreviousTasks=no" in text
+    assert "function IsBlockedInstallDir" in text
+    assert "function NextButtonClick" in text
+    assert "WizardDirValue" in text
+    assert "wpSelectDir" in text
+    assert "ExpandConstant('{pf}')" in text
+    assert "BK Scribe устанавливается без прав администратора" in text
+
+
 def test_windows_package_script_uses_pyinstaller_and_inno_setup() -> None:
     script = ROOT / "scripts" / "build_windows_package.ps1"
     text = script.read_text(encoding="utf-8")
