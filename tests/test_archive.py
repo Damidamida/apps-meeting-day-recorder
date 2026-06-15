@@ -40,6 +40,48 @@ def test_archive_date_filter_limits_days(tmp_path) -> None:
     assert [day.folder for day in days] == [recent_day]
 
 
+def test_archive_quick_periods_end_yesterday_for_fixed_date() -> None:
+    now = datetime(2026, 6, 15, 12, 0)
+
+    assert ArchiveDateFilter.week(now) == ArchiveDateFilter(
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 14),
+    )
+    assert ArchiveDateFilter.month(now) == ArchiveDateFilter(
+        start=date(2026, 6, 1),
+        end=date(2026, 6, 14),
+    )
+
+
+def test_archive_month_stays_in_current_month_on_first_day() -> None:
+    assert ArchiveDateFilter.month(datetime(2026, 6, 1, 12, 0)) == ArchiveDateFilter(
+        start=date(2026, 6, 1),
+        end=date(2026, 5, 31),
+    )
+
+
+def test_archive_month_search_stays_inside_calendar_month(tmp_path) -> None:
+    storage = StorageService(tmp_path)
+    may_day = storage.create_day_folder(date(2026, 5, 31))
+    june_day = storage.create_day_folder(date(2026, 6, 10))
+    storage._write_json(may_day / "day_metadata.json", {"date": may_day.name, "status": "ended"})
+    storage._write_json(june_day / "day_metadata.json", {"date": june_day.name, "status": "ended"})
+    may_meeting = storage.create_meeting_folder("Встреча про релиз", datetime(2026, 5, 31, 9, 30))
+    june_meeting = storage.create_meeting_folder("Обычная синхронизация", datetime(2026, 6, 10, 9, 30))
+    storage.save_meeting_summary(may_meeting, "Релиз обсуждали только в мае")
+    storage.save_meeting_summary(june_meeting, "Операционные вопросы")
+
+    days = build_archive_days(
+        storage,
+        now=datetime(2026, 6, 15, 12, 0),
+        date_filter=ArchiveDateFilter.month(datetime(2026, 6, 15, 12, 0)),
+    )
+    matches = search_archive(days, "релиз")
+
+    assert [day.workday for day in days] == [date(2026, 6, 10)]
+    assert matches == []
+
+
 def test_search_archive_finds_title_summary_day_summary_and_transcript(tmp_path) -> None:
     storage = StorageService(tmp_path)
     day_folder = storage.create_day_folder(date(2026, 6, 12))

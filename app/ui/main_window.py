@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from copy import deepcopy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 import re
@@ -1425,6 +1425,8 @@ class MainWindow(QMainWindow):
         self.archive_days: list[ArchiveDay] = []
         self.archive_matches: list[ArchiveSearchMatch] = []
         self.archive_period = "all"
+        self.archive_manual_range = False
+        self._archive_updating_date_inputs = False
         self.archive_query = ""
         self.selected_archive_day_folder: Path | None = None
         self.selected_archive_meeting_folder: Path | None = None
@@ -2370,6 +2372,14 @@ class MainWindow(QMainWindow):
                 border: 1px solid %(input_border)s;
                 border-radius: 8px;
                 padding: 8px;
+            }
+            QLineEdit#archiveDateInput[manualRange="true"] {
+                border: 2px solid %(accent)s;
+                background: %(surface_soft)s;
+            }
+            QLabel#archiveManualRangeStatus {
+                color: %(accent)s;
+                font-weight: 800;
             }
             QCheckBox {
                 color: %(text)s;
@@ -4821,19 +4831,34 @@ class MainWindow(QMainWindow):
             button.setMaximumWidth(86)
         filter_row.addWidget(QLabel("с"))
         self.archive_from_input = QLineEdit()
+        self.archive_from_input.setObjectName("archiveDateInput")
         self.archive_from_input.setPlaceholderText("YYYY-MM-DD")
         self.archive_from_input.setInputMask("0000-00-00;_")
+        self.archive_from_input.textEdited.connect(self._on_archive_date_text_edited)
         self.archive_from_input.textChanged.connect(self._schedule_archive_search)
         filter_row.addWidget(self.archive_from_input)
         filter_row.addWidget(QLabel("по"))
         self.archive_to_input = QLineEdit()
+        self.archive_to_input.setObjectName("archiveDateInput")
         self.archive_to_input.setPlaceholderText("YYYY-MM-DD")
         self.archive_to_input.setInputMask("0000-00-00;_")
+        self.archive_to_input.textEdited.connect(self._on_archive_date_text_edited)
         self.archive_to_input.textChanged.connect(self._schedule_archive_search)
         filter_row.addWidget(self.archive_to_input)
+        self.archive_manual_status_label = QLabel("Ручной диапазон")
+        self.archive_manual_status_label.setObjectName("archiveManualRangeStatus")
+        filter_row.addWidget(self.archive_manual_status_label)
+        self.archive_reset_button = self._add_button(
+            filter_row,
+            "Сбросить",
+            lambda checked=False: self.reset_archive_date_filters(),
+            "secondaryButton",
+        )
         filter_row.addStretch(1)
         controls_layout.addLayout(filter_row)
+        self._set_archive_date_inputs_for_period("all")
         self._sync_archive_period_buttons()
+        self._sync_archive_manual_range_ui()
 
         self.archive_results_list = QWidget()
         self.archive_results_list.setObjectName("archiveResultsList")
@@ -4956,9 +4981,10 @@ class MainWindow(QMainWindow):
     def set_archive_period(self, period: str) -> None:
         self.archive_period = period
         if period in {"week", "month", "all"}:
-            self.archive_from_input.clear()
-            self.archive_to_input.clear()
+            self.archive_manual_range = False
+            self._set_archive_date_inputs_for_period(period)
         self._sync_archive_period_buttons()
+        self._sync_archive_manual_range_ui()
         self.apply_archive_filters()
 
     def _sync_archive_period_buttons(self) -> None:
@@ -4968,6 +4994,87 @@ class MainWindow(QMainWindow):
         self.archive_month_button.setChecked(self.archive_period == "month")
         self.archive_all_button.setChecked(self.archive_period == "all")
 
+    def reset_archive_date_filters(self) -> None:
+        self.archive_period = "all"
+        self.archive_manual_range = False
+        self._set_archive_date_inputs_for_period("all")
+        self._sync_archive_period_buttons()
+        self._sync_archive_manual_range_ui()
+        self.apply_archive_filters()
+
+    def _on_archive_date_text_edited(self, _value: str) -> None:
+        if self._archive_updating_date_inputs:
+            return
+        self.archive_manual_range = True
+        self._sync_archive_manual_range_ui()
+
+    def _set_archive_date_inputs_for_period(self, period: str) -> None:
+        start, end = self._archive_period_bounds(period)
+        self._set_archive_date_inputs(start, end)
+
+    def _set_archive_date_inputs(self, start: date | None, end: date | None) -> None:
+        self._archive_updating_date_inputs = True
+        previous_from_block = self.archive_from_input.blockSignals(True)
+        previous_to_block = self.archive_to_input.blockSignals(True)
+        try:
+            self.archive_from_input.setText(start.isoformat() if start is not None else "")
+            self.archive_to_input.setText(end.isoformat() if end is not None else "")
+        finally:
+            self.archive_from_input.blockSignals(previous_from_block)
+            self.archive_to_input.blockSignals(previous_to_block)
+            self._archive_updating_date_inputs = False
+
+    @staticmethod
+    def _archive_yesterday() -> date:
+        return datetime.now().date() - timedelta(days=1)
+
+    def _archive_period_bounds(self, period: str) -> tuple[date | None, date]:
+        yesterday = self._archive_yesterday()
+        if period == "week":
+            return yesterday - timedelta(days=6), yesterday
+        if period == "month":
+            return datetime.now().date().replace(day=1), yesterday
+        return None, yesterday
+
+    def _archive_inputs_match_period(self) -> bool:
+        expected_start, expected_end = self._archive_period_bounds(self.archive_period)
+        return (
+            self._parse_archive_date(self.archive_from_input.text()) == expected_start
+            and self._parse_archive_date(self.archive_to_input.text()) == expected_end
+        )
+
+    def _sync_archive_manual_range_from_inputs(self) -> None:
+        if self._archive_updating_date_inputs or self.archive_manual_range:
+            return
+        if not self._archive_inputs_match_period():
+            self.archive_manual_range = True
+            self._sync_archive_manual_range_ui()
+
+    def _sync_archive_manual_range_ui(self) -> None:
+        if not hasattr(self, "archive_week_button"):
+            return
+        for button in (self.archive_week_button, self.archive_month_button, self.archive_all_button):
+            button.setVisible(not self.archive_manual_range)
+        self.archive_manual_status_label.setVisible(self.archive_manual_range)
+        self.archive_reset_button.setVisible(self.archive_manual_range)
+        for input_widget in (self.archive_from_input, self.archive_to_input):
+            input_widget.setProperty("manualRange", self.archive_manual_range)
+            input_widget.style().unpolish(input_widget)
+            input_widget.style().polish(input_widget)
+
+    def _normalize_archive_to_input(self) -> None:
+        end = self._parse_archive_date(self.archive_to_input.text())
+        yesterday = self._archive_yesterday()
+        if end is None or end <= yesterday:
+            return
+        self._archive_updating_date_inputs = True
+        previous_to_block = self.archive_to_input.blockSignals(True)
+        try:
+            self.archive_to_input.setText(yesterday.isoformat())
+        finally:
+            self.archive_to_input.blockSignals(previous_to_block)
+            self._archive_updating_date_inputs = False
+
     def _schedule_archive_search(self) -> None:
         if hasattr(self, "archive_search_timer"):
             self.archive_search_timer.start()
@@ -4976,8 +5083,25 @@ class MainWindow(QMainWindow):
         if not self._guard_archive_summary_reload():
             return
         self._set_archive_status("")
+        self._sync_archive_manual_range_from_inputs()
+        self._normalize_archive_to_input()
+        self._sync_archive_manual_range_ui()
         self.archive_query = self.archive_search_input.text().strip()
         date_filter = self._archive_date_filter()
+        if date_filter and date_filter.start and date_filter.end and date_filter.start > date_filter.end:
+            self._set_archive_status("Дата `с` не может быть позже даты `по`.")
+            self.archive_days = []
+            self.archive_matches = []
+            self.selected_archive_day_folder = None
+            self.archive_open_material = None
+            self._set_archive_empty_state_text()
+            self.archive_empty_state.setVisible(not self.archive_query)
+            self.archive_splitter.setVisible(False)
+            self.archive_no_matches_spacer.setVisible(bool(self.archive_query))
+            self._render_archive_search_results()
+            self._render_archive_days()
+            self._render_archive_detail()
+            return
         all_days = build_archive_days(self.storage, date_filter=date_filter)
         self.archive_matches = search_archive(all_days, self.archive_query)
         if self.archive_query:
@@ -4993,12 +5117,22 @@ class MainWindow(QMainWindow):
                 else None
             )
 
+        self._set_archive_empty_state_text()
         self.archive_empty_state.setVisible(not self.archive_days and not self.archive_query)
         self.archive_splitter.setVisible(bool(self.archive_days))
         self.archive_no_matches_spacer.setVisible(bool(self.archive_query and not self.archive_days))
         self._render_archive_search_results()
         self._render_archive_days()
         self._render_archive_detail()
+
+    def _set_archive_empty_state_text(self) -> None:
+        if self.archive_manual_range or self._parse_archive_date(self.archive_from_input.text()) is not None:
+            self.archive_empty_state.setText("В выбранном диапазоне нет прошлых рабочих дней.")
+            return
+        self.archive_empty_state.setText(
+            "Прошлых рабочих дней пока нет.\n"
+            "Сегодняшний день находится во вкладке `Рабочий день`."
+        )
 
     def _archive_date_filter(self) -> ArchiveDateFilter | None:
         manual_start = self._parse_archive_date(self.archive_from_input.text())
