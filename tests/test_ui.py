@@ -7,6 +7,7 @@ from threading import Event
 from unittest.mock import patch
 
 import yaml
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -40,6 +41,11 @@ class CloseEventStub:
 class EnabledRecorder(NoopRecorder):
     enabled = True
     status_text = "OBS: подключен"
+
+
+@pytest.fixture(autouse=True)
+def isolate_ui_tests_from_repo_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
 
 
 def test_summary_material_view_starts_in_preview_mode() -> None:
@@ -2441,10 +2447,11 @@ def test_review_summary_header_shows_material_metadata(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
-    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    today = date.today()
+    day_folder = storage.create_day_folder(today)
     meeting_folder = storage.create_meeting_folder(
         "План релиза",
-        datetime(2026, 6, 14, 15, 30),
+        datetime(today.year, today.month, today.day, 15, 30),
         {
             "status": "ended",
             "summary_status": "draft_created",
@@ -2500,15 +2507,16 @@ def test_review_blocks_material_reload_with_unsaved_summary_edits(tmp_path: Path
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
-    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    today = date.today()
+    day_folder = storage.create_day_folder(today)
     first = storage.create_meeting_folder(
         "Первая встреча",
-        datetime(2026, 6, 14, 10, 0),
+        datetime(today.year, today.month, today.day, 10, 0),
         {"status": "ended", "summary_status": "draft_created"},
     )
     second = storage.create_meeting_folder(
         "Вторая встреча",
-        datetime(2026, 6, 14, 11, 0),
+        datetime(today.year, today.month, today.day, 11, 0),
         {"status": "ended", "summary_status": "draft_created"},
     )
     storage.save_meeting_summary(first, "# Итог первой встречи\n")

@@ -41,6 +41,27 @@ TRANSCRIPTION_MODEL_OPTIONS = (
     ("whisper-large-v3", "Whisper Large V3 — 0.36 ₽/мин"),
     ("whisper-1", "Whisper 1 — 1.15 ₽/мин"),
 )
+WHISPER_CLI_MODEL_OPTIONS = (
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large", "large"),
+    ("turbo", "turbo"),
+)
+FASTER_WHISPER_MODEL_OPTIONS = (
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large-v3", "large-v3"),
+    ("turbo", "turbo"),
+)
+TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND = {
+    "aitunnel": TRANSCRIPTION_MODEL_OPTIONS,
+    "faster_whisper": FASTER_WHISPER_MODEL_OPTIONS,
+    "whisper_cli": WHISPER_CLI_MODEL_OPTIONS,
+}
 SUMMARY_MODEL_OPTIONS = (
     ("gpt-5.4-nano", "GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход"),
     ("gpt-5.4-mini", "GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход"),
@@ -107,11 +128,39 @@ def default_setup_config() -> dict[str, Any]:
         },
         "values": {
             "data_root": str(default_data_root()),
+            "obs_websocket_host": "localhost",
+            "obs_websocket_port": 4455,
+            "obs_password_configured": False,
             "transcription_backend": "aitunnel",
             "transcription_model": "whisper-large-v3-turbo",
             "summary_model": "gpt-5.4-nano",
         },
     }
+
+
+def transcription_model_options_for_backend(backend: str) -> tuple[tuple[str, str], ...]:
+    return TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND.get(
+        backend,
+        WHISPER_CLI_MODEL_OPTIONS,
+    )
+
+
+def default_transcription_model_for_backend(backend: str) -> str:
+    options = transcription_model_options_for_backend(backend)
+    return options[0][0]
+
+
+def _transcription_model_from_config(transcription: dict[str, Any], backend: str) -> str:
+    backends = transcription.get("backends")
+    backend_config = backends.get(backend) if isinstance(backends, dict) else None
+    if isinstance(backend_config, dict) and str(backend_config.get("model") or "").strip():
+        return str(backend_config["model"]).strip()
+    model = str(transcription.get("model") or "").strip()
+    return model or default_transcription_model_for_backend(backend)
+
+
+def _transcription_model_is_supported(backend: str, model: str) -> bool:
+    return model in {value for value, _label in transcription_model_options_for_backend(backend)}
 
 
 def normalize_setup_config(value: Any) -> FirstRunState:
@@ -210,6 +259,10 @@ def mark_step_ok(state: FirstRunState, step_key: str, message: str) -> FirstRunS
 
 def mark_step_error(state: FirstRunState, step_key: str, message: str) -> FirstRunState:
     return _mark_step(state, step_key, "error", message)
+
+
+def mark_step_checking(state: FirstRunState, step_key: str, message: str) -> FirstRunState:
+    return _mark_step(state, step_key, "checking", message)
 
 
 def reset_from_step(state: FirstRunState, step_key: str) -> FirstRunState:
@@ -338,10 +391,15 @@ def check_transcription_settings(
     transcription = config.get("transcription")
     transcription = transcription if isinstance(transcription, dict) else {}
     backend = str(transcription.get("backend") or "aitunnel")
+    model = _transcription_model_from_config(transcription, backend)
     if backend == "aitunnel":
         if setup_state.steps["aitunnel"].status != "ok":
             return FirstRunCheckResult(False, AITUNNEL_REQUIRED_MESSAGE)
+        if not _transcription_model_is_supported(backend, model):
+            return FirstRunCheckResult(False, "Выберите модель транскрипции из списка.")
         return FirstRunCheckResult(True, "Транскрипция AI Tunnel STT готова.")
+    if not _transcription_model_is_supported(backend, model):
+        return FirstRunCheckResult(False, "Выберите модель транскрипции из списка.")
     if backend == "faster_whisper":
         if importlib.util.find_spec("faster_whisper") is None:
             return FirstRunCheckResult(False, "faster-whisper не установлен.")
@@ -380,9 +438,16 @@ def _mark_step(
     steps = dict(state.steps)
     steps[step_key] = steps[step_key].with_status(status, message)
     if status != "ok":
-        return reset_from_step(
-            FirstRunState(False, state.version, step_key, steps, dict(state.values), ""),
-            step_key,
+        start = FIRST_RUN_STEPS.index(step_key) + 1
+        for key in FIRST_RUN_STEPS[start:]:
+            steps[key] = steps[key].with_status("locked", "")
+        return FirstRunState(
+            completed=False,
+            version=state.version,
+            current_step=step_key,
+            steps=steps,
+            values=dict(state.values),
+            completed_at="",
         )
     next_index = min(FIRST_RUN_STEPS.index(step_key) + 1, len(FIRST_RUN_STEPS) - 1)
     next_key = FIRST_RUN_STEPS[next_index]
