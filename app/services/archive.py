@@ -30,11 +30,13 @@ class ArchiveDateFilter:
 
     @classmethod
     def week(cls, now: datetime) -> "ArchiveDateFilter":
-        return cls(start=now.date() - timedelta(days=7), end=now.date())
+        yesterday = now.date() - timedelta(days=1)
+        return cls(start=yesterday - timedelta(days=6), end=yesterday)
 
     @classmethod
     def month(cls, now: datetime) -> "ArchiveDateFilter":
-        return cls(start=now.date() - timedelta(days=31), end=now.date())
+        yesterday = now.date() - timedelta(days=1)
+        return cls(start=now.date().replace(day=1), end=yesterday)
 
 
 @dataclass(frozen=True)
