@@ -3912,14 +3912,6 @@ class MainWindow(QMainWindow):
             )
         )
 
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(8)
-        actions_layout.addStretch(1)
-        self.save_settings_button = self._add_button(
-            actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
-        )
-        layout.addLayout(actions_layout)
-
         sections_layout = QVBoxLayout()
         sections_layout.setSpacing(12)
         sections_hint = QLabel(
@@ -3942,6 +3934,9 @@ class MainWindow(QMainWindow):
             self.settings_section_buttons[title] = button
             section_buttons_layout.addWidget(button)
         section_buttons_layout.addStretch(1)
+        self.save_settings_button = self._add_button(
+            section_buttons_layout, "Сохранить настройки", self.save_settings, "primaryButton"
+        )
         sections_layout.addLayout(section_buttons_layout)
         layout.addWidget(self._create_card("Разделы настроек", sections_layout))
 

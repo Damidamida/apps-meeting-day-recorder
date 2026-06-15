@@ -3092,6 +3092,10 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     assert window.settings_section_buttons["Основное"].isChecked()
     assert window.settings_sections.currentWidget() is window.settings_basic_section
     assert window.save_settings_button.parentWidget() is not window.settings_summary_section
+    assert (
+        window.save_settings_button.parentWidget()
+        is window.settings_section_buttons["Основное"].parentWidget()
+    )
     assert not window.save_settings_button.isHidden()
     assert not hasattr(window, "open_setup_wizard_button")
     assert window.settings_summary_template_tabs is None
