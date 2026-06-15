@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from app.services.first_run import (
     AITUNNEL_API_KEY_ENV,
     AITUNNEL_BASE_URL_DEFAULT,
+    AITUNNEL_REQUIRED_MESSAGE,
     DEFAULT_ENV_FILE,
     FIRST_RUN_STEPS,
     SUMMARY_MODEL_OPTIONS,
@@ -39,8 +40,6 @@ from app.services.first_run import (
     validate_data_root,
     mark_step_checking,
 )
-from app.services.recorder import RecorderError
-
 
 logger = logging.getLogger(__name__)
 _STEP_ICON_FONT_LOADED = False
@@ -48,6 +47,8 @@ OBS_CHECKING_MESSAGE = "Проверяется..."
 OBS_ERROR_MESSAGE = "OBS не подключен. Запустите OBS и проверьте WebSocket."
 AITUNNEL_CHECKING_MESSAGE = "Проверяется ключ..."
 AITUNNEL_EMPTY_KEY_MESSAGE = "Введите AI Tunnel key."
+SUMMARY_CHECKING_MESSAGE = "Проверяются AI-итоги..."
+SUMMARY_ERROR_MESSAGE = "Сервис временно недоступен."
 
 
 STEP_DESCRIPTIONS = {
@@ -207,53 +208,30 @@ class StepCard(QFrame):
         return status_text
 
 
-class ObsCheckWorker(QObject):
-    finished = Signal(bool, str)
-
-    def __init__(self, recorder: Any) -> None:
-        super().__init__()
-        self.recorder = recorder
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            self.recorder.check_connection()
-        except RecorderError:
-            self.finished.emit(False, OBS_ERROR_MESSAGE)
-        except Exception:
-            logger.exception("First-run OBS connection check failed.")
-            self.finished.emit(False, OBS_ERROR_MESSAGE)
-        else:
-            self.finished.emit(True, "OBS подключен.")
-
-
-class AITunnelCheckWorker(QObject):
+class FirstRunCheckWorker(QObject):
     finished = Signal(bool, str)
 
     def __init__(
         self,
-        key: str,
-        config: dict[str, Any],
-        client_factory: Callable[..., Any] | None,
+        check: Callable[[], tuple[bool, str]],
+        *,
+        fallback_message: str,
+        log_message: str,
     ) -> None:
         super().__init__()
-        self.key = key
-        self.config = config
-        self.client_factory = client_factory
+        self.check = check
+        self.fallback_message = fallback_message
+        self.log_message = log_message
 
     @Slot()
     def run(self) -> None:
         try:
-            result = check_aitunnel_key(
-                self.key,
-                self.config,
-                client_factory=self.client_factory,
-            )
+            ok, message = self.check()
         except Exception:
-            logger.exception("First-run AI Tunnel key check failed.")
-            self.finished.emit(False, "Сервис временно недоступен.")
+            logger.exception(self.log_message)
+            self.finished.emit(False, self.fallback_message)
             return
-        self.finished.emit(result.ok, result.message)
+        self.finished.emit(ok, message)
 
 
 class FirstRunWizard(QWidget):
@@ -267,6 +245,7 @@ class FirstRunWizard(QWidget):
         recorder: Any | None = None,
         parent: QWidget | None = None,
         aitunnel_client_factory: Callable[..., Any] | None = None,
+        summary_client_factory: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__(parent)
         self.config = config
@@ -275,6 +254,7 @@ class FirstRunWizard(QWidget):
         )
         self.recorder = recorder
         self.aitunnel_client_factory = aitunnel_client_factory
+        self.summary_client_factory = summary_client_factory
         self.step_buttons: dict[str, StepCard] = {}
         self.step_status_labels: dict[str, QLabel] = {}
         self.step_indexes: dict[str, int] = {}
@@ -282,12 +262,17 @@ class FirstRunWizard(QWidget):
         self.step_pages: dict[str, QWidget] = {}
         self.obs_check_button: QPushButton | None = None
         self.obs_check_thread: QThread | None = None
-        self.obs_check_worker: ObsCheckWorker | None = None
+        self.obs_check_worker: FirstRunCheckWorker | None = None
         self.obs_check_running = False
         self.aitunnel_check_button: QPushButton | None = None
         self.aitunnel_check_thread: QThread | None = None
-        self.aitunnel_check_worker: AITunnelCheckWorker | None = None
+        self.aitunnel_check_worker: FirstRunCheckWorker | None = None
         self.aitunnel_check_running = False
+        self.summary_check_button: QPushButton | None = None
+        self.summary_check_thread: QThread | None = None
+        self.summary_check_worker: FirstRunCheckWorker | None = None
+        self.summary_check_running = False
+        self.finish_button: QPushButton | None = None
         self.current_step = self.state.current_step
         self.setObjectName("firstRunWizard")
         self._build_ui()
@@ -407,29 +392,6 @@ class FirstRunWizard(QWidget):
         panel_body.setLayout(panel_body_layout)
         content_layout.addWidget(panel_body, 1)
 
-        self.footer_panel = QFrame()
-        self.footer_panel.setObjectName("firstRunPanelFooter")
-        footer = QHBoxLayout()
-        footer.setContentsMargins(16, 14, 16, 14)
-        footer.setSpacing(12)
-        footer_hint = QLabel("Рабочий день откроется после успешной настройки всех обязательных пунктов.")
-        footer_hint.setObjectName("firstRunFooterHint")
-        footer_hint.setWordWrap(True)
-        self.back_button = QPushButton("Назад")
-        self.back_button.setObjectName("secondaryButton")
-        self.back_button.clicked.connect(self.go_back)
-        self.next_button = QPushButton("Далее")
-        self.next_button.setObjectName("primaryButton")
-        self.next_button.clicked.connect(self.go_next)
-        self.finish_button = QPushButton("Начать работу")
-        self.finish_button.setObjectName("primaryButton")
-        self.finish_button.clicked.connect(self.finish_setup)
-        footer.addWidget(footer_hint, 1)
-        footer.addWidget(self.back_button)
-        footer.addWidget(self.next_button)
-        footer.addWidget(self.finish_button)
-        self.footer_panel.setLayout(footer)
-        content_layout.addWidget(self.footer_panel)
         self.step_content_panel.setLayout(content_layout)
         body.addWidget(self.step_content_panel, 1)
         body_frame.setLayout(body)
@@ -559,6 +521,7 @@ class FirstRunWizard(QWidget):
             check.setObjectName("primaryButton")
             check.setMaximumWidth(190)
             check.clicked.connect(self.check_summary)
+            self.summary_check_button = check
             description = QLabel("AI-итоги используют ключ из шага AI Tunnel.")
             description.setObjectName("sectionHint")
             description.setWordWrap(True)
@@ -572,7 +535,21 @@ class FirstRunWizard(QWidget):
             description = QLabel("Все обязательные проверки должны быть готовы.")
             description.setObjectName("sectionHint")
             description.setWordWrap(True)
+            finish_hint = QLabel(
+                "Рабочий день откроется после успешной настройки всех обязательных пунктов."
+            )
+            finish_hint.setObjectName("sectionHint")
+            finish_hint.setWordWrap(True)
+            self.finish_button = QPushButton("Начать работу")
+            self.finish_button.setObjectName("primaryButton")
+            self.finish_button.setMaximumWidth(180)
+            self.finish_button.clicked.connect(self.finish_setup)
+            actions = QHBoxLayout()
+            actions.addWidget(self.finish_button)
+            actions.addStretch(1)
             layout.addWidget(description)
+            layout.addWidget(finish_hint)
+            layout.addLayout(actions)
         layout.addStretch(1)
         form_card.setLayout(layout)
         page_layout.addWidget(form_card, 0, Qt.AlignmentFlag.AlignTop)
@@ -593,18 +570,6 @@ class FirstRunWizard(QWidget):
         self.current_step = step_key
         self.refresh()
 
-    def go_back(self) -> None:
-        index = FIRST_RUN_STEPS.index(self.current_step)
-        if index > 0:
-            self.open_step(FIRST_RUN_STEPS[index - 1])
-
-    def go_next(self) -> None:
-        if self.state.steps[self.current_step].status != "ok":
-            return
-        index = FIRST_RUN_STEPS.index(self.current_step)
-        if index < len(FIRST_RUN_STEPS) - 1:
-            self.open_step(FIRST_RUN_STEPS[index + 1])
-
     def check_data_root(self) -> None:
         path = Path(self.data_root_input.text().strip())
         result = validate_data_root(path)
@@ -614,6 +579,23 @@ class FirstRunWizard(QWidget):
             self._mark_ok("data_root", result.message)
         else:
             self._mark_error("data_root", result.message)
+
+    def _start_background_check(
+        self,
+        worker: FirstRunCheckWorker,
+        finished_slot: Callable[[bool, str], None],
+        clear_slot: Callable[[], None],
+    ) -> tuple[QThread, FirstRunCheckWorker]:
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(finished_slot)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(clear_slot)
+        thread.start()
+        return thread, worker
 
     def check_obs(self) -> None:
         if self.obs_check_running:
@@ -626,18 +608,20 @@ class FirstRunWizard(QWidget):
         self.current_step = "obs"
         self.refresh()
 
-        thread = QThread(self)
-        worker = ObsCheckWorker(self.recorder)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_obs_check_finished)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_obs_check_thread)
-        self.obs_check_thread = thread
-        self.obs_check_worker = worker
-        thread.start()
+        def run_obs_check() -> tuple[bool, str]:
+            self.recorder.check_connection()
+            return True, "OBS подключен."
+
+        worker = FirstRunCheckWorker(
+            run_obs_check,
+            fallback_message=OBS_ERROR_MESSAGE,
+            log_message="First-run OBS connection check failed.",
+        )
+        self.obs_check_thread, self.obs_check_worker = self._start_background_check(
+            worker,
+            self._on_obs_check_finished,
+            self._clear_obs_check_thread,
+        )
 
     @Slot(bool, str)
     def _on_obs_check_finished(self, ok: bool, message: str) -> None:
@@ -678,22 +662,27 @@ class FirstRunWizard(QWidget):
         self.current_step = "aitunnel"
         self.refresh()
 
-        thread = QThread(self)
-        worker = AITunnelCheckWorker(
-            key,
-            self.config,
-            self.aitunnel_client_factory,
+        def run_aitunnel_check() -> tuple[bool, str]:
+            result = check_aitunnel_key(
+                key,
+                self.config,
+                client_factory=self.aitunnel_client_factory,
+            )
+            return result.ok, result.message
+
+        worker = FirstRunCheckWorker(
+            run_aitunnel_check,
+            fallback_message=SUMMARY_ERROR_MESSAGE,
+            log_message="First-run AI Tunnel key check failed.",
         )
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_aitunnel_check_finished)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_aitunnel_check_thread)
-        self.aitunnel_check_thread = thread
-        self.aitunnel_check_worker = worker
-        thread.start()
+        (
+            self.aitunnel_check_thread,
+            self.aitunnel_check_worker,
+        ) = self._start_background_check(
+            worker,
+            self._on_aitunnel_check_finished,
+            self._clear_aitunnel_check_thread,
+        )
 
     @Slot(bool, str)
     def _on_aitunnel_check_finished(self, ok: bool, message: str) -> None:
@@ -726,6 +715,11 @@ class FirstRunWizard(QWidget):
             self._mark_error("transcription", result.message)
 
     def check_summary(self) -> None:
+        if self.summary_check_running:
+            return
+        if self.state.steps["aitunnel"].status != "ok":
+            self._mark_error("summary", AITUNNEL_REQUIRED_MESSAGE)
+            return
         model = self.summary_model_select.currentData() or "gpt-5.4-nano"
         if model == "__custom__":
             model = "gpt-5.4-mini"
@@ -733,11 +727,46 @@ class FirstRunWizard(QWidget):
         self.config["summary"]["model"] = model
         self.config["summary"]["api_key_env"] = AITUNNEL_API_KEY_ENV
         self.config["summary"]["base_url"] = AITUNNEL_BASE_URL_DEFAULT
-        result = check_summary_settings(self.config, self.state)
-        if result.ok:
-            self._mark_ok("summary", result.message)
+
+        self.summary_check_running = True
+        self.state = mark_step_checking(self.state, "summary", SUMMARY_CHECKING_MESSAGE)
+        self.current_step = "summary"
+        self.refresh()
+
+        def run_summary_check() -> tuple[bool, str]:
+            result = check_summary_settings(
+                self.config,
+                self.state,
+                client_factory=self.summary_client_factory,
+            )
+            return result.ok, result.message
+
+        worker = FirstRunCheckWorker(
+            run_summary_check,
+            fallback_message=SUMMARY_ERROR_MESSAGE,
+            log_message="First-run summary connection check failed.",
+        )
+        (
+            self.summary_check_thread,
+            self.summary_check_worker,
+        ) = self._start_background_check(
+            worker,
+            self._on_summary_check_finished,
+            self._clear_summary_check_thread,
+        )
+
+    @Slot(bool, str)
+    def _on_summary_check_finished(self, ok: bool, message: str) -> None:
+        self.summary_check_running = False
+        if ok:
+            self._mark_ok("summary", message)
         else:
-            self._mark_error("summary", result.message)
+            self._mark_error("summary", message)
+        self._refresh_summary_check_button()
+
+    def _clear_summary_check_thread(self) -> None:
+        self.summary_check_thread = None
+        self.summary_check_worker = None
 
     def finish_setup(self) -> None:
         if setup_completed(self.state):
@@ -786,13 +815,11 @@ class FirstRunWizard(QWidget):
             )
             self.step_message_label[step_key].setText(step.message or "Требует проверки.")
         self.step_stack.setCurrentWidget(self.step_pages[self.current_step])
-        index = FIRST_RUN_STEPS.index(self.current_step)
-        self.back_button.setEnabled(index > 0)
-        self.next_button.setEnabled(self.state.steps[self.current_step].status == "ok")
-        self.finish_button.setVisible(self.current_step == "finish")
-        self.finish_button.setEnabled(setup_completed(self.state))
+        if self.finish_button is not None:
+            self.finish_button.setEnabled(setup_completed(self.state))
         self._refresh_obs_check_button()
         self._refresh_aitunnel_check_button()
+        self._refresh_summary_check_button()
 
     def _refresh_obs_check_button(self) -> None:
         if self.obs_check_button is not None:
@@ -801,6 +828,10 @@ class FirstRunWizard(QWidget):
     def _refresh_aitunnel_check_button(self) -> None:
         if self.aitunnel_check_button is not None:
             self.aitunnel_check_button.setEnabled(not self.aitunnel_check_running)
+
+    def _refresh_summary_check_button(self) -> None:
+        if self.summary_check_button is not None:
+            self.summary_check_button.setEnabled(not self.summary_check_running)
 
     def _can_open(self, step_key: str) -> bool:
         index = FIRST_RUN_STEPS.index(step_key)

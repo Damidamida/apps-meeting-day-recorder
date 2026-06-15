@@ -10,7 +10,7 @@ from openai import AuthenticationError
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QWidget
 
 from app.services.first_run import default_setup_config, mark_step_ok, normalize_setup_config
 from app.services.recorder import NoopRecorder, RecorderError
@@ -84,6 +84,28 @@ class DelayedAIClientFactory:
         return SimpleNamespace(data=[SimpleNamespace(id="ok")])
 
 
+class DelayedSummaryClientFactory:
+    def __init__(self, outcome: str = "ok", delay_seconds: float = 0.01) -> None:
+        self.outcome = outcome
+        self.delay_seconds = delay_seconds
+        self.calls = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            responses=SimpleNamespace(
+                create=self._create_response,
+            )
+        )
+
+    def _create_response(self, **kwargs):
+        del kwargs
+        time.sleep(self.delay_seconds)
+        if self.outcome == "network":
+            raise RuntimeError("summary unavailable")
+        return SimpleNamespace(output_text="Готово")
+
+
 def _write_config(path: Path, setup_completed: bool) -> None:
     setup = default_setup_config()
     if setup_completed:
@@ -116,6 +138,19 @@ def _state_on_aitunnel_step():
     return mark_step_ok(state, "audio", "Готово")
 
 
+def _state_on_summary_step():
+    state = _state_on_aitunnel_step()
+    state = mark_step_ok(state, "aitunnel", "Готово")
+    return mark_step_ok(state, "transcription", "Готово")
+
+
+def _summary_config_with_env(tmp_path: Path) -> dict:
+    env_file = tmp_path / "secrets" / ".env.local"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text('AITUNNEL_KEY="test-secret-key"\n', encoding="utf-8")
+    return {"secrets": {"env_file": str(env_file)}}
+
+
 def test_first_run_wizard_is_full_screen_page_with_locked_future_steps() -> None:
     app = _app()
     wizard = FirstRunWizard({}, normalize_setup_config(default_setup_config()))
@@ -128,7 +163,9 @@ def test_first_run_wizard_is_full_screen_page_with_locked_future_steps() -> None
     assert wizard.step_list_panel.minimumHeight() == wizard.step_content_panel.minimumHeight()
     assert wizard.step_buttons["data_root"].isEnabled()
     assert not wizard.step_buttons["obs"].isEnabled()
-    assert not wizard.next_button.isEnabled()
+    button_texts = [button.text() for button in wizard.findChildren(QPushButton)]
+    assert "Назад" not in button_texts
+    assert "Далее" not in button_texts
     assert wizard.aitunnel_link.openExternalLinks()
     assert wizard.aitunnel_link.text().find("https://aitunnel.ru/") != -1
     assert wizard.transcription_backend_select.itemText(0) == "AI Tunnel STT"
@@ -151,7 +188,7 @@ def test_first_run_wizard_layout_matches_mockup_structure() -> None:
     assert wizard.findChild(QWidget, "firstRunProgressPill") is wizard.progress_label
     assert wizard.findChild(QWidget, "firstRunPanelHeader") is not None
     assert wizard.findChild(QWidget, "firstRunPanelBody") is not None
-    assert wizard.findChild(QWidget, "firstRunPanelFooter") is not None
+    assert wizard.findChild(QWidget, "firstRunPanelFooter") is None
 
     assert wizard.step_list_panel.minimumWidth() >= 300
     assert wizard.step_list_panel.maximumWidth() <= 360
@@ -174,7 +211,8 @@ def test_first_run_wizard_layout_matches_mockup_structure() -> None:
     assert wizard.findChild(QWidget, "firstRunStepTitle") is not None
     assert wizard.findChild(QWidget, "firstRunStepNote") is not None
     assert wizard.step_message_label["data_root"].wordWrap()
-    assert wizard.footer_panel.parentWidget() is wizard.step_content_panel
+    assert wizard.finish_button is not None
+    assert wizard.finish_button.parentWidget().objectName() == "firstRunFormCard"
 
     wizard.close()
 
@@ -424,6 +462,81 @@ def test_aitunnel_success_writes_env_and_opens_transcription_step(
     assert wizard.aitunnel_check_button.isEnabled()
     assert 'AITUNNEL_KEY="test-secret-key"' in env_file.read_text(encoding="utf-8")
     assert factory.calls[0]["api_key"] == "test-secret-key"
+
+    wizard.close()
+
+
+def test_summary_check_shows_checking_state_immediately_when_client_is_slow(
+    tmp_path: Path,
+) -> None:
+    app = _app()
+    factory = DelayedSummaryClientFactory(outcome="network", delay_seconds=0.15)
+    wizard = FirstRunWizard(
+        _summary_config_with_env(tmp_path),
+        _state_on_summary_step(),
+        summary_client_factory=factory,
+    )
+    wizard.show()
+    app.processEvents()
+
+    started_at = time.monotonic()
+    wizard.check_summary()
+    elapsed = time.monotonic() - started_at
+    app.processEvents()
+
+    assert elapsed < 0.05
+    assert wizard.state.steps["summary"].status == "checking"
+    assert wizard.step_message_label["summary"].text() == "Проверяются AI-итоги..."
+    assert not wizard.summary_check_button.isEnabled()
+    assert factory.calls == [] or _wait_for_qt(app, lambda: len(factory.calls) == 1)
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["summary"].status == "error")
+    wizard.close()
+
+
+def test_summary_check_failure_keeps_visible_error_and_finish_locked(
+    tmp_path: Path,
+) -> None:
+    app = _app()
+    factory = DelayedSummaryClientFactory(outcome="network")
+    wizard = FirstRunWizard(
+        _summary_config_with_env(tmp_path),
+        _state_on_summary_step(),
+        summary_client_factory=factory,
+    )
+    wizard.show()
+    app.processEvents()
+
+    wizard.check_summary()
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["summary"].status == "error")
+    assert wizard.current_step == "summary"
+    assert wizard.step_message_label["summary"].text() == "Сервис временно недоступен."
+    assert wizard.step_buttons["summary"].property("state") == "error"
+    assert wizard.step_buttons["finish"].property("state") == "locked"
+    assert not wizard.step_buttons["finish"].isEnabled()
+    assert wizard.summary_check_button.isEnabled()
+
+    wizard.close()
+
+
+def test_summary_check_success_opens_finish_step(tmp_path: Path) -> None:
+    app = _app()
+    factory = DelayedSummaryClientFactory(outcome="ok")
+    wizard = FirstRunWizard(
+        _summary_config_with_env(tmp_path),
+        _state_on_summary_step(),
+        summary_client_factory=factory,
+    )
+    wizard.show()
+    app.processEvents()
+
+    wizard.check_summary()
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["summary"].status == "ok")
+    assert wizard.current_step == "finish"
+    assert wizard.step_buttons["finish"].isEnabled()
+    assert wizard.summary_check_button.isEnabled()
 
     wizard.close()
 

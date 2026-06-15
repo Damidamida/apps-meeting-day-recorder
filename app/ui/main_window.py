@@ -2111,7 +2111,6 @@ class MainWindow(QMainWindow):
             }
             QLabel#firstRunIntroNote,
             QLabel#firstRunPanelHint,
-            QLabel#firstRunFooterHint,
             QLabel#firstRunStepNote {
                 color: %(hint)s;
             }
@@ -2247,10 +2246,6 @@ class MainWindow(QMainWindow):
                 background: %(surface_alt)s;
                 border: 1px solid %(border)s;
                 border-radius: 8px;
-            }
-            QFrame#firstRunPanelFooter {
-                background: transparent;
-                border-top: 1px solid %(border)s;
             }
             QPushButton#secondaryButton {
                 background: transparent;
