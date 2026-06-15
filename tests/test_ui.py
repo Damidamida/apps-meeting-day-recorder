@@ -13,9 +13,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QSizePolicy, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QWidget
 
 from app.services.recorder import NoopRecorder
+from app.services import archive as archive_module
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import OpenAISummarizer
 from app.services.transcription import AITunnelTranscriber, LocalWhisperTranscriber
@@ -41,6 +42,18 @@ class CloseEventStub:
 class EnabledRecorder(NoopRecorder):
     enabled = True
     status_text = "OBS: подключен"
+
+
+class FrozenArchiveDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None) -> datetime:
+        return cls(2026, 6, 15, 12, 0, tzinfo=tz)
+
+
+class FrozenFirstDayArchiveDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None) -> datetime:
+        return cls(2026, 6, 1, 12, 0, tzinfo=tz)
 
 
 @pytest.fixture(autouse=True)
@@ -3944,12 +3957,19 @@ def test_summary_review_and_archive_ui_no_longer_shows_draft_or_final_words(tmp_
     app.processEvents()
 
 
-def test_archive_filters_have_active_state_and_date_masks(tmp_path: Path) -> None:
+def test_archive_opens_with_all_period_yesterday_and_without_today(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenArchiveDateTime)
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
-    past_day = storage.create_day_folder((datetime.now() - timedelta(days=1)).date())
-    storage._write_json(past_day / "day_metadata.json", {"date": past_day.name, "status": "ended"})
+    yesterday = storage.create_day_folder(date(2026, 6, 14))
+    today = storage.create_day_folder(date(2026, 6, 15))
+    storage._write_json(yesterday / "day_metadata.json", {"date": yesterday.name, "status": "ended"})
+    storage._write_json(today / "day_metadata.json", {"date": today.name, "status": "ended"})
 
     window = MainWindow(storage, recorder)
     window.open_archive()
@@ -3960,15 +3980,183 @@ def test_archive_filters_have_active_state_and_date_masks(tmp_path: Path) -> Non
     assert len({button.minimumWidth() for button in period_buttons}) == 1
     assert window.archive_from_input.inputMask().startswith("0000-00-00")
     assert window.archive_to_input.inputMask().startswith("0000-00-00")
+    assert window.archive_from_input.text().replace("-", "").strip("_") == ""
+    assert window.archive_to_input.text() == "2026-06-14"
+    assert [day.workday for day in window.archive_days] == [date(2026, 6, 14)]
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_week_and_month_fill_inclusive_dates_and_active_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    for workday in (date(2026, 6, 1), date(2026, 6, 8), date(2026, 6, 14)):
+        day_folder = storage.create_day_folder(workday)
+        storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
 
     window.set_archive_period("week")
     assert window.archive_week_button.isChecked()
     assert not window.archive_month_button.isChecked()
     assert not window.archive_all_button.isChecked()
+    assert window.archive_from_input.text() == "2026-06-08"
+    assert window.archive_to_input.text() == "2026-06-14"
+    assert [day.workday for day in window.archive_days] == [date(2026, 6, 14), date(2026, 6, 8)]
 
-    window.archive_from_input.setText("9999-99-99")
+    window.set_archive_period("month")
+    assert not window.archive_week_button.isChecked()
+    assert window.archive_month_button.isChecked()
+    assert not window.archive_all_button.isChecked()
+    assert window.archive_from_input.text() == "2026-06-01"
+    assert window.archive_to_input.text() == "2026-06-14"
+    assert [day.workday for day in window.archive_days] == [
+        date(2026, 6, 14),
+        date(2026, 6, 8),
+        date(2026, 6, 1),
+    ]
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_manual_date_edit_hides_quick_filters_and_reset_restores_all(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+
+    window.archive_from_input.setText("2026-06-10")
     window.apply_archive_filters()
-    assert window.archive_days
+
+    assert window.archive_manual_range is True
+    assert window.archive_week_button.isHidden()
+    assert window.archive_month_button.isHidden()
+    assert window.archive_all_button.isHidden()
+    assert window.archive_manual_status_label.text() == "Ручной диапазон"
+    assert not window.archive_manual_status_label.isHidden()
+    assert window.archive_reset_button.text() == "Сбросить"
+    assert not window.archive_reset_button.isHidden()
+    date_inputs = window.pages.widget(2).findChildren(QLineEdit)
+    assert window.archive_from_input in date_inputs
+    assert window.archive_from_input.property("manualRange") is True
+    assert window.archive_to_input.property("manualRange") is True
+
+    window.reset_archive_date_filters()
+
+    assert window.archive_manual_range is False
+    assert not window.archive_week_button.isHidden()
+    assert not window.archive_month_button.isHidden()
+    assert not window.archive_all_button.isHidden()
+    assert window.archive_all_button.isChecked()
+    assert window.archive_from_input.text().replace("-", "").strip("_") == ""
+    assert window.archive_to_input.text() == "2026-06-14"
+    assert window.archive_manual_status_label.isHidden()
+    assert window.archive_reset_button.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_manual_invalid_range_shows_empty_state_without_crash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    day_folder = storage.create_day_folder(date(2026, 6, 14))
+    storage._write_json(day_folder / "day_metadata.json", {"date": day_folder.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.archive_from_input.setText("2026-06-14")
+    window.archive_to_input.setText("2026-06-10")
+    window.apply_archive_filters()
+
+    assert window.archive_days == []
+    assert not window.archive_status_label.isHidden()
+    assert "Дата `с` не может быть позже даты `по`." in window.archive_status_label.text()
+    assert window.archive_empty_state.text().startswith("В выбранном диапазоне нет прошлых рабочих дней.")
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_month_preset_empty_on_first_day_does_not_show_manual_range_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenFirstDayArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenFirstDayArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    may_day = storage.create_day_folder(date(2026, 5, 31))
+    storage._write_json(may_day / "day_metadata.json", {"date": may_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.set_archive_period("month")
+
+    assert window.archive_month_button.isChecked()
+    assert not window.archive_manual_range
+    assert not window.archive_week_button.isHidden()
+    assert window.archive_days == []
+    assert "Дата `с` не может быть позже даты `по`." not in window.archive_status_label.text()
+    assert window.archive_status_label.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_search_respects_selected_period(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    may_day = storage.create_day_folder(date(2026, 5, 31))
+    june_day = storage.create_day_folder(date(2026, 6, 10))
+    storage._write_json(may_day / "day_metadata.json", {"date": may_day.name, "status": "ended"})
+    storage._write_json(june_day / "day_metadata.json", {"date": june_day.name, "status": "ended"})
+    may_meeting = storage.create_meeting_folder("Релиз", datetime(2026, 5, 31, 9, 30))
+    june_meeting = storage.create_meeting_folder("Синхронизация", datetime(2026, 6, 10, 9, 30))
+    storage.save_meeting_summary(may_meeting, "Релиз есть только вне месяца")
+    storage.save_meeting_summary(june_meeting, "Обычный статус")
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.set_archive_period("month")
+    window.archive_search_input.setText("релиз")
+    window.apply_archive_filters()
+
+    assert window.archive_days == []
+    assert window.archive_matches == []
+    result_text = "\n".join(label.text() for label in window.archive_results_list.findChildren(QLabel))
+    assert "Совпадений не найдено" in result_text
 
     window.close()
     app.processEvents()
