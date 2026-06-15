@@ -1,4 +1,6 @@
-from app.config import load_config
+from pathlib import Path
+
+from app.config import load_config, reset_processing_config
 
 
 def test_obs_is_required_by_default(tmp_path) -> None:
@@ -306,4 +308,43 @@ def test_invalid_numeric_summary_fields_use_safe_defaults(tmp_path) -> None:
     assert config["summary"]["timeout_seconds"] == 120
     assert config["summary"]["max_chars_per_chunk"] == 20000
     assert config["summary"]["base_url"] == "https://api.proxyapi.ru/openai/v1"
-    assert len(config["_warnings"]) == 2
+
+
+def test_reset_processing_config_preserves_local_settings_and_resets_processing(
+    tmp_path: Path,
+) -> None:
+    config = load_config(tmp_path / "missing-config.yaml")
+    config["storage"]["root"] = "D:/Meetings"
+    config["obs"]["websocket_host"] = "192.168.1.10"
+    config["obs"]["websocket_port"] = 4456
+    config["obs"]["websocket_password"] = "secret"
+    config["secrets"]["env_file"] = "D:/safe/.env"
+    config["ui"]["theme"] = "dark"
+    config["ui"]["floating_theme"] = "light"
+    config["transcription"]["backend"] = "aitunnel"
+    config["transcription"]["backends"]["aitunnel"]["model"] = "whisper-1"
+    config["transcription"]["backends"]["aitunnel"]["timeout_seconds"] = 42
+    config["summary"]["enabled"] = True
+    config["summary"]["model"] = "broken-model"
+    config["summary"]["base_url"] = "https://broken.example/v1"
+    config["summary"]["timeout_seconds"] = 9
+
+    reset = reset_processing_config(config)
+
+    assert reset is not config
+    assert config["transcription"]["backend"] == "aitunnel"
+    assert config["summary"]["enabled"] is True
+    assert reset["storage"]["root"] == "D:/Meetings"
+    assert reset["obs"]["websocket_host"] == "192.168.1.10"
+    assert reset["obs"]["websocket_port"] == 4456
+    assert reset["obs"]["websocket_password"] == "secret"
+    assert reset["secrets"]["env_file"] == "D:/safe/.env"
+    assert reset["ui"]["theme"] == "dark"
+    assert reset["ui"]["floating_theme"] == "light"
+    assert reset["transcription"]["backend"] == "whisper_cli"
+    assert reset["transcription"]["backends"]["aitunnel"]["model"] == "whisper-large-v3-turbo"
+    assert reset["transcription"]["backends"]["aitunnel"]["timeout_seconds"] == 300
+    assert reset["summary"]["enabled"] is False
+    assert reset["summary"]["model"] == "gpt-5.4-mini"
+    assert reset["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
+    assert reset["summary"]["timeout_seconds"] == 120

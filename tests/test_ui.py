@@ -886,6 +886,44 @@ def test_readiness_check_ignores_stale_result_after_settings_save(
     app.processEvents()
 
 
+def test_processing_reset_invalidates_running_readiness_check(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    started = Event()
+    release = Event()
+
+    def slow_check_readiness(config, recorder, data_root):
+        del config, recorder, data_root
+        started.set()
+        release.wait(0.5)
+        return _readiness_statuses()
+
+    monkeypatch.setattr(main_window_module, "check_readiness", slow_check_readiness)
+
+    window.check_readiness()
+    assert _wait_for_qt(app, started.is_set)
+    running_request_id = window.readiness_check_request_id
+
+    window.request_processing_settings_reset()
+    window.processing_reset_overlay.confirm_button.click()
+    app.processEvents()
+
+    assert window.readiness_check_request_id > running_request_id
+    assert window.readiness_check_rerun_requested
+    assert window.readiness_check_rerun_reason == "settings"
+
+    release.set()
+    assert _wait_for_qt(app, lambda: not window.readiness_check_running)
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_blocks_close_while_readiness_check_is_running(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -968,7 +1006,7 @@ def test_main_window_has_light_navigation_shell(tmp_path: Path) -> None:
     assert window.nav_buttons[1].text() == "Ревью"
     assert window.nav_buttons[2].text() == "Архив"
     assert window.nav_buttons[3].text() == "Настройки"
-    assert window.nav_buttons[4].text() == "Справка"
+    assert 4 not in window.nav_buttons
     assert window.nav_buttons[0].isChecked()
 
     window.nav_buttons[3].click()
@@ -1346,6 +1384,32 @@ def test_close_event_allows_confirmed_close_with_background_processing(
 
     window.pipeline_running = False
     original_close()
+    app.processEvents()
+
+
+def test_confirmed_processing_close_still_prompts_for_unsaved_settings(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    window = MainWindow(storage, recorder)
+    window.pipeline_running = True
+    window.allow_close_with_processing = True
+    window._open_main_section(3)
+    window.settings_storage_root_input.setText(str(tmp_path / "dirty-before-close"))
+    event = CloseEventStub()
+
+    window.closeEvent(event)
+
+    assert event.ignored
+    assert not window.settings_unsaved_changes_overlay.isHidden()
+    assert window.settings_unsaved_changes_overlay.title_label.text() == "Есть несохраненные настройки"
+
+    window.pipeline_running = False
+    window.settings_unsaved_changes_overlay.discard_button.click()
+    app.processEvents()
+    window.close()
     app.processEvents()
 
 
@@ -3089,8 +3153,15 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
         "Транскрипция",
         "Итоги",
     ]
-    assert window.settings_section_buttons["Итоги"].isChecked()
-    assert window.settings_sections.currentWidget() is window.settings_summary_section
+    assert window.settings_section_buttons["Основное"].isChecked()
+    assert window.settings_sections.currentWidget() is window.settings_basic_section
+    assert window.save_settings_button.parentWidget() is not window.settings_summary_section
+    assert (
+        window.save_settings_button.parentWidget()
+        is window.settings_section_buttons["Основное"].parentWidget()
+    )
+    assert not window.save_settings_button.isHidden()
+    assert not hasattr(window, "open_setup_wizard_button")
     assert window.settings_summary_template_tabs is None
     assert list(window.settings_summary_template_buttons) == [
         "Одна встреча",
@@ -3136,6 +3207,300 @@ def test_settings_screen_uses_custom_section_navigation(tmp_path: Path) -> None:
     assert window.settings_sections.currentWidget() is window.settings_basic_section
 
     window.close()
+    app.processEvents()
+
+
+def test_left_navigation_does_not_show_help_section(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    nav_texts = [button.text() for button in window.nav_buttons.values()]
+
+    assert nav_texts == ["Рабочий день", "Ревью", "Архив", "Настройки"]
+    assert "Справка" not in nav_texts
+
+    window.close()
+    app.processEvents()
+
+
+def test_processing_reset_preserves_local_settings_and_discards_unsaved_out_of_scope(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "storage": {"root": str(tmp_path / "saved-data")},
+                "obs": {
+                    "websocket_host": "127.0.0.1",
+                    "websocket_port": 4456,
+                    "websocket_password": "saved-password",
+                },
+                "secrets": {"env_file": str(tmp_path / ".env.local")},
+                "ui": {"theme": "dark", "floating_theme": "light"},
+                "transcription": {
+                    "backend": "aitunnel",
+                    "backends": {
+                        "aitunnel": {
+                            "model": "whisper-1",
+                            "timeout_seconds": 42,
+                            "max_upload_mb": 10,
+                        }
+                    },
+                },
+                "summary": {
+                    "enabled": True,
+                    "model": "broken-model",
+                    "base_url": "https://broken.example/v1",
+                    "timeout_seconds": 9,
+                    "max_chars_per_chunk": 1000,
+                },
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    window = MainWindow(recorder=recorder)
+
+    window.settings_storage_root_input.setText(str(tmp_path / "unsaved-data"))
+    window.settings_obs_host_input.setText("unsaved-host")
+    window.settings_secrets_env_file_input.setText(str(tmp_path / ".unsaved.env"))
+    window._set_combo_value(window.settings_theme_select, "light")
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window._set_combo_value(window.settings_transcription_model_select, "whisper-large-v3")
+
+    window.reset_processing_settings_button.click()
+    app.processEvents()
+    assert not window.processing_reset_overlay.isHidden()
+    assert window.processing_reset_overlay.title_label.text() == "Сбросить параметры обработки?"
+    window.processing_reset_overlay.confirm_button.click()
+    app.processEvents()
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["storage"]["root"] == str(tmp_path / "saved-data")
+    assert saved["obs"]["websocket_host"] == "127.0.0.1"
+    assert saved["obs"]["websocket_port"] == 4456
+    assert saved["obs"]["websocket_password"] == "saved-password"
+    assert saved["secrets"]["env_file"] == str(tmp_path / ".env.local")
+    assert saved["ui"]["theme"] == "dark"
+    assert saved["ui"]["floating_theme"] == "light"
+    assert saved["transcription"]["backend"] == "whisper_cli"
+    assert saved["summary"]["enabled"] is False
+    assert saved["summary"]["model"] == "gpt-5.4-mini"
+    assert window.settings_storage_root_input.text() == str(tmp_path / "saved-data")
+    assert window.settings_status_label.text() == "Параметры обработки сброшены и сохранены."
+    assert not window.settings_have_unsaved_changes()
+
+    window.close()
+    app.processEvents()
+
+
+def test_processing_reset_cancel_does_not_change_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    original = {
+        "storage": {"root": str(tmp_path / "data")},
+        "transcription": {
+            "backend": "aitunnel",
+            "backends": {"aitunnel": {"model": "whisper-1", "timeout_seconds": 42}},
+        },
+    }
+    config_path.write_text(
+        yaml.safe_dump(original, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(recorder=NoopRecorder())
+
+    window.reset_processing_settings_button.click()
+    app.processEvents()
+    window.processing_reset_overlay.cancel_button.click()
+    app.processEvents()
+
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == original
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_dirty_navigation_guard_save_discard_and_stay(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+
+    save_window = MainWindow(storage, recorder)
+    save_window._open_main_section(3)
+    save_window.settings_storage_root_input.setText(str(tmp_path / "saved-after-prompt"))
+    assert save_window.settings_have_unsaved_changes()
+    save_window.nav_buttons[2].click()
+    app.processEvents()
+    assert save_window.pages.currentIndex() == 3
+    assert save_window.nav_buttons[3].isChecked()
+    assert not save_window.nav_buttons[2].isChecked()
+    assert not save_window.settings_unsaved_changes_overlay.isHidden()
+    assert save_window.settings_unsaved_changes_overlay.title_label.text() == "Есть несохраненные настройки"
+    save_window.settings_unsaved_changes_overlay.save_button.click()
+    app.processEvents()
+    assert save_window.pages.currentIndex() == 2
+    assert not save_window.settings_have_unsaved_changes()
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))["storage"][
+        "root"
+    ] == str(tmp_path / "saved-after-prompt")
+    save_window.close()
+    (tmp_path / "config.yaml").unlink()
+
+    stay_storage = StorageService(tmp_path / "stay-data", recorder)
+    stay_window = MainWindow(stay_storage, recorder)
+    stay_window._open_main_section(3)
+    stay_window.settings_storage_root_input.setText(str(tmp_path / "stay-unsaved"))
+    stay_window.open_review()
+    app.processEvents()
+    stay_window.settings_unsaved_changes_overlay.stay_button.click()
+    app.processEvents()
+    assert stay_window.pages.currentIndex() == 3
+    assert stay_window.settings_storage_root_input.text() == str(tmp_path / "stay-unsaved")
+    assert stay_window.settings_have_unsaved_changes()
+    stay_window.close()
+
+    discard_storage = StorageService(tmp_path / "discard-data", recorder)
+    discard_window = MainWindow(discard_storage, recorder)
+    discard_window._open_main_section(3)
+    original_root = discard_window.settings_storage_root_input.text()
+    discard_window.settings_storage_root_input.setText(str(tmp_path / "discard-unsaved"))
+    discard_window._open_main_section(0)
+    app.processEvents()
+    discard_window.settings_unsaved_changes_overlay.discard_button.click()
+    app.processEvents()
+    assert discard_window.pages.currentIndex() == 0
+    assert discard_window.settings_storage_root_input.text() == original_root
+    assert not discard_window.settings_have_unsaved_changes()
+    discard_window.close()
+    app.processEvents()
+
+
+def test_settings_dirty_guard_ignores_internal_section_switch(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    window._open_main_section(3)
+    window.settings_storage_root_input.setText(str(tmp_path / "changed"))
+
+    window.settings_section_buttons["Запись"].click()
+    app.processEvents()
+
+    assert window.settings_sections.currentWidget() is window.settings_recording_section
+    assert not window.settings_unsaved_changes_overlay.isVisible()
+    assert window.settings_have_unsaved_changes()
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_dirty_close_guard_save_discard_and_stay(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+
+    stay_recorder = NoopRecorder()
+    stay_storage = StorageService(tmp_path / "close-stay-data", stay_recorder)
+    stay_window = MainWindow(stay_storage, stay_recorder)
+    stay_window._open_main_section(3)
+    stay_window.settings_storage_root_input.setText(str(tmp_path / "close-stay"))
+    event = CloseEventStub()
+    stay_window.closeEvent(event)
+    app.processEvents()
+    assert event.ignored
+    assert not stay_window.settings_unsaved_changes_overlay.isHidden()
+    assert stay_window.settings_unsaved_changes_overlay.message_label.text() == (
+        "Вы изменили настройки, но не сохранили их. Если закрыть приложение, изменения будут потеряны."
+    )
+    stay_window.settings_unsaved_changes_overlay.stay_button.click()
+    app.processEvents()
+    assert stay_window.pages.currentIndex() == 3
+    assert stay_window.settings_have_unsaved_changes()
+    stay_window.close()
+
+    save_recorder = NoopRecorder()
+    save_storage = StorageService(tmp_path / "close-save-data", save_recorder)
+    save_window = MainWindow(save_storage, save_recorder)
+    save_window._open_main_section(3)
+    save_window.settings_storage_root_input.setText(str(tmp_path / "close-save"))
+    save_window.closeEvent(CloseEventStub())
+    app.processEvents()
+    save_readiness_schedules: list[str] = []
+    save_close_requests: list[bool] = []
+    monkeypatch.setattr(
+        save_window,
+        "_schedule_readiness_autocheck",
+        lambda reason: save_readiness_schedules.append(reason),
+    )
+    monkeypatch.setattr(save_window, "close", lambda: save_close_requests.append(True))
+    save_window.settings_unsaved_changes_overlay.save_button.click()
+    app.processEvents()
+    assert not save_window.settings_have_unsaved_changes()
+    assert save_readiness_schedules == []
+    assert save_close_requests == [True]
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))["storage"][
+        "root"
+    ] == str(tmp_path / "close-save")
+    (tmp_path / "config.yaml").unlink()
+
+    discard_recorder = NoopRecorder()
+    discard_storage = StorageService(tmp_path / "close-discard-data", discard_recorder)
+    discard_window = MainWindow(discard_storage, discard_recorder)
+    discard_window._open_main_section(3)
+    original_root = discard_window.settings_storage_root_input.text()
+    discard_window.settings_storage_root_input.setText(str(tmp_path / "close-discard"))
+    discard_window.closeEvent(CloseEventStub())
+    app.processEvents()
+    discard_close_requests: list[bool] = []
+    monkeypatch.setattr(discard_window, "close", lambda: discard_close_requests.append(True))
+    discard_window.settings_unsaved_changes_overlay.discard_button.click()
+    app.processEvents()
+    assert discard_window.settings_storage_root_input.text() == original_root
+    assert not discard_window.settings_have_unsaved_changes()
+    assert discard_close_requests == [True]
+
+    app.processEvents()
+
+
+def test_sidebar_theme_toggle_keeps_other_unsaved_settings_dirty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    window._open_main_section(3)
+    changed_root = str(tmp_path / "unsaved-root")
+    window.settings_storage_root_input.setText(changed_root)
+
+    window.toggle_theme_from_sidebar()
+    window.nav_buttons[2].click()
+    app.processEvents()
+
+    assert window.settings_storage_root_input.text() == changed_root
+    assert window.settings_have_unsaved_changes()
+    assert window.pages.currentIndex() == 3
+    assert not window.settings_unsaved_changes_overlay.isHidden()
+
+    window.settings_unsaved_changes_overlay.discard_button.click()
     app.processEvents()
 
 
@@ -4494,17 +4859,15 @@ def test_archive_lifecycle_refresh_runs_in_summary_preview_mode(tmp_path: Path) 
     app.processEvents()
 
 
-def test_help_page_explains_local_flow(tmp_path: Path) -> None:
+def test_help_page_is_not_part_of_left_navigation(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
     storage = StorageService(tmp_path, recorder)
     window = MainWindow(storage, recorder)
 
-    window.nav_buttons[4].click()
-    help_text = "\n".join(label.text() for label in window.pages.widget(4).findChildren(QLabel))
-    assert "Основной сценарий" in help_text
-    assert "Local-first" in help_text
-    assert "Аудио и видео остаются локально" in help_text
+    assert 4 not in window.nav_buttons
+    assert "Справка" not in [button.text() for button in window.nav_buttons.values()]
+    assert window.pages.widget(4) is window.first_run_wizard
 
     window.close()
     app.processEvents()

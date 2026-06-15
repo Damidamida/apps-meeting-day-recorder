@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.branding import APP_DISPLAY_NAME, APP_ICON_RESOURCE
-from app.config import DEFAULT_CONFIG, load_config
+from app.config import DEFAULT_CONFIG, load_config, reset_processing_config
 from app.services.archive import (
     ArchiveDateFilter,
     ArchiveDay,
@@ -906,6 +906,153 @@ class RiskyActionConfirmationOverlay(QWidget):
         super().keyPressEvent(event)
 
 
+class SettingsUnsavedChangesOverlay(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("meetingOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._save_callback: Callable[[], None] | None = None
+        self._discard_callback: Callable[[], None] | None = None
+        self._stay_callback: Callable[[], None] | None = None
+        self.hide()
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addStretch(1)
+
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(24, 24, 24, 24)
+        center_row.addStretch(1)
+
+        self.card = QFrame()
+        self.card.setObjectName("meetingOverlayCard")
+        self.card.setFixedWidth(640)
+        shadow = QGraphicsDropShadowEffect(self.card)
+        shadow.setBlurRadius(32)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(58, 20, 8, 90))
+        self.card.setGraphicsEffect(shadow)
+
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        body = QWidget()
+        body.setObjectName("meetingOverlayBody")
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 22, 24, 18)
+        body_layout.setSpacing(12)
+        self.title_label = QLabel("Есть несохраненные настройки")
+        self.title_label.setObjectName("overlayTitle")
+        self.message_label = QLabel()
+        self.message_label.setObjectName("overlayMessage")
+        self.message_label.setWordWrap(True)
+        body_layout.addWidget(self.title_label)
+        body_layout.addWidget(self.message_label)
+        body.setLayout(body_layout)
+
+        footer = QWidget()
+        footer.setObjectName("meetingOverlayFooter")
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(24, 14, 16, 14)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch(1)
+        self.save_button = QPushButton()
+        self.save_button.setObjectName("dialogPrimaryButton")
+        self.save_button.clicked.connect(self._save)
+        self.discard_button = QPushButton()
+        self.discard_button.setObjectName("dialogButton")
+        self.discard_button.clicked.connect(self._discard)
+        self.stay_button = QPushButton("Остаться")
+        self.stay_button.setObjectName("dialogButton")
+        self.stay_button.clicked.connect(self._stay)
+        footer_layout.addWidget(self.save_button)
+        footer_layout.addWidget(self.discard_button)
+        footer_layout.addWidget(self.stay_button)
+        footer.setLayout(footer_layout)
+
+        card_layout.addWidget(body)
+        card_layout.addWidget(footer)
+        self.card.setLayout(card_layout)
+        center_row.addWidget(self.card, 0, Qt.AlignmentFlag.AlignCenter)
+        center_row.addStretch(1)
+        root_layout.addLayout(center_row)
+        root_layout.addStretch(1)
+        self.setLayout(root_layout)
+        self.apply_theme("light")
+
+    def apply_theme(self, theme: str) -> None:
+        self.setStyleSheet(StartMeetingOverlay._overlay_style(theme))
+
+    def open_for_navigation(
+        self,
+        save_callback: Callable[[], None],
+        discard_callback: Callable[[], None],
+        stay_callback: Callable[[], None] | None = None,
+    ) -> None:
+        self.title_label.setText("Есть несохраненные настройки")
+        self.message_label.setText(
+            "Вы изменили настройки, но не сохранили их. Если уйти с экрана, изменения будут потеряны."
+        )
+        self.save_button.setText("Сохранить и продолжить")
+        self.discard_button.setText("Не сохранять")
+        self._open(save_callback, discard_callback, stay_callback)
+
+    def open_for_close(
+        self,
+        save_callback: Callable[[], None],
+        discard_callback: Callable[[], None],
+        stay_callback: Callable[[], None] | None = None,
+    ) -> None:
+        self.title_label.setText("Есть несохраненные настройки")
+        self.message_label.setText(
+            "Вы изменили настройки, но не сохранили их. Если закрыть приложение, изменения будут потеряны."
+        )
+        self.save_button.setText("Сохранить и закрыть")
+        self.discard_button.setText("Закрыть без сохранения")
+        self._open(save_callback, discard_callback, stay_callback)
+
+    def _open(
+        self,
+        save_callback: Callable[[], None],
+        discard_callback: Callable[[], None],
+        stay_callback: Callable[[], None] | None,
+    ) -> None:
+        self._save_callback = save_callback
+        self._discard_callback = discard_callback
+        self._stay_callback = stay_callback
+        if self.parentWidget() is not None:
+            self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.stay_button.setFocus()
+
+    def _save(self) -> None:
+        callback = self._save_callback
+        self.hide()
+        if callback is not None:
+            callback()
+
+    def _discard(self) -> None:
+        callback = self._discard_callback
+        self.hide()
+        if callback is not None:
+            callback()
+
+    def _stay(self) -> None:
+        callback = self._stay_callback
+        self.hide()
+        if callback is not None:
+            callback()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._stay()
+            return
+        super().keyPressEvent(event)
+
+
 class FloatingMeetingControl(QWidget):
     start_workday_requested = Signal()
     start_meeting_requested = Signal(str)
@@ -1443,7 +1590,6 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._create_review_page())
         self.pages.addWidget(self._create_archive_page())
         self.pages.addWidget(self._create_settings_page())
-        self.pages.addWidget(self._create_help_page())
         self.first_run_wizard = FirstRunWizard(
             self.config,
             self.setup_state,
@@ -1486,6 +1632,13 @@ class MainWindow(QMainWindow):
         self.risky_action_confirmation_overlay = RiskyActionConfirmationOverlay(container)
         self.risky_action_confirmation_overlay.apply_theme(self.current_theme)
         self._resize_risky_action_confirmation_overlay()
+        self.processing_reset_overlay = RiskyActionConfirmationOverlay(container)
+        self.processing_reset_overlay.apply_theme(self.current_theme)
+        self.processing_reset_overlay.confirmed.connect(self._confirm_processing_settings_reset)
+        self._resize_processing_reset_overlay()
+        self.settings_unsaved_changes_overlay = SettingsUnsavedChangesOverlay(container)
+        self.settings_unsaved_changes_overlay.apply_theme(self.current_theme)
+        self._resize_settings_unsaved_changes_overlay()
         self.floating_control = FloatingMeetingControl()
         self.floating_control.apply_theme(self._effective_floating_theme())
         self.floating_control.start_workday_requested.connect(self.start_workday)
@@ -1536,6 +1689,10 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(self._setup_block_message())
             self.pages.setCurrentIndex(self.first_run_page_index)
             return
+        if index == self.pages.currentIndex():
+            return
+        if not self._guard_settings_leave(lambda: self._open_main_section(index)):
+            return
         self.pages.setCurrentIndex(index)
 
     def open_setup_wizard(self) -> None:
@@ -1585,6 +1742,8 @@ class MainWindow(QMainWindow):
         self._resize_start_meeting_overlay()
         self._resize_safety_close_overlay()
         self._resize_risky_action_confirmation_overlay()
+        self._resize_processing_reset_overlay()
+        self._resize_settings_unsaved_changes_overlay()
 
     def _resize_start_meeting_overlay(self) -> None:
         if not hasattr(self, "start_meeting_overlay"):
@@ -1606,6 +1765,20 @@ class MainWindow(QMainWindow):
         parent = self.risky_action_confirmation_overlay.parentWidget()
         if parent is not None:
             self.risky_action_confirmation_overlay.setGeometry(parent.rect())
+
+    def _resize_processing_reset_overlay(self) -> None:
+        if not hasattr(self, "processing_reset_overlay"):
+            return
+        parent = self.processing_reset_overlay.parentWidget()
+        if parent is not None:
+            self.processing_reset_overlay.setGeometry(parent.rect())
+
+    def _resize_settings_unsaved_changes_overlay(self) -> None:
+        if not hasattr(self, "settings_unsaved_changes_overlay"):
+            return
+        parent = self.settings_unsaved_changes_overlay.parentWidget()
+        if parent is not None:
+            self.settings_unsaved_changes_overlay.setGeometry(parent.rect())
 
     def show_floating_control(self) -> None:
         if self._setup_blocks_work():
@@ -1689,7 +1862,6 @@ class MainWindow(QMainWindow):
         self._add_nav_button(layout, 1, "Ревью", self.open_review)
         self._add_nav_button(layout, 2, "Архив", self.open_archive)
         self._add_nav_button(layout, 3, "Настройки", lambda: self._open_main_section(3))
-        self._add_nav_button(layout, 4, "Справка", lambda: self._open_main_section(4))
         layout.addStretch()
         self.theme_toggle_button = ThemeToggleButton()
         self.theme_toggle_button.set_theme(self.current_theme)
@@ -1740,6 +1912,13 @@ class MainWindow(QMainWindow):
         self.config.setdefault("ui", {})["theme"] = next_theme
         if hasattr(self, "settings_theme_select"):
             self._set_combo_value(self.settings_theme_select, next_theme)
+            if hasattr(self, "settings_saved_config_snapshot"):
+                saved_snapshot = deepcopy(self.settings_saved_config_snapshot)
+                saved_ui = saved_snapshot.get("ui")
+                saved_ui = dict(saved_ui) if isinstance(saved_ui, dict) else {}
+                saved_ui["theme"] = next_theme
+                saved_snapshot["ui"] = saved_ui
+                self.settings_saved_config_snapshot = saved_snapshot
         self._apply_theme_settings(update_theme_toggle=False)
         if hasattr(self, "theme_toggle_button"):
             self.theme_toggle_button.set_theme(next_theme, animated=True)
@@ -2478,6 +2657,10 @@ class MainWindow(QMainWindow):
             self.safety_close_overlay.apply_theme(self.current_theme)
         if hasattr(self, "risky_action_confirmation_overlay"):
             self.risky_action_confirmation_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "processing_reset_overlay"):
+            self.processing_reset_overlay.apply_theme(self.current_theme)
+        if hasattr(self, "settings_unsaved_changes_overlay"):
+            self.settings_unsaved_changes_overlay.apply_theme(self.current_theme)
         if hasattr(self, "review_summary_view"):
             self.review_summary_view.apply_theme(self.current_theme)
         if hasattr(self, "archive_summary_view"):
@@ -3412,6 +3595,10 @@ class MainWindow(QMainWindow):
             return
         if self._has_meeting_processing_work():
             if self.allow_close_with_processing:
+                if self.settings_have_unsaved_changes():
+                    event.ignore()
+                    self._show_unsaved_settings_close_prompt()
+                    return
                 if hasattr(self, "floating_control"):
                     self.floating_control.close_from_app()
                 super().closeEvent(event)
@@ -3421,6 +3608,10 @@ class MainWindow(QMainWindow):
             return
         if self._has_day_summary_processing_work():
             if self.allow_close_with_processing:
+                if self.settings_have_unsaved_changes():
+                    event.ignore()
+                    self._show_unsaved_settings_close_prompt()
+                    return
                 if hasattr(self, "floating_control"):
                     self.floating_control.close_from_app()
                 super().closeEvent(event)
@@ -3433,6 +3624,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 "Дождитесь завершения проверки готовности перед закрытием приложения."
             )
+            return
+        if self.settings_have_unsaved_changes():
+            event.ignore()
+            self._show_unsaved_settings_close_prompt()
             return
         if hasattr(self, "floating_control"):
             self.floating_control.close_from_app()
@@ -3752,6 +3947,9 @@ class MainWindow(QMainWindow):
             self.settings_section_buttons[title] = button
             section_buttons_layout.addWidget(button)
         section_buttons_layout.addStretch(1)
+        self.save_settings_button = self._add_button(
+            section_buttons_layout, "Сохранить настройки", self.save_settings, "primaryButton"
+        )
         sections_layout.addLayout(section_buttons_layout)
         layout.addWidget(self._create_card("Разделы настроек", sections_layout))
 
@@ -3765,21 +3963,8 @@ class MainWindow(QMainWindow):
         self.settings_sections.addWidget(self.settings_transcription_section)
         self.settings_sections.addWidget(self.settings_summary_section)
         layout.addWidget(self.settings_sections)
-        self._show_settings_section(3)
-
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(8)
-        self.save_settings_button = self._add_button(
-            actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
-        )
-        self.open_setup_wizard_button = self._add_button(
-            actions_layout,
-            "Открыть мастер настройки",
-            self.open_setup_wizard,
-            "headerButton",
-        )
-        actions_layout.addStretch(1)
-        layout.addLayout(actions_layout)
+        self._show_settings_section(0)
+        self.settings_saved_config_snapshot = self._capture_settings_state()
         self.settings_status_label = QLabel(
             "Настройки сохраняются в локальный config.yaml. Файл не должен попадать в git."
         )
@@ -3867,6 +4052,27 @@ class MainWindow(QMainWindow):
             )
         )
         layout.addWidget(self._create_card("Интерфейс", ui_layout))
+
+        processing_layout = QVBoxLayout()
+        processing_layout.setSpacing(10)
+        processing_text = QLabel(
+            "Если настройки транскрипции или AI-итогов были изменены неудачно, "
+            "можно вернуть технические параметры обработки к рабочим значениям."
+        )
+        processing_text.setObjectName("sectionHint")
+        processing_text.setWordWrap(True)
+        processing_layout.addWidget(processing_text)
+        processing_actions = QHBoxLayout()
+        processing_actions.setSpacing(8)
+        self.reset_processing_settings_button = self._add_button(
+            processing_actions,
+            "Сбросить параметры обработки",
+            self.request_processing_settings_reset,
+            "dangerButton",
+        )
+        processing_actions.addStretch(1)
+        processing_layout.addLayout(processing_actions)
+        layout.addWidget(self._create_card("Параметры обработки", processing_layout))
 
         layout.addStretch(1)
         page.setLayout(layout)
@@ -4972,6 +5178,10 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(self._setup_block_message())
             self.pages.setCurrentIndex(self.first_run_page_index)
             return
+        if self.pages.currentIndex() == 2:
+            return
+        if not self._guard_settings_leave(self.open_archive):
+            return
         self.pages.setCurrentIndex(2)
         self.refresh_archive()
 
@@ -5552,59 +5762,6 @@ class MainWindow(QMainWindow):
     def archive_reprocess_meeting(self, meeting_folder: Path) -> None:
         self.reprocess_meeting(meeting_folder)
         self.refresh_archive()
-
-    def _create_help_page(self) -> QWidget:
-        page = QWidget()
-        self._prepare_page_surface(page)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
-        layout.addWidget(
-            self._create_page_header(
-                "Справка",
-                "Краткая памятка по локальному рабочему сценарию.",
-            )
-        )
-
-        flow_layout = QVBoxLayout()
-        flow_text = QLabel(
-            "1. Начните рабочий день.\n"
-            "2. Начните встречу в блоке `Активный созвон`.\n"
-            "3. Завершите встречу: запись остановится, а обработка пойдет в фоне.\n"
-            "4. При необходимости сразу начните следующую встречу.\n"
-            "5. Завершите рабочий день.\n"
-            "6. Откройте `Ревью`, проверьте итоги и сохраните изменения."
-        )
-        flow_text.setObjectName("sectionHint")
-        flow_text.setWordWrap(True)
-        flow_layout.addWidget(flow_text)
-        layout.addWidget(self._create_card("Основной сценарий", flow_layout))
-
-        local_layout = QVBoxLayout()
-        local_text = QLabel(
-            "Аудио и видео остаются локально. Для генерации итогов во внешний OpenAI-compatible "
-            "endpoint отправляется только текст transcript. `config.yaml`, `.env`, записи, "
-            "аудио, transcript и summary-файлы нельзя добавлять в git."
-        )
-        local_text.setObjectName("sectionHint")
-        local_text.setWordWrap(True)
-        local_layout.addWidget(local_text)
-        layout.addWidget(self._create_card("Local-first и безопасность", local_layout))
-
-        services_layout = QVBoxLayout()
-        services_text = QLabel(
-            "OBS управляет записью, FFmpeg локально извлекает audio.wav, Whisper/faster-whisper "
-            "локально готовит transcript, а Summary generation создает итоги встречи "
-            "из готового текста transcript."
-        )
-        services_text.setObjectName("sectionHint")
-        services_text.setWordWrap(True)
-        services_layout.addWidget(services_text)
-        layout.addWidget(self._create_card("Сервисы", services_layout))
-
-        layout.addStretch(1)
-        page.setLayout(layout)
-        return page
 
     @staticmethod
     def _add_button(
@@ -6630,6 +6787,10 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(self._setup_block_message())
             self.pages.setCurrentIndex(self.first_run_page_index)
             return
+        if self.pages.currentIndex() == 1:
+            return
+        if not self._guard_settings_leave(self.open_review):
+            return
         self.pages.setCurrentIndex(1)
         self.refresh_review()
 
@@ -6958,6 +7119,135 @@ class MainWindow(QMainWindow):
             return None
         return str(storage_root_path), storage_root_path
 
+    def settings_have_unsaved_changes(self) -> bool:
+        if not hasattr(self, "settings_saved_config_snapshot"):
+            return False
+        try:
+            current_state = self._capture_settings_state()
+        except ValueError:
+            return True
+        return current_state != self.settings_saved_config_snapshot
+
+    def _capture_settings_state(self) -> dict[str, object]:
+        return self._settings_config_from_ui()
+
+    def _reload_settings_from_saved_config(self) -> None:
+        self.config = load_config(Path("config.yaml"))
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        self._load_settings_ui_from_config()
+        self.settings_saved_config_snapshot = self._capture_settings_state()
+
+    def _load_settings_ui_from_config(self) -> None:
+        self.settings_storage_root_input.setText(str(self.config["storage"]["root"]))
+        self.settings_obs_host_input.setText(str(self.config["obs"]["websocket_host"]))
+        self.settings_obs_port_input.setValue(int(self.config["obs"]["websocket_port"]))
+        self.settings_obs_password_input.setText(str(self.config["obs"]["websocket_password"]))
+        self.settings_secrets_env_file_input.setText(
+            str(self.config.get("secrets", {}).get("env_file", ""))
+        )
+        self._set_combo_value(
+            self.settings_theme_select,
+            str(self.config.get("ui", {}).get("theme", "light")),
+        )
+        self._set_combo_value(
+            self.settings_floating_theme_select,
+            str(self.config.get("ui", {}).get("floating_theme", "inherit")),
+        )
+
+        self.settings_transcription_profiles = deepcopy(
+            self.config["transcription"].get("backends", {})
+        )
+        backend = str(self.config["transcription"]["backend"])
+        self.settings_current_transcription_backend = backend
+        backend_signals_blocked = self.settings_transcription_backend_select.blockSignals(True)
+        self._set_combo_value(self.settings_transcription_backend_select, backend)
+        self.settings_transcription_backend_select.blockSignals(backend_signals_blocked)
+        self._load_transcription_profile_into_settings(backend)
+        self._update_transcription_settings_visibility()
+
+        self.settings_summary_enabled_checkbox.setChecked(bool(self.config["summary"]["enabled"]))
+        self._load_summary_model_settings(str(self.config["summary"]["model"]))
+        self.settings_summary_timeout_input.setValue(int(self.config["summary"]["timeout_seconds"]))
+        self.settings_summary_chunk_input.setValue(
+            int(self.config["summary"]["max_chars_per_chunk"])
+        )
+        self.settings_summary_templates = self._summary_templates_for_settings()
+        for kind in ("meeting", "day"):
+            if kind in self.settings_summary_template_title_inputs:
+                template = self.settings_summary_templates[kind]
+                self.settings_summary_template_title_inputs[kind].setText(
+                    str(template.get("title") or "")
+                )
+                self.settings_summary_template_rules_inputs[kind].setPlainText(
+                    str(template.get("rules") or "")
+                )
+                self._refresh_summary_template_sections(kind)
+                self._refresh_summary_template_previews(kind)
+
+    def _guard_settings_leave(self, continue_action: Callable[[], None]) -> bool:
+        if self.pages.currentIndex() != 3 or not self.settings_have_unsaved_changes():
+            return True
+        self.settings_unsaved_changes_overlay.open_for_navigation(
+            lambda: self._save_settings_then_continue(continue_action),
+            lambda: self._discard_settings_then_continue(continue_action),
+        )
+        self._refresh_navigation_state(self.pages.currentIndex())
+        return False
+
+    def _save_settings_then_continue(self, continue_action: Callable[[], None]) -> None:
+        if self.save_settings():
+            continue_action()
+
+    def _discard_settings_then_continue(self, continue_action: Callable[[], None]) -> None:
+        self._reload_settings_from_saved_config()
+        continue_action()
+
+    def _show_unsaved_settings_close_prompt(self) -> None:
+        self.settings_unsaved_changes_overlay.open_for_close(
+            self._save_settings_then_close,
+            self._discard_settings_then_close,
+        )
+
+    def _save_settings_then_close(self) -> None:
+        if self.save_settings(schedule_readiness=False):
+            self.close()
+
+    def _discard_settings_then_close(self) -> None:
+        self._reload_settings_from_saved_config()
+        self.close()
+
+    def request_processing_settings_reset(self) -> None:
+        self.processing_reset_overlay.open_confirmation(
+            "Сбросить параметры обработки?",
+            "Будут восстановлены модели, лимиты, таймауты, retry и параметры обработки. "
+            "Папка данных, OBS, ключи, файл .env, тема и рабочие дни не изменятся.",
+            "Сбросить",
+        )
+
+    def _confirm_processing_settings_reset(self) -> None:
+        config_path = Path("config.yaml")
+        saved_config = load_config(config_path)
+        config_to_save = reset_processing_config(saved_config)
+        try:
+            self._write_local_config(config_to_save)
+        except OSError as error:
+            self.settings_status_label.setText(
+                f"Параметры обработки не сброшены: не удалось записать config.yaml. {error}"
+            )
+            return
+        self.config = load_config(config_path)
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        self._load_settings_ui_from_config()
+        self.settings_saved_config_snapshot = self._capture_settings_state()
+        self._invalidate_readiness_check_after_settings_change()
+        if self._has_processing_work():
+            self.pending_runtime_settings = True
+        else:
+            self.pending_runtime_settings = False
+            self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+            self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        self.settings_status_label.setText("Параметры обработки сброшены и сохранены.")
+
     @staticmethod
     def _write_local_config(config_to_save: dict[str, object]) -> None:
         config_path = Path("config.yaml")
@@ -7014,24 +7304,24 @@ class MainWindow(QMainWindow):
         config_to_save["ui"] = ui_config
         return config_to_save
 
-    def save_settings(self) -> None:
+    def save_settings(self, *, schedule_readiness: bool = True) -> bool:
         storage_root = self._validate_storage_root_from_settings()
         if storage_root is None:
-            return
+            return False
         storage_root_text, storage_root_path = storage_root
         config_path = Path("config.yaml")
         try:
             config_to_save = self._settings_config_from_ui(storage_root_text)
         except ValueError as error:
             self.settings_status_label.setText(f"Настройки не сохранены: {error}")
-            return
+            return False
         try:
             self._write_local_config(config_to_save)
         except OSError as error:
             self.settings_status_label.setText(
                 f"Настройки не сохранены: не удалось записать config.yaml. {error}"
             )
-            return
+            return False
         readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         self.config = load_config(config_path)
         self.setup_state = normalize_setup_config(self.config.get("setup", {}))
@@ -7042,14 +7332,17 @@ class MainWindow(QMainWindow):
         self._refresh_all_summary_template_previews()
         self._apply_theme_settings()
         self._apply_runtime_settings_after_save(storage_root_path)
-        if readiness_invalidated:
+        if schedule_readiness and readiness_invalidated:
             self._append_settings_status(
                 "Проверка готовности выполнялась со старыми настройками. "
                 "После завершения будет запущена повторная проверка."
             )
-        elif self.isVisible():
+        elif schedule_readiness and self.isVisible():
             self._append_settings_status("Проверка готовности запущена автоматически.")
-        self._schedule_readiness_autocheck("settings")
+        if schedule_readiness:
+            self._schedule_readiness_autocheck("settings")
+        self.settings_saved_config_snapshot = self._capture_settings_state()
+        return True
 
     def _invalidate_readiness_check_after_settings_change(self) -> bool:
         self.readiness_check_stale = True
