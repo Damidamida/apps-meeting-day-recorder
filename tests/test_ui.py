@@ -2844,6 +2844,62 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     app.processEvents()
 
 
+def test_settings_screen_applies_obs_recorder_without_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window.settings_storage_root_input.setText(str(tmp_path / "data"))
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+
+    window.save_settings()
+
+    assert window.recorder.host == "127.0.0.1"
+    assert window.recorder.port == 4456
+    assert window.recorder._password == "secret"
+    assert window.storage.recorder is window.recorder
+
+    window.close()
+    app.processEvents()
+
+
+def test_pending_runtime_settings_apply_obs_recorder_after_processing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window.day_summary_running = True
+    window.settings_storage_root_input.setText(str(tmp_path / "data"))
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+
+    window.save_settings()
+
+    assert window.pending_runtime_settings is True
+    assert window.recorder.host == "localhost"
+
+    window.day_summary_running = False
+    window.apply_pending_runtime_settings()
+
+    assert window.pending_runtime_settings is False
+    assert window.recorder.host == "127.0.0.1"
+    assert window.recorder.port == 4456
+    assert window.recorder._password == "secret"
+    assert window.storage.recorder is window.recorder
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_selects_storage_folder_with_windows_dialog(
     tmp_path: Path, monkeypatch
 ) -> None:

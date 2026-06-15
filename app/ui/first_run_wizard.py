@@ -692,7 +692,11 @@ class FirstRunWizard(QWidget):
                 port=obs_config["websocket_port"],
                 password=obs_config["websocket_password"],
             )
-            recorder.check_connection()
+            check_recording_api = getattr(recorder, "check_recording_api", None)
+            if callable(check_recording_api):
+                check_recording_api()
+            else:
+                recorder.check_connection()
             return True, "OBS подключен."
 
         worker = FirstRunCheckWorker(

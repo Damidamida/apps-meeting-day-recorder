@@ -60,6 +60,20 @@ class SuccessfulRecorder:
         self.calls += 1
 
 
+class RecordingApiRecorder:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.connection_calls = 0
+        self.recording_api_calls = 0
+
+    def check_connection(self) -> None:
+        self.connection_calls += 1
+
+    def check_recording_api(self) -> None:
+        self.recording_api_calls += 1
+
+
 class RecordingObsRecorderFactory:
     def __init__(self, recorder, expected_password: str = "") -> None:
         self.recorder = recorder
@@ -407,6 +421,27 @@ def test_obs_check_uses_entered_websocket_settings(monkeypatch) -> None:
             "password_matches": True,
         }
     ]
+
+    wizard.close()
+
+
+def test_obs_check_verifies_recording_api_not_only_connection() -> None:
+    app = _app()
+    recorder = RecordingApiRecorder()
+    factory = RecordingObsRecorderFactory(recorder)
+    wizard = FirstRunWizard(
+        {},
+        _state_on_obs_step(),
+        obs_recorder_factory=factory,
+    )
+    wizard.show()
+    app.processEvents()
+
+    wizard.check_obs()
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["obs"].status == "ok")
+    assert recorder.recording_api_calls == 1
+    assert recorder.connection_calls == 0
 
     wizard.close()
 
@@ -879,5 +914,43 @@ def test_setup_completion_reloads_storage_state_and_restores_floating_control(
         "refresh_buttons",
         "show_floating_control",
     ]
+
+    window.close()
+
+
+def test_setup_completion_applies_obs_recorder_without_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app()
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path / "config.yaml", setup_completed=False)
+    window = MainWindow()
+    app.processEvents()
+
+    setup = default_setup_config()
+    setup["completed"] = True
+    setup["version"] = 1
+    for step in setup["steps"].values():
+        step["status"] = "ok"
+        step["message"] = "Готово"
+
+    window._on_first_run_completed(
+        {
+            **window.config,
+            "storage": {"root": str(tmp_path / "data")},
+            "obs": {
+                "websocket_host": "127.0.0.1",
+                "websocket_port": 4456,
+                "websocket_password": "secret",
+            },
+            "setup": setup,
+        }
+    )
+
+    assert window.recorder.host == "127.0.0.1"
+    assert window.recorder.port == 4456
+    assert window.recorder._password == "secret"
+    assert window.storage.recorder is window.recorder
 
     window.close()

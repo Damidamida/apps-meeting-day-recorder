@@ -1673,6 +1673,16 @@ class MainWindow(QMainWindow):
             config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
         return config
 
+    def _apply_obs_runtime_config(self) -> None:
+        self.recorder = create_recorder(self.config["obs"])
+        self.storage.recorder = self.recorder
+        if hasattr(self, "start_meeting_overlay"):
+            self.start_meeting_overlay.update_recorder_state(self.recorder)
+        if hasattr(self, "obs_status_value"):
+            self.obs_status_value.setText(self.recorder.status_text)
+        if hasattr(self, "floating_control"):
+            self._refresh_floating_control()
+
     def _should_show_setup_on_startup(self) -> bool:
         return self.setup_gate_enabled and should_show_wizard_on_startup(self.setup_state)
 
@@ -1711,6 +1721,7 @@ class MainWindow(QMainWindow):
         self.config = self._config_for_save(config)
         self.setup_state = normalize_setup_config(self.config.get("setup", {}))
         self._write_local_config(self.config)
+        self._apply_obs_runtime_config()
         self.storage.root = Path(self.config["storage"]["root"])
         self.storage.load_today_state()
         self.past_workday_folder = self.storage.find_past_active_workday()
@@ -7436,6 +7447,7 @@ class MainWindow(QMainWindow):
                 f"следующие встречи будут использовать обновленные настройки.{storage_message}"
             )
             return
+        self._apply_obs_runtime_config()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
         if storage_change_deferred:
@@ -7458,6 +7470,7 @@ class MainWindow(QMainWindow):
     def apply_pending_runtime_settings(self) -> None:
         applied = False
         if self.pending_runtime_settings and not self._has_processing_work():
+            self._apply_obs_runtime_config()
             self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
             self.storage.summarizer = create_summarizer(self._summary_runtime_config())
             self.pending_runtime_settings = False

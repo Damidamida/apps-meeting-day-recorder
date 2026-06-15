@@ -138,6 +138,23 @@ def test_create_recorder_ignores_legacy_obs_enabled_flag() -> None:
     assert recorder.port == 4456
 
 
+def test_obs_recorder_recording_api_check_queries_record_status(monkeypatch) -> None:
+    calls = []
+    recorder = ObsRecorder()
+
+    class FakeClient:
+        def get_version(self):
+            calls.append("version")
+
+        def get_record_status(self):
+            calls.append("record_status")
+
+    monkeypatch.setattr(recorder, "_new_client", lambda: FakeClient())
+
+    assert recorder.check_recording_api() == "OBS: подключен"
+    assert calls == ["version", "record_status"]
+
+
 def test_fake_recorder_updates_meeting_metadata(tmp_path) -> None:
     transcriber = FakeTranscriber()
     storage = StorageService(tmp_path, FakeRecorder(), FakeAudioExtractor(), transcriber)

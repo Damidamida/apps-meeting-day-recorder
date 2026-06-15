@@ -23,6 +23,8 @@ class Recorder(Protocol):
 
     def check_connection(self) -> str: ...
 
+    def check_recording_api(self) -> str: ...
+
     def start_recording(self, meeting_folder: Path) -> RecorderResult: ...
 
     def stop_recording(self) -> RecorderResult: ...
@@ -33,6 +35,9 @@ class NoopRecorder:
     status_text = "OBS: тестовый режим без записи"
 
     def check_connection(self) -> str:
+        return self.status_text
+
+    def check_recording_api(self) -> str:
         return self.status_text
 
     def start_recording(self, meeting_folder: Path) -> RecorderResult:
@@ -67,6 +72,17 @@ class ObsRecorder:
         try:
             client = self._new_client()
             client.get_version()
+        except Exception as error:
+            self.status_text = "OBS: недоступен"
+            raise RecorderError(OBS_UNAVAILABLE_MESSAGE) from error
+        self.status_text = "OBS: подключен"
+        return self.status_text
+
+    def check_recording_api(self) -> str:
+        try:
+            client = self._new_client()
+            client.get_version()
+            client.get_record_status()
         except Exception as error:
             self.status_text = "OBS: недоступен"
             raise RecorderError(OBS_UNAVAILABLE_MESSAGE) from error
