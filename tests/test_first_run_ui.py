@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -265,6 +266,51 @@ def test_first_run_wizard_transcription_models_are_fixed_per_backend() -> None:
         wizard.transcription_model_select.itemData(index)
         for index in range(wizard.transcription_model_select.count())
     ] == ["tiny", "base", "small", "medium", "large", "turbo"]
+
+    wizard.close()
+
+
+def test_first_run_wizard_saves_faster_whisper_with_local_model() -> None:
+    app = _app()
+    wizard = FirstRunWizard({}, _state_on_aitunnel_step())
+    wizard.show()
+    app.processEvents()
+    wizard.transcription_backend_select.setCurrentText("faster-whisper")
+
+    assert wizard.transcription_model_select.currentData() == "base"
+
+    with patch("app.services.first_run.importlib.util.find_spec", return_value=object()):
+        wizard.check_transcription()
+
+    assert wizard.config["transcription"]["backend"] == "faster_whisper"
+    assert wizard.config["transcription"]["model"] == "base"
+    assert (
+        wizard.config["transcription"]["backends"]["faster_whisper"]["model"]
+        == "base"
+    )
+    assert wizard.state.values["transcription_backend"] == "faster_whisper"
+    assert wizard.state.values["transcription_model"] == "base"
+
+    wizard.close()
+
+
+def test_first_run_wizard_saves_whisper_cli_with_local_model() -> None:
+    app = _app()
+    wizard = FirstRunWizard({}, _state_on_aitunnel_step())
+    wizard.show()
+    app.processEvents()
+    wizard.transcription_backend_select.setCurrentText("Whisper CLI")
+
+    assert wizard.transcription_model_select.currentData() == "base"
+
+    with patch("app.services.first_run.shutil.which", return_value="C:/tools/whisper.exe"):
+        wizard.check_transcription()
+
+    assert wizard.config["transcription"]["backend"] == "whisper_cli"
+    assert wizard.config["transcription"]["model"] == "base"
+    assert wizard.config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
+    assert wizard.state.values["transcription_backend"] == "whisper_cli"
+    assert wizard.state.values["transcription_model"] == "base"
 
     wizard.close()
 

@@ -569,6 +569,21 @@ def test_create_transcriber_uses_configured_backend() -> None:
     assert transcriber.vad_filter is False
 
 
+def test_create_transcriber_uses_whisper_cli_backend() -> None:
+    transcriber = create_transcriber(
+        {
+            "backend": "whisper_cli",
+            "model": "small",
+            "language": "ru",
+            "whisper_command": "whisper-local",
+        }
+    )
+
+    assert isinstance(transcriber, LocalWhisperTranscriber)
+    assert transcriber.model_name == "small"
+    assert transcriber.whisper_command == "whisper-local"
+
+
 def test_create_transcriber_uses_aitunnel_backend_with_external_default_model() -> None:
     transcriber = create_transcriber(
         {

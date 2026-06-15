@@ -147,6 +147,8 @@ def transcription_model_options_for_backend(backend: str) -> tuple[tuple[str, st
 
 def default_transcription_model_for_backend(backend: str) -> str:
     options = transcription_model_options_for_backend(backend)
+    if any(value == "base" for value, _label in options):
+        return "base"
     return options[0][0]
 
 

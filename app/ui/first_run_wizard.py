@@ -847,6 +847,8 @@ class FirstRunWizard(QWidget):
         model = self.transcription_model_select.currentData()
         if not isinstance(model, str) or not model:
             model = default_transcription_model_for_backend(str(backend))
+        self.state.values["transcription_backend"] = backend
+        self.state.values["transcription_model"] = model
         self.config.setdefault("transcription", {})["backend"] = backend
         self.config["transcription"]["model"] = model
         self.config["transcription"].setdefault("backends", {}).setdefault(backend, {})[
