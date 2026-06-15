@@ -50,6 +50,12 @@ class FrozenArchiveDateTime(datetime):
         return cls(2026, 6, 15, 12, 0, tzinfo=tz)
 
 
+class FrozenFirstDayArchiveDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None) -> datetime:
+        return cls(2026, 6, 1, 12, 0, tzinfo=tz)
+
+
 @pytest.fixture(autouse=True)
 def isolate_ui_tests_from_repo_config(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
@@ -4091,6 +4097,33 @@ def test_archive_manual_invalid_range_shows_empty_state_without_crash(
     assert not window.archive_status_label.isHidden()
     assert "Дата `с` не может быть позже даты `по`." in window.archive_status_label.text()
     assert window.archive_empty_state.text().startswith("В выбранном диапазоне нет прошлых рабочих дней.")
+
+    window.close()
+    app.processEvents()
+
+
+def test_archive_month_preset_empty_on_first_day_does_not_show_manual_range_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main_window_module, "datetime", FrozenFirstDayArchiveDateTime)
+    monkeypatch.setattr(archive_module, "datetime", FrozenFirstDayArchiveDateTime)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path, recorder)
+    may_day = storage.create_day_folder(date(2026, 5, 31))
+    storage._write_json(may_day / "day_metadata.json", {"date": may_day.name, "status": "ended"})
+
+    window = MainWindow(storage, recorder)
+    window.open_archive()
+    window.set_archive_period("month")
+
+    assert window.archive_month_button.isChecked()
+    assert not window.archive_manual_range
+    assert not window.archive_week_button.isHidden()
+    assert window.archive_days == []
+    assert "Дата `с` не может быть позже даты `по`." not in window.archive_status_label.text()
+    assert window.archive_status_label.isHidden()
 
     window.close()
     app.processEvents()

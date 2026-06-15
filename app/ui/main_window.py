@@ -5088,7 +5088,13 @@ class MainWindow(QMainWindow):
         self._sync_archive_manual_range_ui()
         self.archive_query = self.archive_search_input.text().strip()
         date_filter = self._archive_date_filter()
-        if date_filter and date_filter.start and date_filter.end and date_filter.start > date_filter.end:
+        if (
+            self.archive_manual_range
+            and date_filter
+            and date_filter.start is not None
+            and date_filter.end is not None
+            and date_filter.start > date_filter.end
+        ):
             self._set_archive_status("Дата `с` не может быть позже даты `по`.")
             self.archive_days = []
             self.archive_matches = []
