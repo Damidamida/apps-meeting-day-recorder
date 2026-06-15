@@ -14,6 +14,8 @@ from app.services.first_run import (
     check_transcription_settings,
     default_data_root,
     default_setup_config,
+    mark_step_error,
+    mark_step_ok,
     normalize_setup_config,
     reset_from_step,
     should_show_wizard_on_startup,
@@ -61,6 +63,26 @@ def test_reset_from_aitunnel_resets_dependent_steps() -> None:
     assert reset.steps["transcription"].status == "locked"
     assert reset.steps["summary"].status == "locked"
     assert reset.steps["finish"].status == "locked"
+
+
+def test_mark_step_error_keeps_current_error_and_locks_following_steps() -> None:
+    state = normalize_setup_config(default_setup_config())
+    state = mark_step_ok(state, "data_root", "Готово")
+
+    state = mark_step_error(
+        state,
+        "obs",
+        "OBS не подключен. Запустите OBS и проверьте WebSocket.",
+    )
+
+    assert state.current_step == "obs"
+    assert state.steps["data_root"].status == "ok"
+    assert state.steps["obs"].status == "error"
+    assert state.steps["obs"].message == (
+        "OBS не подключен. Запустите OBS и проверьте WebSocket."
+    )
+    assert state.steps["audio"].status == "locked"
+    assert state.steps["aitunnel"].status == "locked"
 
 
 def test_setup_completed_requires_all_required_steps_ok() -> None:

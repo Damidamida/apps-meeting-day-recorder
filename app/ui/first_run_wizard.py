@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QComboBox,
@@ -37,12 +37,17 @@ from app.services.first_run import (
     setup_config_from_state,
     setup_completed,
     validate_data_root,
+    mark_step_checking,
 )
 from app.services.recorder import RecorderError
 
 
 logger = logging.getLogger(__name__)
 _STEP_ICON_FONT_LOADED = False
+OBS_CHECKING_MESSAGE = "Проверяется..."
+OBS_ERROR_MESSAGE = "OBS не подключен. Запустите OBS и проверьте WebSocket."
+AITUNNEL_CHECKING_MESSAGE = "Проверяется ключ..."
+AITUNNEL_EMPTY_KEY_MESSAGE = "Введите AI Tunnel key."
 
 
 STEP_DESCRIPTIONS = {
@@ -202,6 +207,55 @@ class StepCard(QFrame):
         return status_text
 
 
+class ObsCheckWorker(QObject):
+    finished = Signal(bool, str)
+
+    def __init__(self, recorder: Any) -> None:
+        super().__init__()
+        self.recorder = recorder
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.recorder.check_connection()
+        except RecorderError:
+            self.finished.emit(False, OBS_ERROR_MESSAGE)
+        except Exception:
+            logger.exception("First-run OBS connection check failed.")
+            self.finished.emit(False, OBS_ERROR_MESSAGE)
+        else:
+            self.finished.emit(True, "OBS подключен.")
+
+
+class AITunnelCheckWorker(QObject):
+    finished = Signal(bool, str)
+
+    def __init__(
+        self,
+        key: str,
+        config: dict[str, Any],
+        client_factory: Callable[..., Any] | None,
+    ) -> None:
+        super().__init__()
+        self.key = key
+        self.config = config
+        self.client_factory = client_factory
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = check_aitunnel_key(
+                self.key,
+                self.config,
+                client_factory=self.client_factory,
+            )
+        except Exception:
+            logger.exception("First-run AI Tunnel key check failed.")
+            self.finished.emit(False, "Сервис временно недоступен.")
+            return
+        self.finished.emit(result.ok, result.message)
+
+
 class FirstRunWizard(QWidget):
     config_changed = Signal(dict)
     completed = Signal(dict)
@@ -212,6 +266,7 @@ class FirstRunWizard(QWidget):
         state: FirstRunState | dict[str, Any],
         recorder: Any | None = None,
         parent: QWidget | None = None,
+        aitunnel_client_factory: Callable[..., Any] | None = None,
     ) -> None:
         super().__init__(parent)
         self.config = config
@@ -219,11 +274,20 @@ class FirstRunWizard(QWidget):
             state if isinstance(state, FirstRunState) else normalize_setup_config(state)
         )
         self.recorder = recorder
+        self.aitunnel_client_factory = aitunnel_client_factory
         self.step_buttons: dict[str, StepCard] = {}
         self.step_status_labels: dict[str, QLabel] = {}
         self.step_indexes: dict[str, int] = {}
         self.step_message_label: dict[str, QLabel] = {}
         self.step_pages: dict[str, QWidget] = {}
+        self.obs_check_button: QPushButton | None = None
+        self.obs_check_thread: QThread | None = None
+        self.obs_check_worker: ObsCheckWorker | None = None
+        self.obs_check_running = False
+        self.aitunnel_check_button: QPushButton | None = None
+        self.aitunnel_check_thread: QThread | None = None
+        self.aitunnel_check_worker: AITunnelCheckWorker | None = None
+        self.aitunnel_check_running = False
         self.current_step = self.state.current_step
         self.setObjectName("firstRunWizard")
         self._build_ui()
@@ -418,6 +482,7 @@ class FirstRunWizard(QWidget):
             check.setObjectName("primaryButton")
             check.setMaximumWidth(180)
             check.clicked.connect(self.check_obs)
+            self.obs_check_button = check
             description = QLabel(
                 "Запустите OBS и включите WebSocket. Автонастройка OBS не выполняется."
             )
@@ -453,6 +518,7 @@ class FirstRunWizard(QWidget):
             check.setObjectName("primaryButton")
             check.setMaximumWidth(230)
             check.clicked.connect(self.check_aitunnel)
+            self.aitunnel_check_button = check
             description = QLabel("Один ключ используется для AI Tunnel STT и AI-итогов.")
             description.setObjectName("sectionHint")
             description.setWordWrap(True)
@@ -550,19 +616,41 @@ class FirstRunWizard(QWidget):
             self._mark_error("data_root", result.message)
 
     def check_obs(self) -> None:
+        if self.obs_check_running:
+            return
         if self.recorder is None or not getattr(self.recorder, "enabled", False):
             self._mark_ok("obs", "OBS проверен в тестовом режиме.")
             return
-        try:
-            self.recorder.check_connection()
-        except RecorderError:
-            self._mark_error("obs", "OBS не подключен. Запустите OBS и проверьте WebSocket.")
-            return
-        except Exception:
-            logger.exception("First-run OBS connection check failed.")
-            self._mark_error("obs", "OBS не подключен. Запустите OBS и проверьте WebSocket.")
-            return
-        self._mark_ok("obs", "OBS подключен.")
+        self.obs_check_running = True
+        self.state = mark_step_checking(self.state, "obs", OBS_CHECKING_MESSAGE)
+        self.current_step = "obs"
+        self.refresh()
+
+        thread = QThread(self)
+        worker = ObsCheckWorker(self.recorder)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_obs_check_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_obs_check_thread)
+        self.obs_check_thread = thread
+        self.obs_check_worker = worker
+        thread.start()
+
+    @Slot(bool, str)
+    def _on_obs_check_finished(self, ok: bool, message: str) -> None:
+        self.obs_check_running = False
+        if ok:
+            self._mark_ok("obs", message)
+        else:
+            self._mark_error("obs", message)
+        self._refresh_obs_check_button()
+
+    def _clear_obs_check_thread(self) -> None:
+        self.obs_check_thread = None
+        self.obs_check_worker = None
 
     def check_audio(self) -> None:
         from app.services.readiness import _ffmpeg_status
@@ -574,14 +662,54 @@ class FirstRunWizard(QWidget):
             self._mark_error("audio", str(status["message"]))
 
     def check_aitunnel(self) -> None:
-        result = check_aitunnel_key(self.aitunnel_key_input.text(), self.config)
-        if result.ok:
+        if self.aitunnel_check_running:
+            return
+        key = self.aitunnel_key_input.text().strip()
+        if not key:
+            self._mark_error("aitunnel", AITUNNEL_EMPTY_KEY_MESSAGE)
+            return
+
+        self.aitunnel_check_running = True
+        self.state = mark_step_checking(
+            self.state,
+            "aitunnel",
+            AITUNNEL_CHECKING_MESSAGE,
+        )
+        self.current_step = "aitunnel"
+        self.refresh()
+
+        thread = QThread(self)
+        worker = AITunnelCheckWorker(
+            key,
+            self.config,
+            self.aitunnel_client_factory,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_aitunnel_check_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_aitunnel_check_thread)
+        self.aitunnel_check_thread = thread
+        self.aitunnel_check_worker = worker
+        thread.start()
+
+    @Slot(bool, str)
+    def _on_aitunnel_check_finished(self, ok: bool, message: str) -> None:
+        self.aitunnel_check_running = False
+        if ok:
             self.config.setdefault("secrets", {}).setdefault("env_file", DEFAULT_ENV_FILE)
             self.config.setdefault("summary", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
             self.config.setdefault("transcription", {})["api_key_env"] = AITUNNEL_API_KEY_ENV
-            self._mark_ok("aitunnel", result.message)
+            self._mark_ok("aitunnel", message)
         else:
-            self._mark_error("aitunnel", result.message)
+            self._mark_error("aitunnel", message)
+        self._refresh_aitunnel_check_button()
+
+    def _clear_aitunnel_check_thread(self) -> None:
+        self.aitunnel_check_thread = None
+        self.aitunnel_check_worker = None
 
     def check_transcription(self) -> None:
         backend = self.transcription_backend_select.currentData() or "aitunnel"
@@ -663,6 +791,16 @@ class FirstRunWizard(QWidget):
         self.next_button.setEnabled(self.state.steps[self.current_step].status == "ok")
         self.finish_button.setVisible(self.current_step == "finish")
         self.finish_button.setEnabled(setup_completed(self.state))
+        self._refresh_obs_check_button()
+        self._refresh_aitunnel_check_button()
+
+    def _refresh_obs_check_button(self) -> None:
+        if self.obs_check_button is not None:
+            self.obs_check_button.setEnabled(not self.obs_check_running)
+
+    def _refresh_aitunnel_check_button(self) -> None:
+        if self.aitunnel_check_button is not None:
+            self.aitunnel_check_button.setEnabled(not self.aitunnel_check_running)
 
     def _can_open(self, step_key: str) -> bool:
         index = FIRST_RUN_STEPS.index(step_key)
@@ -677,19 +815,21 @@ class FirstRunWizard(QWidget):
             return "Готово"
         if status == "locked":
             return "Заблокировано"
+        if status == "checking":
+            return OBS_CHECKING_MESSAGE
         if status == "error":
             return "Ошибка проверки"
         return "Требует действия"
 
     def _visual_state(self, step_key: str, status: str) -> str:
-        if step_key == self.current_step:
-            return "active"
         if status == "ok":
             return "done"
-        if status == "locked" or not self._can_open(step_key):
-            return "locked"
         if status == "error":
             return "error"
+        if step_key == self.current_step:
+            return "active"
+        if status == "locked" or not self._can_open(step_key):
+            return "locked"
         return "todo"
 
     def _step_card_status_text(self, visual_state: str, status: str) -> str:

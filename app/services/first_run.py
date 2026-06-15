@@ -212,6 +212,10 @@ def mark_step_error(state: FirstRunState, step_key: str, message: str) -> FirstR
     return _mark_step(state, step_key, "error", message)
 
 
+def mark_step_checking(state: FirstRunState, step_key: str, message: str) -> FirstRunState:
+    return _mark_step(state, step_key, "checking", message)
+
+
 def reset_from_step(state: FirstRunState, step_key: str) -> FirstRunState:
     if step_key not in FIRST_RUN_STEPS:
         return state
@@ -380,9 +384,16 @@ def _mark_step(
     steps = dict(state.steps)
     steps[step_key] = steps[step_key].with_status(status, message)
     if status != "ok":
-        return reset_from_step(
-            FirstRunState(False, state.version, step_key, steps, dict(state.values), ""),
-            step_key,
+        start = FIRST_RUN_STEPS.index(step_key) + 1
+        for key in FIRST_RUN_STEPS[start:]:
+            steps[key] = steps[key].with_status("locked", "")
+        return FirstRunState(
+            completed=False,
+            version=state.version,
+            current_step=step_key,
+            steps=steps,
+            values=dict(state.values),
+            completed_at="",
         )
     next_index = min(FIRST_RUN_STEPS.index(step_key) + 1, len(FIRST_RUN_STEPS) - 1)
     next_key = FIRST_RUN_STEPS[next_index]
