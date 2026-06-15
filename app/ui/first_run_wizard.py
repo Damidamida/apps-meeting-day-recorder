@@ -22,7 +22,7 @@ from app.services.first_run import (
     DEFAULT_ENV_FILE,
     FIRST_RUN_STEPS,
     SUMMARY_MODEL_OPTIONS,
-    TRANSCRIPTION_MODEL_OPTIONS,
+    TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND,
     TRANSCRIPTION_OPTIONS,
     FirstRunState,
     check_aitunnel_key,
@@ -214,8 +214,14 @@ class FirstRunWizard(QWidget):
             for value, label in TRANSCRIPTION_OPTIONS:
                 self.transcription_backend_select.addItem(label, value)
             self.transcription_model_select = QComboBox()
-            for value, label in TRANSCRIPTION_MODEL_OPTIONS:
-                self.transcription_model_select.addItem(label, value)
+            self.transcription_backend_select.currentIndexChanged.connect(
+                self._update_transcription_model_options
+            )
+            self._set_combo_value_by_data(
+                self.transcription_backend_select,
+                str(self.state.values.get("transcription_backend") or "aitunnel"),
+            )
+            self._update_transcription_model_options()
             check = QPushButton("Проверить транскрипцию")
             check.setObjectName("primaryButton")
             check.clicked.connect(self.check_transcription)
@@ -312,6 +318,8 @@ class FirstRunWizard(QWidget):
     def check_transcription(self) -> None:
         backend = self.transcription_backend_select.currentData() or "aitunnel"
         model = self.transcription_model_select.currentData() or "whisper-large-v3-turbo"
+        self.state.values["transcription_backend"] = backend
+        self.state.values["transcription_model"] = model
         self.config.setdefault("transcription", {})["backend"] = backend
         self.config["transcription"]["model"] = model
         self.config["transcription"].setdefault("backends", {}).setdefault(backend, {})[
@@ -390,3 +398,30 @@ class FirstRunWizard(QWidget):
         if status == "error":
             return "Ошибка проверки"
         return "Требует действия"
+
+    def _update_transcription_model_options(self) -> None:
+        backend = self.transcription_backend_select.currentData() or "aitunnel"
+        previous_model = self.transcription_model_select.currentData()
+        configured_backend = self.state.values.get("transcription_backend")
+        configured_model = self.state.values.get("transcription_model")
+        default_model = "whisper-large-v3-turbo" if backend == "aitunnel" else "base"
+        selected_model = (
+            str(configured_model)
+            if configured_backend == backend and configured_model
+            else str(previous_model or default_model)
+        )
+        allowed_models = {
+            value for value, _label in TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND[backend]
+        }
+        if selected_model not in allowed_models:
+            selected_model = default_model
+        self.transcription_model_select.clear()
+        for value, label in TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND[backend]:
+            self.transcription_model_select.addItem(label, value)
+        self._set_combo_value_by_data(self.transcription_model_select, selected_model)
+
+    @staticmethod
+    def _set_combo_value_by_data(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)

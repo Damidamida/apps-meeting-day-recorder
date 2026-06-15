@@ -6,6 +6,7 @@ import yaml
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit
+from unittest.mock import patch
 
 from app.services.first_run import default_setup_config, normalize_setup_config
 from app.services.recorder import NoopRecorder
@@ -57,6 +58,47 @@ def test_first_run_wizard_is_full_screen_page_with_locked_future_steps() -> None
     assert wizard.transcription_backend_select.itemText(0) == "AI Tunnel STT"
     assert wizard.transcription_backend_select.currentText() == "AI Tunnel STT"
     assert not wizard.summary_page.findChildren(QLineEdit)
+
+    wizard.close()
+
+
+def test_first_run_wizard_saves_faster_whisper_with_local_model() -> None:
+    _app()
+    wizard = FirstRunWizard({}, normalize_setup_config(default_setup_config()))
+    wizard.transcription_backend_select.setCurrentIndex(
+        wizard.transcription_backend_select.findData("faster_whisper")
+    )
+
+    assert wizard.transcription_model_select.currentData() == "base"
+
+    with patch("app.services.first_run.importlib.util.find_spec", return_value=object()):
+        wizard.check_transcription()
+
+    assert wizard.config["transcription"]["backend"] == "faster_whisper"
+    assert wizard.config["transcription"]["model"] == "base"
+    assert (
+        wizard.config["transcription"]["backends"]["faster_whisper"]["model"]
+        == "base"
+    )
+
+    wizard.close()
+
+
+def test_first_run_wizard_saves_whisper_cli_with_local_model() -> None:
+    _app()
+    wizard = FirstRunWizard({}, normalize_setup_config(default_setup_config()))
+    wizard.transcription_backend_select.setCurrentIndex(
+        wizard.transcription_backend_select.findData("whisper_cli")
+    )
+
+    assert wizard.transcription_model_select.currentData() == "base"
+
+    with patch("app.services.first_run.shutil.which", return_value="C:/tools/whisper.exe"):
+        wizard.check_transcription()
+
+    assert wizard.config["transcription"]["backend"] == "whisper_cli"
+    assert wizard.config["transcription"]["model"] == "base"
+    assert wizard.config["transcription"]["backends"]["whisper_cli"]["model"] == "base"
 
     wizard.close()
 

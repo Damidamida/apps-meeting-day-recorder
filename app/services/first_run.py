@@ -41,6 +41,27 @@ TRANSCRIPTION_MODEL_OPTIONS = (
     ("whisper-large-v3", "Whisper Large V3 — 0.36 ₽/мин"),
     ("whisper-1", "Whisper 1 — 1.15 ₽/мин"),
 )
+LOCAL_WHISPER_MODEL_OPTIONS = (
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large", "large"),
+    ("turbo", "turbo"),
+)
+FASTER_WHISPER_MODEL_OPTIONS = (
+    ("tiny", "tiny"),
+    ("base", "base"),
+    ("small", "small"),
+    ("medium", "medium"),
+    ("large-v3", "large-v3"),
+    ("turbo", "turbo"),
+)
+TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND = {
+    "aitunnel": TRANSCRIPTION_MODEL_OPTIONS,
+    "faster_whisper": FASTER_WHISPER_MODEL_OPTIONS,
+    "whisper_cli": LOCAL_WHISPER_MODEL_OPTIONS,
+}
 SUMMARY_MODEL_OPTIONS = (
     ("gpt-5.4-nano", "GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход"),
     ("gpt-5.4-mini", "GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход"),
