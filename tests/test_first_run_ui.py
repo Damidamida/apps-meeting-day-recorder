@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QWidget
 
 import app.ui.main_window as main_window_module
+import app.ui.first_run_wizard as first_run_wizard_module
 from app.services.first_run import default_setup_config, mark_step_ok, normalize_setup_config
 from app.services.recorder import NoopRecorder, RecorderError
 from app.services.storage import StorageService
@@ -56,6 +57,23 @@ class SuccessfulRecorder:
 
     def check_connection(self) -> None:
         self.calls += 1
+
+
+class RecordingObsRecorderFactory:
+    def __init__(self, recorder, expected_password: str = "") -> None:
+        self.recorder = recorder
+        self.expected_password = expected_password
+        self.calls = []
+
+    def __call__(self, *, host: str, port: int, password: str):
+        self.calls.append(
+            {
+                "host": host,
+                "port": port,
+                "password_matches": password == self.expected_password,
+            }
+        )
+        return self.recorder
 
 
 class DelayedAIClientFactory:
@@ -302,10 +320,60 @@ def test_first_run_wizard_stepper_cards_have_active_done_and_locked_states() -> 
     wizard.close()
 
 
+def test_first_run_wizard_obs_step_shows_websocket_fields_with_defaults() -> None:
+    app = _app()
+    wizard = FirstRunWizard({}, _state_on_obs_step())
+    wizard.show()
+    app.processEvents()
+
+    labels = [label.text() for label in wizard.findChildren(QLabel)]
+    assert "Адрес WebSocket" in labels
+    assert "Порт WebSocket" in labels
+    assert "Пароль WebSocket" in labels
+    assert wizard.obs_host_input.text() == "localhost"
+    assert wizard.obs_port_input.value() == 4455
+    assert wizard.obs_password_input.echoMode() == QLineEdit.EchoMode.Password
+    assert wizard.obs_password_input.text() == ""
+
+    wizard.close()
+
+
+def test_obs_check_uses_entered_websocket_settings(monkeypatch) -> None:
+    app = _app()
+    password = "".join(chr(code) for code in (112, 97, 115, 115, 45, 49))
+    recorder = SuccessfulRecorder()
+    factory = RecordingObsRecorderFactory(recorder, expected_password=password)
+    monkeypatch.setattr(first_run_wizard_module, "ObsRecorder", factory, raising=False)
+    wizard = FirstRunWizard({}, _state_on_obs_step())
+    wizard.obs_host_input.setText("127.0.0.1")
+    wizard.obs_port_input.setValue(4456)
+    wizard.obs_password_input.setText(password)
+    wizard.show()
+    app.processEvents()
+
+    wizard.check_obs()
+
+    assert _wait_for_qt(app, lambda: wizard.state.steps["obs"].status == "ok")
+    assert factory.calls == [
+        {
+            "host": "127.0.0.1",
+            "port": 4456,
+            "password_matches": True,
+        }
+    ]
+
+    wizard.close()
+
+
 def test_obs_check_shows_checking_state_immediately_when_recorder_is_slow() -> None:
     app = _app()
     recorder = DelayedFailingRecorder()
-    wizard = FirstRunWizard({}, _state_on_obs_step(), recorder=recorder)
+    factory = RecordingObsRecorderFactory(recorder)
+    wizard = FirstRunWizard(
+        {},
+        _state_on_obs_step(),
+        obs_recorder_factory=factory,
+    )
     wizard.show()
     app.processEvents()
 
@@ -327,7 +395,12 @@ def test_obs_check_shows_checking_state_immediately_when_recorder_is_slow() -> N
 def test_obs_check_error_remains_visible_and_audio_stays_locked() -> None:
     app = _app()
     recorder = DelayedFailingRecorder(delay_seconds=0.01)
-    wizard = FirstRunWizard({}, _state_on_obs_step(), recorder=recorder)
+    factory = RecordingObsRecorderFactory(recorder)
+    wizard = FirstRunWizard(
+        {},
+        _state_on_obs_step(),
+        obs_recorder_factory=factory,
+    )
     wizard.show()
     app.processEvents()
 
@@ -336,10 +409,10 @@ def test_obs_check_error_remains_visible_and_audio_stays_locked() -> None:
     assert _wait_for_qt(app, lambda: wizard.state.steps["obs"].status == "error")
     assert wizard.current_step == "obs"
     assert wizard.state.steps["obs"].message == (
-        "OBS не подключен. Запустите OBS и проверьте WebSocket."
+        "OBS не подключен. Проверьте адрес, порт, пароль и включенный WebSocket в OBS."
     )
     assert wizard.step_message_label["obs"].text() == (
-        "OBS не подключен. Запустите OBS и проверьте WebSocket."
+        "OBS не подключен. Проверьте адрес, порт, пароль и включенный WebSocket в OBS."
     )
     assert wizard.step_buttons["obs"].property("state") == "error"
     assert wizard.step_buttons["audio"].property("state") == "locked"
@@ -351,8 +424,17 @@ def test_obs_check_error_remains_visible_and_audio_stays_locked() -> None:
 
 def test_obs_check_success_opens_audio_step() -> None:
     app = _app()
+    password = "".join(chr(code) for code in (112, 97, 115, 115, 45, 50))
     recorder = SuccessfulRecorder()
-    wizard = FirstRunWizard({}, _state_on_obs_step(), recorder=recorder)
+    factory = RecordingObsRecorderFactory(recorder, expected_password=password)
+    wizard = FirstRunWizard(
+        {},
+        _state_on_obs_step(),
+        obs_recorder_factory=factory,
+    )
+    wizard.obs_host_input.setText("obs.local")
+    wizard.obs_port_input.setValue(4457)
+    wizard.obs_password_input.setText(password)
     wizard.show()
     app.processEvents()
 
@@ -362,6 +444,17 @@ def test_obs_check_success_opens_audio_step() -> None:
     assert wizard.current_step == "audio"
     assert wizard.step_buttons["audio"].isEnabled()
     assert wizard.obs_check_button.isEnabled()
+    assert wizard.config["obs"]["websocket_host"] == "obs.local"
+    assert wizard.config["obs"]["websocket_port"] == 4457
+    saved_password = wizard.config["obs"]["websocket_password"]
+    assert len(saved_password) == len(password)
+    assert all(
+        ord(saved_char) == ord(expected_char)
+        for saved_char, expected_char in zip(saved_password, password)
+    )
+    assert wizard.state.values["obs_websocket_host"] == "obs.local"
+    assert wizard.state.values["obs_websocket_port"] == 4457
+    assert wizard.state.values["obs_password_configured"] is True
 
     wizard.close()
 

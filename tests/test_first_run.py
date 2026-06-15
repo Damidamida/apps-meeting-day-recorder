@@ -29,6 +29,9 @@ def test_setup_config_defaults_to_incomplete(tmp_path: Path) -> None:
 
     assert config["setup"]["completed"] is False
     assert config["setup"]["version"] == CURRENT_SETUP_VERSION
+    assert config["setup"]["values"]["obs_websocket_host"] == "localhost"
+    assert config["setup"]["values"]["obs_websocket_port"] == 4455
+    assert config["setup"]["values"]["obs_password_configured"] is False
     assert tuple(config["setup"]["steps"]) == FIRST_RUN_STEPS
     assert FIRST_RUN_STEPS == (
         "data_root",

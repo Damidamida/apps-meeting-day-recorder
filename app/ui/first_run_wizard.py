@@ -7,12 +7,14 @@ from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -41,11 +43,14 @@ from app.services.first_run import (
     transcription_model_options_for_backend,
     validate_data_root,
 )
+from app.services.recorder import ObsRecorder
 
 logger = logging.getLogger(__name__)
 _STEP_ICON_FONT_LOADED = False
 OBS_CHECKING_MESSAGE = "Проверяется..."
-OBS_ERROR_MESSAGE = "OBS не подключен. Запустите OBS и проверьте WebSocket."
+OBS_ERROR_MESSAGE = (
+    "OBS не подключен. Проверьте адрес, порт, пароль и включенный WebSocket в OBS."
+)
 AITUNNEL_CHECKING_MESSAGE = "Проверяется ключ..."
 AITUNNEL_EMPTY_KEY_MESSAGE = "Введите AI Tunnel key."
 SUMMARY_CHECKING_MESSAGE = "Проверяются AI-итоги..."
@@ -249,6 +254,7 @@ class FirstRunWizard(QWidget):
         state: FirstRunState | dict[str, Any],
         recorder: Any | None = None,
         parent: QWidget | None = None,
+        obs_recorder_factory: Callable[..., Any] | None = None,
         aitunnel_client_factory: Callable[..., Any] | None = None,
         summary_client_factory: Callable[..., Any] | None = None,
     ) -> None:
@@ -258,6 +264,8 @@ class FirstRunWizard(QWidget):
             state if isinstance(state, FirstRunState) else normalize_setup_config(state)
         )
         self.recorder = recorder
+        self.obs_recorder_factory = obs_recorder_factory or ObsRecorder
+        self.pending_obs_config: dict[str, Any] | None = None
         self.aitunnel_client_factory = aitunnel_client_factory
         self.summary_client_factory = summary_client_factory
         self.step_buttons: dict[str, StepCard] = {}
@@ -445,6 +453,23 @@ class FirstRunWizard(QWidget):
             layout.addWidget(self.data_root_input)
             layout.addLayout(actions)
         elif step_key == "obs":
+            obs_settings = self._stored_obs_settings()
+            self.obs_host_input = QLineEdit()
+            self.obs_host_input.setObjectName("firstRunObsHostInput")
+            self.obs_host_input.setText(obs_settings["websocket_host"])
+            self.obs_host_input.setPlaceholderText("localhost")
+            self.obs_host_input.setMaximumWidth(360)
+            self.obs_port_input = QSpinBox()
+            self.obs_port_input.setObjectName("firstRunObsPortInput")
+            self.obs_port_input.setRange(1, 65535)
+            self.obs_port_input.setValue(obs_settings["websocket_port"])
+            self.obs_port_input.setMaximumWidth(140)
+            self.obs_password_input = QLineEdit()
+            self.obs_password_input.setObjectName("firstRunObsPasswordInput")
+            self.obs_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.obs_password_input.setText(obs_settings["websocket_password"])
+            self.obs_password_input.setPlaceholderText("Пароль OBS WebSocket")
+            self.obs_password_input.setMaximumWidth(360)
             check = QPushButton("Проверить OBS")
             check.setObjectName("primaryButton")
             check.setMaximumWidth(180)
@@ -455,10 +480,20 @@ class FirstRunWizard(QWidget):
             )
             description.setObjectName("sectionHint")
             description.setWordWrap(True)
+            obs_form = QFrame()
+            obs_form.setObjectName("firstRunObsForm")
+            obs_form_layout = QFormLayout()
+            obs_form_layout.setContentsMargins(0, 0, 0, 0)
+            obs_form_layout.setSpacing(8)
+            obs_form_layout.addRow("Адрес WebSocket", self.obs_host_input)
+            obs_form_layout.addRow("Порт WebSocket", self.obs_port_input)
+            obs_form_layout.addRow("Пароль WebSocket", self.obs_password_input)
+            obs_form.setLayout(obs_form_layout)
             actions = QHBoxLayout()
             actions.addWidget(check)
             actions.addStretch(1)
             layout.addWidget(description)
+            layout.addWidget(obs_form)
             layout.addLayout(actions)
         elif step_key == "audio":
             check = QPushButton("Проверить аудио")
@@ -576,6 +611,38 @@ class FirstRunWizard(QWidget):
         if folder:
             self.data_root_input.setText(folder)
 
+    def _stored_obs_settings(self) -> dict[str, Any]:
+        obs = self.config.get("obs")
+        obs = obs if isinstance(obs, dict) else {}
+        values = self.state.values if isinstance(self.state.values, dict) else {}
+        return {
+            "websocket_host": str(
+                obs.get("websocket_host")
+                or values.get("obs_websocket_host")
+                or "localhost"
+            ).strip()
+            or "localhost",
+            "websocket_port": self._safe_obs_port(
+                obs.get("websocket_port") or values.get("obs_websocket_port") or 4455
+            ),
+            "websocket_password": str(obs.get("websocket_password") or ""),
+        }
+
+    @staticmethod
+    def _safe_obs_port(value: Any) -> int:
+        try:
+            port = int(value)
+        except (TypeError, ValueError):
+            return 4455
+        return port if 1 <= port <= 65535 else 4455
+
+    def _current_obs_settings(self) -> dict[str, Any]:
+        return {
+            "websocket_host": self.obs_host_input.text().strip() or "localhost",
+            "websocket_port": int(self.obs_port_input.value()),
+            "websocket_password": self.obs_password_input.text(),
+        }
+
     def open_step(self, step_key: str) -> None:
         if not self.step_buttons[step_key].isEnabled():
             return
@@ -612,16 +679,20 @@ class FirstRunWizard(QWidget):
     def check_obs(self) -> None:
         if self.obs_check_running:
             return
-        if self.recorder is None or not getattr(self.recorder, "enabled", False):
-            self._mark_ok("obs", "OBS проверен в тестовом режиме.")
-            return
+        obs_config = self._current_obs_settings()
+        self.pending_obs_config = obs_config
         self.obs_check_running = True
         self.state = mark_step_checking(self.state, "obs", OBS_CHECKING_MESSAGE)
         self.current_step = "obs"
         self.refresh()
 
         def run_obs_check() -> tuple[bool, str]:
-            self.recorder.check_connection()
+            recorder = self.obs_recorder_factory(
+                host=obs_config["websocket_host"],
+                port=obs_config["websocket_port"],
+                password=obs_config["websocket_password"],
+            )
+            recorder.check_connection()
             return True, "OBS подключен."
 
         worker = FirstRunCheckWorker(
@@ -639,9 +710,21 @@ class FirstRunWizard(QWidget):
     def _on_obs_check_finished(self, ok: bool, message: str) -> None:
         self.obs_check_running = False
         if ok:
+            if self.pending_obs_config is not None:
+                self.config.setdefault("obs", {}).update(self.pending_obs_config)
+                self.state.values["obs_websocket_host"] = self.pending_obs_config[
+                    "websocket_host"
+                ]
+                self.state.values["obs_websocket_port"] = self.pending_obs_config[
+                    "websocket_port"
+                ]
+                self.state.values["obs_password_configured"] = bool(
+                    self.pending_obs_config["websocket_password"]
+                )
             self._mark_ok("obs", message)
         else:
             self._mark_error("obs", message)
+        self.pending_obs_config = None
         self._refresh_obs_check_button()
 
     def _clear_obs_check_thread(self) -> None:

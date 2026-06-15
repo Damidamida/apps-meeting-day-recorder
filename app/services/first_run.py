@@ -128,6 +128,9 @@ def default_setup_config() -> dict[str, Any]:
         },
         "values": {
             "data_root": str(default_data_root()),
+            "obs_websocket_host": "localhost",
+            "obs_websocket_port": 4455,
+            "obs_password_configured": False,
             "transcription_backend": "aitunnel",
             "transcription_model": "whisper-large-v3-turbo",
             "summary_model": "gpt-5.4-nano",
