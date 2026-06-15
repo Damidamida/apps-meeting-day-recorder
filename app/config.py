@@ -4,6 +4,8 @@ from typing import Any
 
 import yaml
 
+from app.services.first_run import default_setup_config, normalize_setup_config_dict
+
 
 TRANSCRIPTION_BACKENDS = {"whisper_cli", "faster_whisper", "aitunnel"}
 LOCAL_WHISPER_MODELS = {"tiny", "base", "small", "medium", "large", "turbo"}
@@ -160,6 +162,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "theme": "light",
         "floating_theme": "inherit",
     },
+    "setup": default_setup_config(),
 }
 
 
@@ -175,6 +178,7 @@ def _default_config() -> dict[str, Any]:
             "backends": _default_transcription_backends(),
         },
         "ui": dict(DEFAULT_CONFIG["ui"]),
+        "setup": deepcopy(DEFAULT_CONFIG["setup"]),
         "_warnings": [],
     }
 
@@ -205,6 +209,7 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     summary = _section(loaded, "summary", config)
     transcription = _section(loaded, "transcription", config)
     ui = _section(loaded, "ui", config)
+    setup = _section(loaded, "setup", config)
     config.update(loaded)
     config["storage"] = {**DEFAULT_CONFIG["storage"], **storage}
     config["obs"] = _normalize_obs({**DEFAULT_CONFIG["obs"], **obs}, config)
@@ -212,6 +217,7 @@ def load_config(path: Path = Path("config.yaml")) -> dict[str, Any]:
     config["summary"] = _normalize_summary({**DEFAULT_CONFIG["summary"], **summary}, config)
     config["transcription"] = _normalize_transcription(transcription, config)
     config["ui"] = _normalize_ui({**DEFAULT_CONFIG["ui"], **ui})
+    config["setup"] = normalize_setup_config_dict({**DEFAULT_CONFIG["setup"], **setup})
     return config
 
 

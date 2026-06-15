@@ -60,10 +60,16 @@ from app.services.archive import (
     search_archive,
 )
 from app.services.readiness import READINESS_CARDS, check_readiness
+from app.services.first_run import (
+    normalize_setup_config,
+    setup_config_from_state,
+    should_show_wizard_on_startup,
+)
 from app.services.recorder import Recorder, RecorderError, create_recorder
 from app.services.storage import MetadataReadError, StorageService
 from app.services.summarization import build_summary_system_prompt, create_summarizer
 from app.services.transcription import create_transcriber
+from app.ui.first_run_wizard import FirstRunWizard
 from app.ui.summary_viewer import SummaryMaterialView
 
 
@@ -1327,7 +1333,12 @@ class MainWindow(QMainWindow):
         if APP_ICON_RESOURCE.is_file():
             self.setWindowIcon(QIcon(str(APP_ICON_RESOURCE)))
         self.resize(1100, 720)
+        self._external_storage_provided = storage is not None
         self.config = load_config()
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        self.setup_gate_enabled = (
+            not self._external_storage_provided or Path("config.yaml").exists()
+        )
         self.current_theme = self._configured_theme()
         self.nav_buttons: dict[int, QPushButton] = {}
         self.pipeline_running = False
@@ -1408,6 +1419,14 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._create_archive_page())
         self.pages.addWidget(self._create_settings_page())
         self.pages.addWidget(self._create_help_page())
+        self.first_run_wizard = FirstRunWizard(
+            self.config,
+            self.setup_state,
+            recorder=self.recorder,
+        )
+        self.first_run_page_index = self.pages.addWidget(self.first_run_wizard)
+        self.first_run_wizard.config_changed.connect(self._on_first_run_config_changed)
+        self.first_run_wizard.completed.connect(self._on_first_run_completed)
         self.pages.currentChanged.connect(self._refresh_navigation_state)
 
         root_layout = QHBoxLayout()
@@ -1449,6 +1468,8 @@ class MainWindow(QMainWindow):
         self.floating_control.end_meeting_requested.connect(self.end_meeting)
         self.floating_control.open_main_requested.connect(self._show_main_window_from_floating)
         self.floating_control.visibility_changed.connect(self._on_floating_visibility_changed)
+        if self._should_show_setup_on_startup():
+            self.pages.setCurrentIndex(self.first_run_page_index)
         self._refresh_navigation_state(self.pages.currentIndex())
         self.refresh_status()
         self.refresh_buttons()
@@ -1471,6 +1492,59 @@ class MainWindow(QMainWindow):
         if not str(config.get("env_file") or "").strip():
             config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
         return config
+
+    def _should_show_setup_on_startup(self) -> bool:
+        return self.setup_gate_enabled and should_show_wizard_on_startup(self.setup_state)
+
+    def _setup_blocks_work(self) -> bool:
+        return self.setup_gate_enabled and should_show_wizard_on_startup(self.setup_state)
+
+    def _setup_block_message(self) -> str:
+        return (
+            "Завершите настройку BK Scribe. Рабочий день, Ревью, Архив "
+            "и плавающая кнопка станут доступны после мастера."
+        )
+
+    def _open_main_section(self, index: int) -> None:
+        if index in {0, 1, 2} and self._setup_blocks_work():
+            if hasattr(self, "status_label"):
+                self.status_label.setText(self._setup_block_message())
+            self.pages.setCurrentIndex(self.first_run_page_index)
+            return
+        self.pages.setCurrentIndex(index)
+
+    def open_setup_wizard(self) -> None:
+        self.pages.setCurrentIndex(self.first_run_page_index)
+        self._refresh_navigation_state(self.pages.currentIndex())
+
+    def _on_first_run_config_changed(self, config: dict[str, object]) -> None:
+        self.config = self._config_for_save(config)
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        self.first_run_wizard.state = self.setup_state
+        self._write_local_config(self.config)
+
+    def _on_first_run_completed(self, config: dict[str, object]) -> None:
+        self.config = self._config_for_save(config)
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        self._write_local_config(self.config)
+        self.storage.root = Path(self.config["storage"]["root"])
+        self.storage.load_today_state()
+        self.past_workday_folder = self.storage.find_past_active_workday()
+        self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
+        self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        self.refresh_status()
+        self.refresh_buttons()
+        self._refresh_navigation_state(self.pages.currentIndex())
+        self.pages.setCurrentIndex(0)
+        self.show_floating_control()
+        if hasattr(self, "status_label"):
+            self.status_label.setText("Настройка BK Scribe завершена. Можно начать рабочий день.")
+
+    @staticmethod
+    def _config_for_save(config: dict[str, object]) -> dict[str, object]:
+        config_to_save = deepcopy(config)
+        config_to_save.pop("_warnings", None)
+        return config_to_save
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1509,6 +1583,8 @@ class MainWindow(QMainWindow):
             self.risky_action_confirmation_overlay.setGeometry(parent.rect())
 
     def show_floating_control(self) -> None:
+        if self._setup_blocks_work():
+            return
         if not hasattr(self, "floating_control"):
             return
         self._refresh_floating_control()
@@ -1584,7 +1660,7 @@ class MainWindow(QMainWindow):
         brand.setObjectName("brand")
         layout.addWidget(brand)
 
-        self._add_nav_button(layout, 0, "Рабочий день", lambda: self.pages.setCurrentIndex(0))
+        self._add_nav_button(layout, 0, "Рабочий день", lambda: self._open_main_section(0))
         self._add_nav_button(layout, 1, "Ревью", self.open_review)
         self._add_nav_button(layout, 2, "Архив", self.open_archive)
         self._add_nav_button(layout, 3, "Настройки", lambda: self.pages.setCurrentIndex(3))
@@ -1619,6 +1695,12 @@ class MainWindow(QMainWindow):
     def _refresh_navigation_state(self, current_index: int) -> None:
         for index, button in self.nav_buttons.items():
             button.setChecked(index == current_index)
+            if index in {0, 1, 2}:
+                button.setEnabled(not self._setup_blocks_work())
+            else:
+                button.setEnabled(True)
+        if hasattr(self, "toggle_floating_button"):
+            self.toggle_floating_button.setEnabled(not self._setup_blocks_work())
 
     def toggle_theme_from_sidebar(self) -> None:
         previous_theme = self._configured_theme()
@@ -3493,6 +3575,12 @@ class MainWindow(QMainWindow):
         self.save_settings_button = self._add_button(
             actions_layout, "Сохранить настройки", self.save_settings, "primaryButton"
         )
+        self.open_setup_wizard_button = self._add_button(
+            actions_layout,
+            "Открыть мастер настройки",
+            self.open_setup_wizard,
+            "headerButton",
+        )
         actions_layout.addStretch(1)
         layout.addLayout(actions_layout)
         self.settings_status_label = QLabel(
@@ -4667,6 +4755,11 @@ class MainWindow(QMainWindow):
         return page
 
     def open_archive(self) -> None:
+        if self._setup_blocks_work():
+            if hasattr(self, "status_label"):
+                self.status_label.setText(self._setup_block_message())
+            self.pages.setCurrentIndex(self.first_run_page_index)
+            return
         self.pages.setCurrentIndex(2)
         self.refresh_archive()
 
@@ -5213,6 +5306,10 @@ class MainWindow(QMainWindow):
         return button
 
     def start_workday(self) -> None:
+        if self._setup_blocks_work():
+            self.status_label.setText(self._setup_block_message())
+            self.pages.setCurrentIndex(self.first_run_page_index)
+            return
         try:
             day_folder = self.storage.start_workday()
         except ValueError as error:
@@ -6201,6 +6298,11 @@ class MainWindow(QMainWindow):
         self.apply_pending_runtime_settings()
 
     def open_review(self) -> None:
+        if self._setup_blocks_work():
+            if hasattr(self, "status_label"):
+                self.status_label.setText(self._setup_block_message())
+            self.pages.setCurrentIndex(self.first_run_page_index)
+            return
         self.pages.setCurrentIndex(1)
         self.refresh_review()
 
@@ -6605,6 +6707,11 @@ class MainWindow(QMainWindow):
             return
         readiness_invalidated = self._invalidate_readiness_check_after_settings_change()
         self.config = load_config(config_path)
+        self.setup_state = normalize_setup_config(self.config.get("setup", {}))
+        if hasattr(self, "first_run_wizard"):
+            self.first_run_wizard.config = self.config
+            self.first_run_wizard.state = self.setup_state
+            self.first_run_wizard.refresh()
         self._refresh_all_summary_template_previews()
         self._apply_theme_settings()
         self._apply_runtime_settings_after_save(storage_root_path)
@@ -6680,6 +6787,7 @@ class MainWindow(QMainWindow):
                 "theme": self._combo_value(self.settings_theme_select),
                 "floating_theme": self._combo_value(self.settings_floating_theme_select),
             },
+            "setup": setup_config_from_state(self.setup_state),
         }
 
     def _apply_runtime_settings_after_save(self, storage_root_path: Path) -> None:

@@ -83,6 +83,14 @@
 
 Результат PR 2: при первом запуске или незавершенной настройке открывается мастер на русском языке. Пользователь выбирает папку данных с дефолтом `Документы\BK Scribe`, проходит проверки OBS WebSocket, bundled FFmpeg, обязательной транскрипции и обязательных AI-итогов. До успешного мастера кнопка `Начать рабочий день` заблокирована.
 
+Актуальный согласованный план PR 2 вынесен в отдельный документ `docs/superpowers/plans/2026-06-15-first-run-wizard-pr2.md`. Он имеет приоритет над ранними черновыми шагами ниже, потому что после согласования UI было принято:
+
+- делать мастер полноэкранным экраном внутри приложения, а не цепочкой popup-окон;
+- убрать верхний блок `Готовность к работе`;
+- сделать строгий последовательный порядок шагов без перехода вперед до статуса `Готово`;
+- добавить отдельный шаг `AI Tunnel` с одним ключом для транскрипции и AI-итогов;
+- сохранить ключ и настройки только после успешных проверок.
+
 Создать:
 
 - `app/services/first_run.py` — dataclass-модель setup state, проверки папки данных, OBS, FFmpeg, транскрипции и AI-итогов.
@@ -423,9 +431,9 @@ Create `app/assets/README.md`:
 
 `app/assets/bk_scribe.ico`
 
-Источник иконки для Stage 10:
+Иконка для Stage 10 хранится в репозитории:
 
-`C:\Users\damir\OneDrive\Рабочий стол\Новая папка (2)\123\meeting_day_recorder_corporate_icon_v2.ico`
+`app/assets/bk_scribe.ico`
 
 Иконка используется для окна приложения, `BK Scribe.exe`, ярлыков и установщика.
 ```
@@ -433,7 +441,7 @@ Create `app/assets/README.md`:
 Copy the icon only in PR 1:
 
 ```powershell
-Copy-Item -LiteralPath "C:\Users\damir\OneDrive\Рабочий стол\Новая папка (2)\123\meeting_day_recorder_corporate_icon_v2.ico" -Destination app\assets\bk_scribe.ico
+Copy-Item -LiteralPath "<path-to-icon.ico>" -Destination app\assets\bk_scribe.ico
 ```
 
 - [ ] **Step 2: Add PyInstaller dependency and ignore rules**
@@ -648,10 +656,13 @@ def test_default_setup_requires_first_run_wizard() -> None:
 
     assert config["setup"] == {
         "completed": False,
+        "version": 1,
         "completed_at": "",
         "data_root": "",
+        "data_root_checked": False,
         "obs_checked": False,
-        "ffmpeg_checked": False,
+        "audio_checked": False,
+        "aitunnel_checked": False,
         "transcription_checked": False,
         "summary_checked": False,
     }
@@ -663,10 +674,13 @@ def test_load_config_normalizes_setup_section(tmp_path: Path) -> None:
         """
 setup:
   completed: yes
+  version: 1
   completed_at: 2026-06-14T10:30:00
-  data_root: C:/Users/damir/Documents/BK Scribe
+  data_root: "%USERPROFILE%/Documents/BK Scribe"
+  data_root_checked: yes
   obs_checked: yes
-  ffmpeg_checked: yes
+  audio_checked: yes
+  aitunnel_checked: yes
   transcription_checked: yes
   summary_checked: yes
 """,
@@ -676,7 +690,11 @@ setup:
     config = load_config(config_path)
 
     assert config["setup"]["completed"] is True
-    assert config["setup"]["data_root"] == "C:/Users/damir/Documents/BK Scribe"
+    assert config["setup"]["version"] == 1
+    assert config["setup"]["data_root"] == "%USERPROFILE%/Documents/BK Scribe"
+    assert config["setup"]["data_root_checked"] is True
+    assert config["setup"]["audio_checked"] is True
+    assert config["setup"]["aitunnel_checked"] is True
     assert config["setup"]["summary_checked"] is True
 ```
 
@@ -698,10 +716,13 @@ In `app/config.py`, add a `setup` section to `DEFAULT_CONFIG`, load it through `
 def _normalize_setup(setup: dict[str, Any]) -> dict[str, Any]:
     return {
         "completed": _safe_bool(setup.get("completed"), False),
+        "version": int(setup.get("version") or 1),
         "completed_at": str(setup.get("completed_at") or "").strip(),
         "data_root": str(setup.get("data_root") or "").strip(),
+        "data_root_checked": _safe_bool(setup.get("data_root_checked"), False),
         "obs_checked": _safe_bool(setup.get("obs_checked"), False),
-        "ffmpeg_checked": _safe_bool(setup.get("ffmpeg_checked"), False),
+        "audio_checked": _safe_bool(setup.get("audio_checked"), False),
+        "aitunnel_checked": _safe_bool(setup.get("aitunnel_checked"), False),
         "transcription_checked": _safe_bool(setup.get("transcription_checked"), False),
         "summary_checked": _safe_bool(setup.get("summary_checked"), False),
     }
@@ -776,8 +797,10 @@ def test_validate_data_root_rejects_file_path(tmp_path: Path) -> None:
 def test_setup_completed_requires_all_checks() -> None:
     state = SetupState(
         data_root="C:/Data",
+        data_root_checked=True,
         obs_checked=True,
-        ffmpeg_checked=True,
+        audio_checked=True,
+        aitunnel_checked=True,
         transcription_checked=True,
         summary_checked=True,
     )
@@ -858,9 +881,12 @@ class FirstRunCheck:
 
 @dataclass(frozen=True)
 class SetupState:
+    version: int = 1
     data_root: str = ""
+    data_root_checked: bool = False
     obs_checked: bool = False
-    ffmpeg_checked: bool = False
+    audio_checked: bool = False
+    aitunnel_checked: bool = False
     transcription_checked: bool = False
     summary_checked: bool = False
 
@@ -893,8 +919,10 @@ def setup_completed(state: SetupState) -> bool:
     return all(
         [
             bool(state.data_root.strip()),
+            state.data_root_checked,
             state.obs_checked,
-            state.ffmpeg_checked,
+            state.audio_checked,
+            state.aitunnel_checked,
             state.transcription_checked,
             state.summary_checked,
         ]
@@ -993,7 +1021,7 @@ def test_first_run_wizard_enables_finish_after_all_checks() -> None:
     app = QApplication.instance() or QApplication([])
     wizard = FirstRunWizard(config={})
 
-    for component in ("data", "obs", "ffmpeg", "transcription", "summary"):
+    for component in ("data_root", "obs", "audio", "aitunnel", "transcription", "summary"):
         wizard.set_check_result(component, FirstRunCheck(component, "ok", "Готово"))
 
     assert wizard.finish_button.isEnabled() is True
@@ -1052,28 +1080,31 @@ Expected: fail because wizard and setup-gate do not exist.
 
 - [ ] **Step 3: Create wizard UI**
 
-Create `app/ui/first_run_wizard.py` with a modal `FirstRunWizard(QDialog)` containing:
+Create `app/ui/first_run_wizard.py` with an embedded fullscreen `FirstRunWizard(QWidget)` page. It is added to the main window page container instead of being launched as a modal dialog:
 
 ```python
-class FirstRunWizard(QDialog):
+class FirstRunWizard(QWidget):
+    config_changed = Signal(dict)
     completed = Signal(dict)
 
-    def __init__(self, config: dict, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        config: dict,
+        state: FirstRunState | dict[str, Any],
+        recorder: Any | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.config = config
-        self.checks: dict[str, FirstRunCheck] = {}
-        self.setWindowTitle("Мастер настройки BK Scribe")
-        self.setModal(True)
-        self.data_root_input = QLineEdit(str(default_data_root()))
-        self.finish_button = QPushButton("Начать работу")
-        self.finish_button.setEnabled(False)
-        self.check_obs_button = QPushButton("Проверить OBS")
-        self.check_ffmpeg_button = QPushButton("Проверить аудио")
-        self.check_transcription_button = QPushButton("Проверить транскрипцию")
-        self.check_summary_button = QPushButton("Проверить AI-итоги")
+        self.state = state if isinstance(state, FirstRunState) else normalize_setup_config(state)
+        self.recorder = recorder
+        self.step_buttons: dict[str, QPushButton] = {}
+        self.step_pages: dict[str, QWidget] = {}
+        self._build_ui()
+        self.refresh()
 ```
 
-Add `choose_data_root`, `check_data_root`, `set_check_result`, `finish_setup` and `_all_required_checks_ok` methods. The finish button emits `{"data_root": self.data_root_input.text().strip()}` only when all five checks are ok.
+Add `choose_data_root`, per-step check handlers, `open_step`, `go_next`, `go_back`, `finish_setup` and `refresh` methods. The wizard emits `config_changed` after successful step checks and emits `completed(config)` only when all required steps are `ok`.
 
 - [ ] **Step 4: Add setup gate in `MainWindow`**
 
@@ -1090,9 +1121,7 @@ Add helpers:
         return bool(self.config.get("setup", {}).get("completed", False))
 
     def open_first_run_wizard(self) -> None:
-        wizard = FirstRunWizard(self.config, self)
-        wizard.completed.connect(self._finish_first_run_setup)
-        wizard.exec()
+        self.pages.setCurrentWidget(self.first_run_wizard)
 ```
 
 At the start of `start_workday`:
@@ -1202,10 +1231,13 @@ In `app/ui/main_window.py`, implement:
         self.config["setup"] = {
             **self.config.get("setup", {}),
             "completed": True,
+            "version": CURRENT_SETUP_VERSION,
             "completed_at": datetime.now().isoformat(),
             "data_root": data_root,
+            "data_root_checked": True,
             "obs_checked": True,
-            "ffmpeg_checked": True,
+            "audio_checked": True,
+            "aitunnel_checked": True,
             "transcription_checked": True,
             "summary_checked": True,
         }
