@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime import bundled_tool_path
+from app.services.subprocess_utils import hidden_process_kwargs
 
 
 class AudioExtractor:
@@ -45,6 +46,7 @@ class AudioExtractor:
                 check=True,
                 capture_output=True,
                 text=True,
+                **hidden_process_kwargs(),
             )
         except (OSError, subprocess.CalledProcessError):
             return {

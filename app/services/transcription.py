@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from app.services.ai_errors import ai_error_metadata, is_retryable_ai_error
+from app.services.subprocess_utils import hidden_process_kwargs
 from app.services.summarization import load_api_key
 
 
@@ -107,6 +108,7 @@ class LocalWhisperTranscriber:
                 check=True,
                 capture_output=True,
                 text=True,
+                **hidden_process_kwargs(),
             )
             whisper_result = self._read_whisper_result(audio_path, meeting_folder)
         except (OSError, json.JSONDecodeError, subprocess.CalledProcessError):

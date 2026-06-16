@@ -13,6 +13,7 @@ def test_extract_audio_runs_ffmpeg_and_returns_metadata(tmp_path: Path) -> None:
 
     with (
         patch("app.services.audio.shutil.which", return_value="C:/ffmpeg/bin/ffmpeg.exe"),
+        patch("app.services.audio.hidden_process_kwargs", return_value={"creationflags": 123}),
         patch("app.services.audio.subprocess.run") as run,
     ):
         metadata = AudioExtractor().extract_audio(recording_path, meeting_folder)
@@ -38,6 +39,7 @@ def test_extract_audio_runs_ffmpeg_and_returns_metadata(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        creationflags=123,
     )
 
 
