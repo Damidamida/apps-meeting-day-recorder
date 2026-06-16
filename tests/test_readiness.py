@@ -169,6 +169,18 @@ def test_readiness_reports_summary_disabled_without_api_key(tmp_path: Path) -> N
     assert _details(summary)["API key"]["value"] == "Не требуется"
 
 
+def test_readiness_treats_missing_summary_enabled_as_default_enabled(tmp_path: Path) -> None:
+    config = _config()
+    del config["summary"]["enabled"]
+
+    with patch("app.services.readiness.shutil.which", return_value="/bin/tool"):
+        statuses = _by_component(check_readiness(config, NoopRecorder(), tmp_path))
+
+    summary = statuses["Итоги встречи"]
+    assert summary["state"] == "error"
+    assert _details(summary)["Генерация"]["value"] == "Включена"
+
+
 def test_readiness_reports_summary_key_without_revealing_secret(
     tmp_path: Path,
     monkeypatch,

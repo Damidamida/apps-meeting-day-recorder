@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime import bundled_tool_path
+from app.services.subprocess_utils import hidden_process_kwargs
 
 
 class AudioExtractor:
@@ -45,8 +46,10 @@ class AudioExtractor:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=300,
+                **hidden_process_kwargs(),
             )
-        except (OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return {
                 "audio_status": "failed",
                 "audio_error": "Не удалось извлечь аудио через FFmpeg.",

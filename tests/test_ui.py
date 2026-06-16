@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QWidget
 
@@ -589,6 +591,40 @@ def test_main_window_uses_bk_scribe_branding(tmp_path: Path) -> None:
     app.processEvents()
 
 
+def test_main_window_uses_packaged_bk_scribe_icon_resource(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    working_dir = tmp_path / "working"
+    packaged_root = tmp_path / "_internal"
+    relative_icon = working_dir / "app" / "assets" / "bk_scribe.ico"
+    packaged_icon = packaged_root / "app" / "assets" / "bk_scribe.ico"
+    relative_icon.parent.mkdir(parents=True)
+    packaged_icon.parent.mkdir(parents=True)
+    relative_icon.write_bytes(b"legacy")
+    packaged_icon.write_bytes(b"packaged")
+    monkeypatch.chdir(working_dir)
+    monkeypatch.setattr(sys, "_MEIPASS", str(packaged_root), raising=False)
+    recorded_icon_paths: list[str] = []
+
+    class RecordingIcon(QIcon):
+        def __init__(self, path: str = "") -> None:
+            recorded_icon_paths.append(path)
+            super().__init__(path)
+
+    monkeypatch.setattr(main_window_module, "QIcon", RecordingIcon)
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+
+    window = MainWindow(storage, recorder)
+
+    assert recorded_icon_paths[0] == str(packaged_icon)
+
+    window.close()
+    app.processEvents()
+
+
 def test_floating_control_uses_main_window_lifecycle(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     recorder = NoopRecorder()
@@ -1049,6 +1085,24 @@ def test_sidebar_theme_toggle_applies_and_saves_theme(
     assert window.settings_theme_select.currentData() == "light"
     assert window.theme_toggle_button.text() == "Светлая тема"
     assert "#f6efe6" in window.styleSheet()
+
+    window.close()
+    app.processEvents()
+
+
+def test_light_theme_styles_combobox_popup_options(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.config["ui"]["theme"] = "light"
+    window._apply_app_style()
+
+    style = window.styleSheet()
+    assert "QComboBox QAbstractItemView" in style
+    assert "selection-background-color: #ff6f1a" in style
+    assert "selection-color: #ffffff" in style
 
     window.close()
     app.processEvents()
@@ -2808,6 +2862,62 @@ def test_settings_screen_saves_local_config_yaml(tmp_path: Path, monkeypatch) ->
     app.processEvents()
 
 
+def test_settings_screen_applies_obs_recorder_without_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window.settings_storage_root_input.setText(str(tmp_path / "data"))
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+
+    window.save_settings()
+
+    assert window.recorder.host == "127.0.0.1"
+    assert window.recorder.port == 4456
+    assert window.recorder._password == "secret"
+    assert window.storage.recorder is window.recorder
+
+    window.close()
+    app.processEvents()
+
+
+def test_pending_runtime_settings_apply_obs_recorder_after_processing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window.day_summary_running = True
+    window.settings_storage_root_input.setText(str(tmp_path / "data"))
+    window.settings_obs_host_input.setText("127.0.0.1")
+    window.settings_obs_port_input.setValue(4456)
+    window.settings_obs_password_input.setText("secret")
+
+    window.save_settings()
+
+    assert window.pending_runtime_settings is True
+    assert window.recorder.host == "localhost"
+
+    window.day_summary_running = False
+    window.apply_pending_runtime_settings()
+
+    assert window.pending_runtime_settings is False
+    assert window.recorder.host == "127.0.0.1"
+    assert window.recorder.port == 4456
+    assert window.recorder._password == "secret"
+    assert window.storage.recorder is window.recorder
+
+    window.close()
+    app.processEvents()
+
+
 def test_settings_screen_selects_storage_folder_with_windows_dialog(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -3063,6 +3173,46 @@ def test_settings_save_defers_transcription_runtime_change_while_processing(
     assert "Текущая обработка завершится со старой конфигурацией" in (
         window.settings_status_label.text()
     )
+    assert "Обновленные настройки применятся после завершения текущей обработки" in (
+        window.settings_status_label.text()
+    )
+
+    window.close()
+    app.processEvents()
+
+
+def test_settings_save_defers_runtime_change_while_meeting_is_active(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    storage.start_workday()
+    storage.start_meeting("Активный созвон")
+    window._schedule_readiness_autocheck = lambda reason: None
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window.save_settings()
+
+    assert window.pending_runtime_settings is True
+    assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
+    assert "Активная встреча" in window.settings_status_label.text()
+    assert "Обновленные настройки применятся после завершения активной встречи" in (
+        window.settings_status_label.text()
+    )
+
+    window.apply_pending_runtime_settings()
+
+    assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
+
+    storage.active_meeting_folder = None
+    window.apply_pending_runtime_settings()
+
+    assert isinstance(window.storage.transcriber, AITunnelTranscriber)
+    assert window.pending_runtime_settings is False
 
     window.close()
     app.processEvents()
@@ -3292,7 +3442,7 @@ def test_processing_reset_preserves_local_settings_and_discards_unsaved_out_of_s
     assert saved["ui"]["theme"] == "dark"
     assert saved["ui"]["floating_theme"] == "light"
     assert saved["transcription"]["backend"] == "whisper_cli"
-    assert saved["summary"]["enabled"] is False
+    assert saved["summary"]["enabled"] is True
     assert saved["summary"]["model"] == "gpt-5.4-mini"
     assert window.settings_storage_root_input.text() == str(tmp_path / "saved-data")
     assert window.settings_status_label.text() == "Параметры обработки сброшены и сохранены."

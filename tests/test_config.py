@@ -9,7 +9,7 @@ def test_obs_is_required_by_default(tmp_path) -> None:
     assert "enabled" not in config["obs"]
     assert config["obs"]["websocket_host"] == "localhost"
     assert config["obs"]["websocket_port"] == 4455
-    assert config["summary"]["enabled"] is False
+    assert config["summary"]["enabled"] is True
     assert config["summary"]["provider"] == "openai"
     assert config["summary"]["api_key_env"] == "AITUNNEL_KEY"
     assert config["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
@@ -288,7 +288,7 @@ def test_invalid_yaml_uses_safe_defaults(tmp_path) -> None:
 
     config = load_config(config_path)
 
-    assert config["summary"]["enabled"] is False
+    assert config["summary"]["enabled"] is True
     assert config["_warnings"]
 
 
@@ -344,7 +344,7 @@ def test_reset_processing_config_preserves_local_settings_and_resets_processing(
     assert reset["transcription"]["backend"] == "whisper_cli"
     assert reset["transcription"]["backends"]["aitunnel"]["model"] == "whisper-large-v3-turbo"
     assert reset["transcription"]["backends"]["aitunnel"]["timeout_seconds"] == 300
-    assert reset["summary"]["enabled"] is False
+    assert reset["summary"]["enabled"] is True
     assert reset["summary"]["model"] == "gpt-5.4-mini"
     assert reset["summary"]["base_url"] == "https://api.aitunnel.ru/v1/"
     assert reset["summary"]["timeout_seconds"] == 120

@@ -60,6 +60,7 @@ from PySide6.QtWidgets import (
 
 from app.branding import APP_DISPLAY_NAME, APP_ICON_RESOURCE
 from app.config import DEFAULT_CONFIG, load_config, reset_processing_config
+from app.runtime import resource_path
 from app.services.archive import (
     ArchiveDateFilter,
     ArchiveDay,
@@ -1500,8 +1501,9 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle(APP_DISPLAY_NAME)
-        if APP_ICON_RESOURCE.is_file():
-            self.setWindowIcon(QIcon(str(APP_ICON_RESOURCE)))
+        icon_path = resource_path(APP_ICON_RESOURCE)
+        if icon_path.is_file():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1100, 720)
         self._external_storage_provided = storage is not None
         self.config = load_config()
@@ -1671,6 +1673,18 @@ class MainWindow(QMainWindow):
             config["env_file"] = str(self.config.get("secrets", {}).get("env_file") or "")
         return config
 
+    def _apply_obs_runtime_config(self) -> None:
+        self.recorder = create_recorder(self.config["obs"])
+        self.storage.recorder = self.recorder
+        if hasattr(self, "first_run_wizard"):
+            self.first_run_wizard.recorder = self.recorder
+        if hasattr(self, "start_meeting_overlay"):
+            self.start_meeting_overlay.update_recorder_state(self.recorder)
+        if hasattr(self, "obs_status_value"):
+            self.obs_status_value.setText(self.recorder.status_text)
+        if hasattr(self, "floating_control"):
+            self._refresh_floating_control()
+
     def _should_show_setup_on_startup(self) -> bool:
         return self.setup_gate_enabled and should_show_wizard_on_startup(self.setup_state)
 
@@ -1709,11 +1723,15 @@ class MainWindow(QMainWindow):
         self.config = self._config_for_save(config)
         self.setup_state = normalize_setup_config(self.config.get("setup", {}))
         self._write_local_config(self.config)
+        self._apply_obs_runtime_config()
         self.storage.root = Path(self.config["storage"]["root"])
         self.storage.load_today_state()
         self.past_workday_folder = self.storage.find_past_active_workday()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        if hasattr(self, "settings_storage_root_input"):
+            self._load_settings_ui_from_config()
+            self.settings_saved_config_snapshot = self._capture_settings_state()
         self.refresh_status()
         self.refresh_buttons()
         self._refresh_navigation_state(self.pages.currentIndex())
@@ -1721,6 +1739,7 @@ class MainWindow(QMainWindow):
         self.show_floating_control()
         if hasattr(self, "status_label"):
             self.status_label.setText("Настройка BK Scribe завершена. Можно начать рабочий день.")
+        self._schedule_readiness_autocheck("setup")
 
     @staticmethod
     def _config_for_save(config: dict[str, object]) -> dict[str, object]:
@@ -2551,6 +2570,18 @@ class MainWindow(QMainWindow):
                 border: 1px solid %(input_border)s;
                 border-radius: 8px;
                 padding: 8px;
+            }
+            QComboBox QAbstractItemView {
+                background: %(input_bg)s;
+                color: %(text)s;
+                border: 1px solid %(input_border)s;
+                selection-background-color: %(accent)s;
+                selection-color: #ffffff;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 6px 8px;
             }
             QLineEdit#archiveDateInput[manualRange="true"] {
                 border: 2px solid %(accent)s;
@@ -6229,6 +6260,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 "Проверка готовности запущена автоматически после сохранения настроек."
             )
+        elif reason == "setup":
+            self.status_label.setText(
+                "Проверка готовности запущена автоматически после мастера настройки."
+            )
         elif reason == "workday":
             self.status_label.setText(
                 "Проверка готовности запущена автоматически после начала рабочего дня."
@@ -7412,28 +7447,46 @@ class MainWindow(QMainWindow):
 
     def _apply_runtime_settings_after_save(self, storage_root_path: Path) -> None:
         has_processing_work = self._has_processing_work()
+        runtime_change_deferred = has_processing_work or self.storage.meeting_active
         storage_change_deferred = self.storage.root != storage_root_path and (
             self.storage.workday_active or self.storage.meeting_active or has_processing_work
         )
         self.pending_storage_root_path = (
             storage_root_path if storage_change_deferred else None
         )
-        if has_processing_work:
+        if runtime_change_deferred:
             self.pending_runtime_settings = True
         else:
             self.pending_runtime_settings = False
-        if has_processing_work:
-            storage_message = (
-                " Папка данных применится после завершения рабочего дня и текущей обработки."
-                if storage_change_deferred
-                else ""
-            )
+        if runtime_change_deferred:
+            if has_processing_work and self.storage.meeting_active:
+                runtime_subject = "Активная встреча и текущая обработка завершатся"
+                runtime_apply_after = "после завершения активной встречи и текущей обработки"
+            elif self.storage.meeting_active:
+                runtime_subject = "Активная встреча завершится"
+                runtime_apply_after = "после завершения активной встречи"
+            else:
+                runtime_subject = "Текущая обработка завершится"
+                runtime_apply_after = "после завершения текущей обработки"
+            storage_blockers = ["рабочего дня"]
+            if self.storage.meeting_active:
+                storage_blockers.append("активной встречи")
+            if has_processing_work:
+                storage_blockers.append("текущей обработки")
+            storage_message = ""
+            if storage_change_deferred:
+                storage_message = (
+                    " Папка данных применится после завершения "
+                    f"{', '.join(storage_blockers)}."
+                )
             self.settings_status_label.setText(
                 "Настройки сохранены. Тема интерфейса применена сразу. "
-                "Текущая обработка завершится со старой конфигурацией, "
-                f"следующие встречи будут использовать обновленные настройки.{storage_message}"
+                f"{runtime_subject} со старой конфигурацией. "
+                f"Обновленные настройки применятся {runtime_apply_after} "
+                f"и будут использоваться для следующих встреч.{storage_message}"
             )
             return
+        self._apply_obs_runtime_config()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
         if storage_change_deferred:
@@ -7455,7 +7508,12 @@ class MainWindow(QMainWindow):
 
     def apply_pending_runtime_settings(self) -> None:
         applied = False
-        if self.pending_runtime_settings and not self._has_processing_work():
+        if (
+            self.pending_runtime_settings
+            and not self._has_processing_work()
+            and not self.storage.meeting_active
+        ):
+            self._apply_obs_runtime_config()
             self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
             self.storage.summarizer = create_summarizer(self._summary_runtime_config())
             self.pending_runtime_settings = False

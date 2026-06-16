@@ -46,6 +46,10 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
 
     with (
         patch("app.services.transcription.shutil.which", return_value="C:/tools/whisper.exe"),
+        patch(
+            "app.services.transcription.hidden_process_kwargs",
+            return_value={"creationflags": 123},
+        ),
         patch("app.services.transcription.subprocess.run", side_effect=fake_run) as run,
     ):
         transcriber = create_transcriber(
@@ -93,6 +97,8 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
         check=True,
         capture_output=True,
         text=True,
+        timeout=300,
+        creationflags=123,
     )
 
 

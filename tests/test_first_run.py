@@ -135,6 +135,61 @@ def test_flat_setup_check_flags_restore_step_state() -> None:
     assert should_show_wizard_on_startup(state) is False
 
 
+def test_flat_setup_check_flags_override_stale_step_statuses() -> None:
+    state = normalize_setup_config(
+        {
+            "completed": False,
+            "version": CURRENT_SETUP_VERSION,
+            "data_root_checked": True,
+            "obs_checked": True,
+            "audio_checked": True,
+            "aitunnel_checked": True,
+            "transcription_checked": True,
+            "summary_checked": False,
+            "steps": {
+                "data_root": {"status": "ok", "message": "Готово"},
+                "obs": {"status": "ok", "message": "Готово"},
+                "audio": {"status": "ok", "message": "Готово"},
+                "aitunnel": {"status": "error", "message": "Старое сообщение"},
+                "transcription": {"status": "locked", "message": ""},
+                "summary": {"status": "locked", "message": ""},
+            },
+        }
+    )
+
+    assert state.steps["aitunnel"].status == "ok"
+    assert state.steps["transcription"].status == "ok"
+    assert state.steps["summary"].status == "todo"
+    assert state.current_step == "summary"
+
+
+def test_explicit_false_setup_flag_clears_stale_ok_status() -> None:
+    state = normalize_setup_config(
+        {
+            "completed": False,
+            "version": CURRENT_SETUP_VERSION,
+            "data_root_checked": True,
+            "obs_checked": True,
+            "audio_checked": True,
+            "aitunnel_checked": True,
+            "transcription_checked": True,
+            "summary_checked": False,
+            "steps": {
+                "data_root": {"status": "ok", "message": "Готово"},
+                "obs": {"status": "ok", "message": "Готово"},
+                "audio": {"status": "ok", "message": "Готово"},
+                "aitunnel": {"status": "ok", "message": "Готово"},
+                "transcription": {"status": "ok", "message": "Готово"},
+                "summary": {"status": "ok", "message": "Старый статус"},
+            },
+        }
+    )
+
+    assert state.steps["summary"].status == "todo"
+    assert state.current_step == "summary"
+    assert setup_completed(state) is False
+
+
 def test_default_data_root_is_documents_bk_scribe() -> None:
     assert default_data_root().name == "BK Scribe"
     assert default_data_root().parent.name == "Documents"
