@@ -39,6 +39,7 @@ def test_extract_audio_runs_ffmpeg_and_returns_metadata(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=300,
         creationflags=123,
     )
 

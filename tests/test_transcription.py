@@ -97,6 +97,7 @@ def test_local_whisper_transcriber_creates_transcript_files(tmp_path: Path) -> N
         check=True,
         capture_output=True,
         text=True,
+        timeout=300,
         creationflags=123,
     )
 

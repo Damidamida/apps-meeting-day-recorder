@@ -187,6 +187,8 @@ def normalize_setup_config(value: Any) -> FirstRunState:
         raw_status = str(raw_step.get("status") or "").strip()
         if checked_flag is True:
             status = "ok"
+        elif checked_flag is False:
+            status = "todo" if index == 0 else "locked"
         else:
             status = raw_status
         if status not in STEP_STATUSES:

@@ -33,7 +33,7 @@ def check_readiness(config: dict[str, Any], recorder: Recorder, data_root: Path)
     secrets_config = config.get("secrets", {})
     summary_config = config.get("summary", {})
     transcription_config = config.get("transcription", {})
-    summary_enabled = bool(summary_config.get("enabled", False))
+    summary_enabled = bool(summary_config.get("enabled", True))
     return [
         _obs_status(recorder),
         _ffmpeg_status(),

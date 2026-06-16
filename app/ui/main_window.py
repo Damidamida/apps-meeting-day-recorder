@@ -1676,6 +1676,8 @@ class MainWindow(QMainWindow):
     def _apply_obs_runtime_config(self) -> None:
         self.recorder = create_recorder(self.config["obs"])
         self.storage.recorder = self.recorder
+        if hasattr(self, "first_run_wizard"):
+            self.first_run_wizard.recorder = self.recorder
         if hasattr(self, "start_meeting_overlay"):
             self.start_meeting_overlay.update_recorder_state(self.recorder)
         if hasattr(self, "obs_status_value"):
@@ -7445,25 +7447,33 @@ class MainWindow(QMainWindow):
 
     def _apply_runtime_settings_after_save(self, storage_root_path: Path) -> None:
         has_processing_work = self._has_processing_work()
+        runtime_change_deferred = has_processing_work or self.storage.meeting_active
         storage_change_deferred = self.storage.root != storage_root_path and (
             self.storage.workday_active or self.storage.meeting_active or has_processing_work
         )
         self.pending_storage_root_path = (
             storage_root_path if storage_change_deferred else None
         )
-        if has_processing_work:
+        if runtime_change_deferred:
             self.pending_runtime_settings = True
         else:
             self.pending_runtime_settings = False
-        if has_processing_work:
+        if runtime_change_deferred:
+            if has_processing_work and self.storage.meeting_active:
+                runtime_subject = "Активная встреча и текущая обработка завершатся"
+            elif self.storage.meeting_active:
+                runtime_subject = "Активная встреча завершится"
+            else:
+                runtime_subject = "Текущая обработка завершится"
             storage_message = (
-                " Папка данных применится после завершения рабочего дня и текущей обработки."
+                " Папка данных применится после завершения рабочего дня, "
+                "активной встречи и текущей обработки."
                 if storage_change_deferred
                 else ""
             )
             self.settings_status_label.setText(
                 "Настройки сохранены. Тема интерфейса применена сразу. "
-                "Текущая обработка завершится со старой конфигурацией, "
+                f"{runtime_subject} со старой конфигурацией, "
                 f"следующие встречи будут использовать обновленные настройки.{storage_message}"
             )
             return
@@ -7489,7 +7499,11 @@ class MainWindow(QMainWindow):
 
     def apply_pending_runtime_settings(self) -> None:
         applied = False
-        if self.pending_runtime_settings and not self._has_processing_work():
+        if (
+            self.pending_runtime_settings
+            and not self._has_processing_work()
+            and not self.storage.meeting_active
+        ):
             self._apply_obs_runtime_config()
             self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
             self.storage.summarizer = create_summarizer(self._summary_runtime_config())

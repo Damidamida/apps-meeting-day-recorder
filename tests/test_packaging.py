@@ -46,6 +46,8 @@ def test_inno_script_blocks_system_install_directories_for_per_user_setup() -> N
     assert "WizardDirValue" in text
     assert "wpSelectDir" in text
     assert "ExpandConstant('{pf}')" in text
+    assert "ExpandConstant('{pf32}')" in text
+    assert "ExpandConstant('{win}')" in text
     assert "BK Scribe устанавливается без прав администратора" in text
 
 

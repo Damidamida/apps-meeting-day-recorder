@@ -46,9 +46,10 @@ class AudioExtractor:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=300,
                 **hidden_process_kwargs(),
             )
-        except (OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return {
                 "audio_status": "failed",
                 "audio_error": "Не удалось извлечь аудио через FFmpeg.",

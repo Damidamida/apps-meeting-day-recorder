@@ -975,6 +975,7 @@ def test_setup_completion_applies_obs_recorder_without_restart(
     assert window.recorder.port == 4456
     assert window.recorder._password == "secret"
     assert window.storage.recorder is window.recorder
+    assert window.first_run_wizard.recorder is window.recorder
 
     window.close()
 

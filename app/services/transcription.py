@@ -108,10 +108,16 @@ class LocalWhisperTranscriber:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=300,
                 **hidden_process_kwargs(),
             )
             whisper_result = self._read_whisper_result(audio_path, meeting_folder)
-        except (OSError, json.JSONDecodeError, subprocess.CalledProcessError):
+        except (
+            OSError,
+            json.JSONDecodeError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ):
             return {
                 "transcription_status": "failed",
                 "transcription_error": WHISPER_FAILED_ERROR,

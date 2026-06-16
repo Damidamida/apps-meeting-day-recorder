@@ -3178,6 +3178,40 @@ def test_settings_save_defers_transcription_runtime_change_while_processing(
     app.processEvents()
 
 
+def test_settings_save_defers_runtime_change_while_meeting_is_active(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+    storage.start_workday()
+    storage.start_meeting("Активный созвон")
+    window._schedule_readiness_autocheck = lambda reason: None
+
+    window.settings_transcription_backend_select.setCurrentText("aitunnel")
+    window.save_settings()
+
+    assert window.pending_runtime_settings is True
+    assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
+    assert "Активная встреча" in window.settings_status_label.text()
+
+    window.apply_pending_runtime_settings()
+
+    assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
+
+    storage.active_meeting_folder = None
+    window.apply_pending_runtime_settings()
+
+    assert isinstance(window.storage.transcriber, AITunnelTranscriber)
+    assert window.pending_runtime_settings is False
+
+    window.close()
+    app.processEvents()
+
+
 def test_summary_runtime_uses_shared_secrets_env_file(
     tmp_path: Path,
     monkeypatch,
