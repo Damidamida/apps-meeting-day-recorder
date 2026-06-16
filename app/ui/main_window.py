@@ -7461,20 +7461,29 @@ class MainWindow(QMainWindow):
         if runtime_change_deferred:
             if has_processing_work and self.storage.meeting_active:
                 runtime_subject = "Активная встреча и текущая обработка завершатся"
+                runtime_apply_after = "после завершения активной встречи и текущей обработки"
             elif self.storage.meeting_active:
                 runtime_subject = "Активная встреча завершится"
+                runtime_apply_after = "после завершения активной встречи"
             else:
                 runtime_subject = "Текущая обработка завершится"
-            storage_message = (
-                " Папка данных применится после завершения рабочего дня, "
-                "активной встречи и текущей обработки."
-                if storage_change_deferred
-                else ""
-            )
+                runtime_apply_after = "после завершения текущей обработки"
+            storage_blockers = ["рабочего дня"]
+            if self.storage.meeting_active:
+                storage_blockers.append("активной встречи")
+            if has_processing_work:
+                storage_blockers.append("текущей обработки")
+            storage_message = ""
+            if storage_change_deferred:
+                storage_message = (
+                    " Папка данных применится после завершения "
+                    f"{', '.join(storage_blockers)}."
+                )
             self.settings_status_label.setText(
                 "Настройки сохранены. Тема интерфейса применена сразу. "
-                f"{runtime_subject} со старой конфигурацией, "
-                f"следующие встречи будут использовать обновленные настройки.{storage_message}"
+                f"{runtime_subject} со старой конфигурацией. "
+                f"Обновленные настройки применятся {runtime_apply_after} "
+                f"и будут использоваться для следующих встреч.{storage_message}"
             )
             return
         self._apply_obs_runtime_config()

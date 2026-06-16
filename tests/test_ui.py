@@ -3173,6 +3173,9 @@ def test_settings_save_defers_transcription_runtime_change_while_processing(
     assert "Текущая обработка завершится со старой конфигурацией" in (
         window.settings_status_label.text()
     )
+    assert "Обновленные настройки применятся после завершения текущей обработки" in (
+        window.settings_status_label.text()
+    )
 
     window.close()
     app.processEvents()
@@ -3197,6 +3200,9 @@ def test_settings_save_defers_runtime_change_while_meeting_is_active(
     assert window.pending_runtime_settings is True
     assert isinstance(window.storage.transcriber, LocalWhisperTranscriber)
     assert "Активная встреча" in window.settings_status_label.text()
+    assert "Обновленные настройки применятся после завершения активной встречи" in (
+        window.settings_status_label.text()
+    )
 
     window.apply_pending_runtime_settings()
 
