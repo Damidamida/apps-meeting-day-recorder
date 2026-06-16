@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QWid
 
 import app.ui.main_window as main_window_module
 import app.ui.first_run_wizard as first_run_wizard_module
+from app.config import load_config
 from app.services.first_run import default_setup_config, mark_step_ok, normalize_setup_config
 from app.services.recorder import NoopRecorder, RecorderError
 from app.services.storage import StorageService
@@ -204,7 +205,27 @@ def test_first_run_wizard_is_full_screen_page_with_locked_future_steps() -> None
     assert wizard.aitunnel_link.text().find("https://aitunnel.ru/") != -1
     assert wizard.transcription_backend_select.itemText(0) == "AI Tunnel STT"
     assert wizard.transcription_backend_select.currentText() == "AI Tunnel STT"
+    assert [
+        wizard.summary_model_select.itemData(index)
+        for index in range(wizard.summary_model_select.count())
+    ] == ["gpt-5.4-nano", "gpt-5.4-mini"]
     assert not wizard.summary_page.findChildren(QLineEdit)
+
+    wizard.close()
+
+
+def test_first_run_wizard_prefers_aitunnel_defaults_over_runtime_defaults(
+    tmp_path: Path,
+) -> None:
+    app = _app()
+    config = load_config(tmp_path / "missing.yaml")
+    wizard = FirstRunWizard(config, _state_on_aitunnel_step())
+    wizard.show()
+    app.processEvents()
+
+    assert wizard.transcription_backend_select.currentData() == "aitunnel"
+    assert wizard.transcription_model_select.currentData() == "whisper-large-v3-turbo"
+    assert wizard.summary_model_select.currentData() == "gpt-5.4-nano"
 
     wizard.close()
 
@@ -773,6 +794,8 @@ def test_summary_check_success_opens_finish_step(tmp_path: Path) -> None:
     assert wizard.current_step == "finish"
     assert wizard.step_buttons["finish"].isEnabled()
     assert wizard.summary_check_button.isEnabled()
+    assert wizard.config["summary"]["enabled"] is True
+    assert wizard.state.values["summary_model"] == "gpt-5.4-nano"
 
     wizard.close()
 
@@ -952,5 +975,74 @@ def test_setup_completion_applies_obs_recorder_without_restart(
     assert window.recorder.port == 4456
     assert window.recorder._password == "secret"
     assert window.storage.recorder is window.recorder
+
+    window.close()
+
+
+def test_setup_completion_refreshes_settings_ui_and_rechecks_readiness(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app = _app()
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path / "config.yaml", setup_completed=False)
+    window = MainWindow()
+    readiness_reasons: list[str] = []
+    window._schedule_readiness_autocheck = lambda reason: readiness_reasons.append(reason)
+    app.processEvents()
+
+    setup = default_setup_config()
+    setup["completed"] = True
+    setup["version"] = 1
+    for step in setup["steps"].values():
+        step["status"] = "ok"
+        step["message"] = "Готово"
+    setup["values"]["transcription_backend"] = "aitunnel"
+    setup["values"]["transcription_model"] = "whisper-large-v3-turbo"
+    setup["values"]["summary_model"] = "gpt-5.4-nano"
+
+    env_file = tmp_path / ".env"
+    window._on_first_run_completed(
+        {
+            **window.config,
+            "storage": {"root": str(tmp_path / "data")},
+            "obs": {
+                "websocket_host": "127.0.0.1",
+                "websocket_port": 4456,
+                "websocket_password": "secret",
+            },
+            "secrets": {"env_file": str(env_file)},
+            "transcription": {
+                **window.config["transcription"],
+                "backend": "aitunnel",
+                "model": "whisper-large-v3-turbo",
+                "backends": {
+                    **window.config["transcription"]["backends"],
+                    "aitunnel": {
+                        **window.config["transcription"]["backends"]["aitunnel"],
+                        "model": "whisper-large-v3-turbo",
+                    },
+                },
+            },
+            "summary": {
+                **window.config["summary"],
+                "enabled": True,
+                "model": "gpt-5.4-nano",
+            },
+            "setup": setup,
+        }
+    )
+
+    assert window.settings_obs_host_input.text() == "127.0.0.1"
+    assert window.settings_obs_port_input.text() == "4456"
+    assert window.settings_obs_password_input.text() == "secret"
+    assert window.settings_secrets_env_file_input.text() == str(env_file)
+    assert window.settings_transcription_backend_select.currentText() == "aitunnel"
+    assert window.settings_transcription_model_select.currentData() == (
+        "whisper-large-v3-turbo"
+    )
+    assert window.settings_summary_enabled_checkbox.isChecked()
+    assert window.settings_summary_model_select.currentData() == "gpt-5.4-nano"
+    assert readiness_reasons == ["setup"]
 
     window.close()

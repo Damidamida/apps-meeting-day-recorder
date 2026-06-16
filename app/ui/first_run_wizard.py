@@ -564,6 +564,7 @@ class FirstRunWizard(QWidget):
             self.summary_model_select = QComboBox()
             for value, label in SUMMARY_MODEL_OPTIONS:
                 self.summary_model_select.addItem(label, value)
+            self._set_combo_value(self.summary_model_select, self._stored_summary_model())
             check = QPushButton("Проверить AI-итоги")
             check.setObjectName("primaryButton")
             check.setMaximumWidth(190)
@@ -809,14 +810,21 @@ class FirstRunWizard(QWidget):
             combo.setCurrentIndex(index)
 
     def _stored_transcription_backend(self) -> str:
+        stored_backend = str(self.state.values.get("transcription_backend") or "").strip()
+        if stored_backend:
+            return stored_backend
         transcription = self.config.get("transcription")
         if isinstance(transcription, dict):
             backend = str(transcription.get("backend") or "").strip()
             if backend:
                 return backend
-        return str(self.state.values.get("transcription_backend") or "aitunnel")
+        return "aitunnel"
 
     def _stored_transcription_model(self, backend: str) -> str:
+        stored_backend = str(self.state.values.get("transcription_backend") or "").strip()
+        stored_model = str(self.state.values.get("transcription_model") or "").strip()
+        if stored_model and (not stored_backend or stored_backend == backend):
+            return stored_model
         transcription = self.config.get("transcription")
         if isinstance(transcription, dict):
             backends = transcription.get("backends")
@@ -828,7 +836,20 @@ class FirstRunWizard(QWidget):
             model = str(transcription.get("model") or "").strip()
             if model:
                 return model
-        return str(self.state.values.get("transcription_model") or "")
+        return ""
+
+    def _stored_summary_model(self) -> str:
+        stored_model = str(self.state.values.get("summary_model") or "").strip()
+        if stored_model:
+            return stored_model
+        if not self.state.completed:
+            return "gpt-5.4-nano"
+        summary = self.config.get("summary")
+        if isinstance(summary, dict):
+            model = str(summary.get("model") or "").strip()
+            if model:
+                return model
+        return "gpt-5.4-nano"
 
     def _refresh_transcription_model_options(self) -> None:
         backend = self.transcription_backend_select.currentData() or "aitunnel"
@@ -873,12 +894,12 @@ class FirstRunWizard(QWidget):
             self._mark_error("summary", AITUNNEL_REQUIRED_MESSAGE)
             return
         model = self.summary_model_select.currentData() or "gpt-5.4-nano"
-        if model == "__custom__":
-            model = "gpt-5.4-mini"
+        model = str(model)
         self.config.setdefault("summary", {})["enabled"] = True
         self.config["summary"]["model"] = model
         self.config["summary"]["api_key_env"] = AITUNNEL_API_KEY_ENV
         self.config["summary"]["base_url"] = AITUNNEL_BASE_URL_DEFAULT
+        self.state.values["summary_model"] = model
 
         self.summary_check_running = True
         self.state = mark_step_checking(self.state, "summary", SUMMARY_CHECKING_MESSAGE)

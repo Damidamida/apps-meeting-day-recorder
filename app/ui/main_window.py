@@ -1727,6 +1727,9 @@ class MainWindow(QMainWindow):
         self.past_workday_folder = self.storage.find_past_active_workday()
         self.storage.transcriber = create_transcriber(self._transcription_runtime_config())
         self.storage.summarizer = create_summarizer(self._summary_runtime_config())
+        if hasattr(self, "settings_storage_root_input"):
+            self._load_settings_ui_from_config()
+            self.settings_saved_config_snapshot = self._capture_settings_state()
         self.refresh_status()
         self.refresh_buttons()
         self._refresh_navigation_state(self.pages.currentIndex())
@@ -1734,6 +1737,7 @@ class MainWindow(QMainWindow):
         self.show_floating_control()
         if hasattr(self, "status_label"):
             self.status_label.setText("Настройка BK Scribe завершена. Можно начать рабочий день.")
+        self._schedule_readiness_autocheck("setup")
 
     @staticmethod
     def _config_for_save(config: dict[str, object]) -> dict[str, object]:
@@ -2564,6 +2568,18 @@ class MainWindow(QMainWindow):
                 border: 1px solid %(input_border)s;
                 border-radius: 8px;
                 padding: 8px;
+            }
+            QComboBox QAbstractItemView {
+                background: %(input_bg)s;
+                color: %(text)s;
+                border: 1px solid %(input_border)s;
+                selection-background-color: %(accent)s;
+                selection-color: #ffffff;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 6px 8px;
             }
             QLineEdit#archiveDateInput[manualRange="true"] {
                 border: 2px solid %(accent)s;
@@ -6241,6 +6257,10 @@ class MainWindow(QMainWindow):
         elif reason == "settings":
             self.status_label.setText(
                 "Проверка готовности запущена автоматически после сохранения настроек."
+            )
+        elif reason == "setup":
+            self.status_label.setText(
+                "Проверка готовности запущена автоматически после мастера настройки."
             )
         elif reason == "workday":
             self.status_label.setText(

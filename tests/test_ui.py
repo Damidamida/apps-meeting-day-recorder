@@ -1090,6 +1090,24 @@ def test_sidebar_theme_toggle_applies_and_saves_theme(
     app.processEvents()
 
 
+def test_light_theme_styles_combobox_popup_options(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    recorder = NoopRecorder()
+    storage = StorageService(tmp_path / "data", recorder)
+    window = MainWindow(storage, recorder)
+
+    window.config["ui"]["theme"] = "light"
+    window._apply_app_style()
+
+    style = window.styleSheet()
+    assert "QComboBox QAbstractItemView" in style
+    assert "selection-background-color: #ff6f1a" in style
+    assert "selection-color: #ffffff" in style
+
+    window.close()
+    app.processEvents()
+
+
 def test_sidebar_theme_toggle_preserves_existing_config_without_runtime_keys(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -3384,7 +3402,7 @@ def test_processing_reset_preserves_local_settings_and_discards_unsaved_out_of_s
     assert saved["ui"]["theme"] == "dark"
     assert saved["ui"]["floating_theme"] == "light"
     assert saved["transcription"]["backend"] == "whisper_cli"
-    assert saved["summary"]["enabled"] is False
+    assert saved["summary"]["enabled"] is True
     assert saved["summary"]["model"] == "gpt-5.4-mini"
     assert window.settings_storage_root_input.text() == str(tmp_path / "saved-data")
     assert window.settings_status_label.text() == "Параметры обработки сброшены и сохранены."

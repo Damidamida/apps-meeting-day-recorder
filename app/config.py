@@ -127,7 +127,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "env_file": "",
     },
     "summary": {
-        "enabled": False,
+        "enabled": True,
         "provider": "openai",
         "model": "gpt-5.4-mini",
         "api_key_env": "AITUNNEL_KEY",
@@ -261,7 +261,7 @@ def _normalize_secrets(secrets: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-    summary["enabled"] = _safe_bool(summary.get("enabled"), False)
+    summary["enabled"] = _safe_bool(summary.get("enabled"), True)
     summary["provider"] = str(summary.get("provider") or "openai").strip() or "openai"
     summary["model"] = str(summary.get("model") or DEFAULT_CONFIG["summary"]["model"]).strip()
     default_api_key_env = str(DEFAULT_CONFIG["summary"]["api_key_env"])

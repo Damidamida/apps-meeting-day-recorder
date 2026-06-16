@@ -65,7 +65,6 @@ TRANSCRIPTION_MODEL_OPTIONS_BY_BACKEND = {
 SUMMARY_MODEL_OPTIONS = (
     ("gpt-5.4-nano", "GPT 5.4 Nano — 38.4 ₽/1M вход · 240 ₽/1M выход"),
     ("gpt-5.4-mini", "GPT 5.4 Mini — 144 ₽/1M вход · 864 ₽/1M выход"),
-    ("__custom__", "Другая модель AI Tunnel"),
 )
 AITUNNEL_REQUIRED_MESSAGE = "Сначала проверьте ключ AI Tunnel."
 
